@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "substation-telemetry",
+  "description": "The safety-relevant signal. The curtailment fallback rule is computed from load alone, with no model and no feature store (ADR-0001), which is why load_w is required and nothing else is.",
+  "type": "object",
+  "required": ["substation_id", "timestamp", "load_w"],
+  "properties": {
+    "substation_id": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "description": "ISO-8601 with an explicit offset" },
+    "load_w": { "type": "integer", "description": "Measured load in watts. Integer: every published quantity in this system is a scaled integer, because a float compared across two engines differs in the last bits (ADR-0004)." }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "meter-reading",
+  "description": "Any shape a meter in this fleet may publish. Registered as a union rather than three schemas because the consumer is one job that must read all of them, and a per-generation schema would let a fourth be registered that nothing can consume. Normalisation collapses these into one record; see src/watermark/core/normalise.py.",
+  "oneOf": [
+    {
+      "title": "fw1",
+      "type": "object",
+      "required": ["v", "mid", "ts", "wh"],
+      "properties": {
+        "v": { "const": 1 },
+        "mid": { "type": "string", "minLength": 1 },
+        "ts": { "type": "integer", "description": "Seconds since the Unix epoch" },
+        "wh": { "type": "integer", "minimum": 0, "description": "Interval energy in watt-hours" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "fw2",
+      "type": "object",
+      "required": ["schema", "meter_id", "timestamp", "energy"],
+      "properties": {
+        "schema": { "const": "2" },
+        "meter_id": { "type": "string", "minLength": 1 },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO-8601 with an explicit offset. A naive timestamp is refused rather than assumed UTC — a device reporting local time would land in the wrong window with nothing reporting an error."
+        },
+        "energy": {
+          "type": "object",
+          "required": ["value", "unit"],
+          "properties": {
+            "value": { "type": "number", "minimum": 0 },
+            "unit": { "enum": ["Wh", "kWh", "MWh"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "fw3",
+      "type": "object",
+      "required": ["schemaVersion", "meter", "interval", "energy"],
+      "properties": {
+        "schemaVersion": { "const": "3.0" },
+        "meter": {
+          "type": "object",
+          "required": ["id"],
+          "properties": { "id": { "type": "string", "minLength": 1 } },
+          "additionalProperties": false
+        },
+        "interval": {
+          "type": "object",
+          "required": ["start"],
+          "properties": { "start": { "type": "string" } },
+          "additionalProperties": false
+        },
+        "energy": {
+          "type": "object",
+          "required": ["value", "unit"],
+          "properties": {
+            "value": { "type": "number", "minimum": 0 },
+            "unit": { "enum": ["Wh", "kWh", "MWh"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

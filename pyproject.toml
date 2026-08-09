@@ -45,7 +45,11 @@ cloud = [
 # an equivalence test against a different Flink than the one running proves equivalence with
 # something nobody uses.
 flink = [
-    "apache-flink>=2.2",
+    # The minor version must match `flink_runtime` in `infra/streaming/variables.tf`;
+    # `scripts/check_flink_versions_agree.py` compares them. 1.20 rather than 2.x because that
+    # is what this application's connectors are pinned against, and because a runtime the
+    # equivalence tier cannot install is a tier that never runs.
+    "apache-flink>=1.20",
 ]
 dev = [
     "pytest>=8.3",

@@ -82,7 +82,7 @@ fmt: ## Apply ruff formatting
 #   claim 7  no automatic consequential decision on a person — phase 3
 
 .PHONY: claims
-claims: core-pure adapter-thin contracts-validate seed-check claim-1 claim-2 ## Every claim gate that exists today
+claims: core-pure adapter-thin flink-versions contracts-validate seed-check claim-1 claim-2 ## Every claim gate that exists today
 
 .PHONY: core-pure
 core-pure: ## The stream core imports no framework and no cloud SDK
@@ -107,6 +107,18 @@ claim-1: ## CLAIM 1 — no decision comes out of a window that has not closed
 .PHONY: claim-2
 claim-2: ## CLAIM 2 — replay is identical
 	$(PY) -m evals.replay
+
+.PHONY: flink-versions
+flink-versions: ## The equivalence tier and the deployment run the same Flink
+	$(PY) scripts/check_flink_versions_agree.py
+
+.PHONY: package
+package: ## Vendor the package into infra/streaming/.package so terraform can zip it
+	rm -rf infra/streaming/.package
+	mkdir -p infra/streaming/.package
+	$(PIP) install --quiet --target infra/streaming/.package --no-compile --no-deps .
+	cp -R streaming contracts infra/streaming/.package/
+	@echo "packaged infra/streaming/.package ($$(du -sh infra/streaming/.package | cut -f1))"
 
 .PHONY: gate-proof
 gate-proof: ## Break every gate on purpose; each must be refused, for the right reason

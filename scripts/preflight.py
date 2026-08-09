@@ -133,6 +133,21 @@ CHECKS: list[Check] = [
     ),
     Check(
         "consistency",
+        "flink versions agree",
+        [PYTHON, "scripts/check_flink_versions_agree.py"],
+        "The equivalence tier runs the Flink that is deployed. Against any other, it "
+        "establishes equivalence with something nobody is running.",
+    ),
+    Check(
+        "deployability",
+        "the application package builds",
+        ["make", "package"],
+        "terraform's archive_file needs something to zip. Without it the apply fails on a "
+        "missing directory, after the expensive layers are already up.",
+        slow=True,
+    ),
+    Check(
+        "consistency",
         "lint",
         [RUFF, "check", "src", "tests", "scripts", "data", "evals", "streaming"],
         "The same command CI runs.",

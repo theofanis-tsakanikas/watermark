@@ -40,3 +40,5 @@ savepoints/
 
 # macOS
 .DS_Store
+infra/streaming/.package/
+infra/*/.build/

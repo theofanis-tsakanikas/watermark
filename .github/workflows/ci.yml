@@ -50,8 +50,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install -e ".[dev]"
-      - run: ruff check src tests scripts data evals
-      - run: ruff format --check src tests scripts data evals
+      - run: ruff check src tests scripts data evals streaming
+      - run: ruff format --check src tests scripts data evals streaming
       # Tier one of ADR-0003: pure, no JVM, under a second. Everything except the core↔Flink
       # equivalence is proved here.
       - run: pytest -q
@@ -88,6 +88,11 @@ jobs:
         # appears three levels down inside a windowing function, nothing fails — the suite just
         # stops being runnable by a stranger, and that was the whole of the evidence.
         run: python scripts/check_core_is_pure.py
+
+      - name: the streaming adapter carries no semantic literal
+        # ADR-0003. `.allowed_lateness(Time.minutes(5))` is one line, and after it the core and
+        # the deployed job disagree about what late means with only the job being right.
+        run: python scripts/check_adapter_is_thin.py
 
       # Claims 3 and 4 arrive with phase 2, claims 5 and 7 with phase 3, claim 6 with phase 4.
       # A step here for a claim that is not yet provable would be a green tick over work that

@@ -16,7 +16,7 @@ RUFF := $(if $(wildcard $(VENV)/bin/ruff),$(VENV)/bin/ruff,ruff)
 CHECKOV_VENV := .venv-checkov
 CHECKOV := $(if $(wildcard $(CHECKOV_VENV)/bin/checkov),$(CHECKOV_VENV)/bin/checkov,checkov)
 
-LINT_PATHS := src tests scripts data evals
+LINT_PATHS := src tests scripts data evals streaming
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Everything above the "cloud" section runs with NO AWS account and NO
@@ -82,11 +82,15 @@ fmt: ## Apply ruff formatting
 #   claim 7  no automatic consequential decision on a person — phase 3
 
 .PHONY: claims
-claims: core-pure contracts-validate seed-check claim-1 claim-2 ## Every claim gate that exists today
+claims: core-pure adapter-thin contracts-validate seed-check claim-1 claim-2 ## Every claim gate that exists today
 
 .PHONY: core-pure
 core-pure: ## The stream core imports no framework and no cloud SDK
 	$(PY) scripts/check_core_is_pure.py
+
+.PHONY: adapter-thin
+adapter-thin: ## The streaming adapter carries no semantic literal (ADR-0003)
+	$(PY) scripts/check_adapter_is_thin.py
 
 .PHONY: contracts-validate
 contracts-validate: ## Every entity contract loads and cross-checks

@@ -90,6 +90,13 @@ CHECKS: list[Check] = [
     ),
     Check(
         "correctness",
+        "adapter thinness",
+        [PYTHON, "scripts/check_adapter_is_thin.py"],
+        "Flink decides when a function is called; the core decides what the answer is. A "
+        "duration written into a PyFlink call moves an answer where no offline test can see it.",
+    ),
+    Check(
+        "correctness",
         "claim 1 · watermark",
         [PYTHON, "-m", "evals.watermark"],
         "No decision comes out of a window that has not closed — including when a substation "
@@ -127,13 +134,13 @@ CHECKS: list[Check] = [
     Check(
         "consistency",
         "lint",
-        [RUFF, "check", "src", "tests", "scripts", "data", "evals"],
+        [RUFF, "check", "src", "tests", "scripts", "data", "evals", "streaming"],
         "The same command CI runs.",
     ),
     Check(
         "consistency",
         "format",
-        [RUFF, "format", "--check", "src", "tests", "scripts", "data", "evals"],
+        [RUFF, "format", "--check", "src", "tests", "scripts", "data", "evals", "streaming"],
         "The same command CI runs.",
     ),
     # ── Deployability ───────────────────────────────────────────────────────

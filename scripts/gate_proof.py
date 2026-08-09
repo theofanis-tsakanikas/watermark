@@ -203,6 +203,21 @@ def _point_a_contract_at_an_entity_that_does_not_exist(root: Path) -> bool:
     )
 
 
+def _bake_a_window_into_the_framework(root: Path) -> bool:
+    """Put the metering interval in the Flink call, as a literal.
+
+    The line somebody adds on a Tuesday because a reading was being dropped. After it, the
+    core and the deployed job disagree about what a window is, the offline suite keeps passing
+    because it exercises the core, and only the deployed one is right.
+    """
+    return _replace(
+        root / "streaming/job.py",
+        "    environment.enable_checkpointing(placement.checkpoint_interval_millis)",
+        "    environment.enable_checkpointing(placement.checkpoint_interval_millis)\n"
+        "    _window = Time.minutes(15)",
+    )
+
+
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "import a cloud SDK into the stream core",
@@ -272,6 +287,16 @@ MUTATIONS: tuple[Mutation, ...] = (
         _let_a_redelivery_change_the_lineage,
         "Found by the harness rather than by review: at-least-once delivery then gives every "
         "published total a new lineage id while every number stays identical.",
+    ),
+    Mutation(
+        "bake a window length into the Flink call",
+        "adapter thinness",
+        "adapter_thinness",
+        ["scripts/check_adapter_is_thin.py"],
+        "semantic literal",
+        _bake_a_window_into_the_framework,
+        "One line, added because a reading was being dropped. The core keeps passing because "
+        "the offline suite exercises the core, and the deployed job means something else.",
     ),
     Mutation(
         "hold personal data with no declared purpose",

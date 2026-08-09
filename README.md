@@ -82,7 +82,7 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 | **claim 5** · no model reaches an endpoint ungated | **11/11** — and **the shipped model is refused**, for the finding in [docs/BIAS-FINDING.md](docs/BIAS-FINDING.md) |
 | **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach |
 | **claim 7** · no automatic decision about a person | **8/8** — the contract does not load and the actuation type cannot be constructed |
-| `make gate-proof` | **20 refused, 0 accepted, 0 stale** |
+| `make gate-proof` | **21 refused, 0 accepted, 0 stale** |
 | `make policy` | **24 principal-resource pairs** — every reachable set exact and every closed path closed |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined, net restatement **+2,261 Wh** |
 | `make test` | **207 passing**, offline, credential-free, no JVM, under a second |
@@ -102,8 +102,8 @@ had been written to catch the *opposite* shape and would have called it a pass;
 not fixed.
 
 **`gate-proof` is the row to read first.** A suite tells you the code does what it does; this
-copies the repository, plants twenty real violations, and requires the *named* gate to refuse
-each one *for the right reason*. Four of the twenty are mistakes this project actually made and
+copies the repository, plants twenty-one real violations, and requires the *named* gate to refuse
+each one *for the right reason*. Four of the twenty-one are mistakes this project actually made and
 the harness caught.
 
 **One row is deliberately absent from the scoreboard.** ADR-0003's tier two runs the real

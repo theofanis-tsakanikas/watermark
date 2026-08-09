@@ -44,16 +44,29 @@ the workflow cannot assume the role — which is the intended failure, not a mis
 *Has an API (`gh api`), and is recorded here because forgetting it produces an
 `AssumeRoleWithWebIdentity` denial that reads like a broken trust policy.*
 
-## 4 · Two repository variables
+## 4 · Two repository variables — and only ever two
 
 | Variable | Value |
 |---|---|
-| `AWS_DEPLOY_ROLE_ARN` | the `deploy_role_arn` output from bootstrap |
+| `AWS_ACCOUNT_ID` | the account bootstrap was applied in |
 | `AWS_REGION` | the region bootstrap was applied in |
 
-**Variables, not secrets.** A role ARN is not a credential: it is useless to anybody the trust
-policy does not name. Storing it as a secret hides it from the workflow logs that would
-otherwise make a denial diagnosable, and buys nothing.
+These two are irreducible. **CI has to know which account before it can ask that account
+anything**, and reading a parameter is already asking — so the account id cannot come from the
+account. Everything else can, and does: `infra/bootstrap` publishes the state bucket, the state
+key and the role ARN to `/watermark/bootstrap/*`, and the workflows resolve them after the role
+is assumed. The role ARN itself is composed rather than stored, from the account id and the
+name bootstrap chose.
+
+**Nothing else may be added here.** A transcribed value is indistinguishable from an
+independent setting: rename the state bucket and a pasted `TF_STATE_BUCKET` becomes a deploy
+that fails on a backend nobody can find, with the fix in a settings page rather than in a diff
+— and nothing in the repository would have gone red first.
+`scripts/check_deploy_inputs.py` refuses any other `vars.` reference, and `make gate-proof`
+plants exactly that paste to prove the refusal happens.
+
+**Variables, not secrets.** Neither is a credential, and hiding an account id from the workflow
+log removes the one thing that makes a denial diagnosable.
 
 ## 5 · Confirm the budget alarm's email subscription
 
@@ -77,21 +90,24 @@ days.
 *Has an API (`service-quotas`), with a human approval and a lead time behind it.*
 
 
-## 7 · Two more repository variables, once the layers exist
+## 7 · Nothing. There is no second round of variables.
 
-| Variable | Value |
-|---|---|
-| `TF_STATE_BUCKET` | the `state_bucket` output from bootstrap |
-| `BUDGET_ALERT_EMAIL` | where the budget alarm goes; the subscription confirmation is item 5 |
-| `WATERMARK_SUBSTATIONS` | a JSON list, e.g. `["SUB-01","SUB-02","SUB-03","SUB-04"]` |
+This item used to add three more — `TF_STATE_BUCKET`, `BUDGET_ALERT_EMAIL` and
+`WATERMARK_SUBSTATIONS`. All three are now resolved rather than transcribed, and the reasoning
+is worth keeping because each was wrong in a different way.
 
-`WATERMARK_SUBSTATIONS` has no default on purpose. It is what the watermark generator declares,
-and a substation missing from it is one that can never hold a window open — so every window
-closes without it, silently. Declared and silent is a fact; unknown is an assumption.
+**`TF_STATE_BUCKET`** is a name `infra/bootstrap` chose. It is published to
+`/watermark/bootstrap/state_bucket` and read back after the role is assumed.
 
-Variables rather than secrets, for the same reason as the role ARN: neither is a credential,
-and hiding a bucket name from the workflow log removes the one thing that makes a backend
-misconfiguration diagnosable.
+**`BUDGET_ALERT_EMAIL`** is an address belonging to a person. It is an input to bootstrap, held
+as a **SecureString** in `/watermark/bootstrap/budget_alert_email`, and never in a settings page
+— which is where personal data survives every later decision about who may read this repository.
+
+**`WATERMARK_SUBSTATIONS`** was the worst of the three, because the list already exists in
+`data/cast.py`. A second copy in a settings page is the copy that drifts, and the drift is
+invisible: a substation added to the generator and not to the variable is a partition that
+cannot hold the watermark back, so every window closes without it. The workflows now read
+`data.cast.SUBSTATIONS` directly, which makes that failure impossible rather than documented.
 
 ## 8 · A `capture` environment, if the estate is ever driven
 

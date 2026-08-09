@@ -20,6 +20,23 @@ variable "github_owner" {
   type        = string
 }
 
+variable "budget_alert_email" {
+  description = <<-EOT
+    Where the foundation layer's budget alarm goes.
+
+    An account fact rather than a repository one, so it is set here, once, by the person who
+    applies this layer, and published to SSM for the deploy to read. The alternative is a
+    repository variable holding somebody's address, which puts personal data in a settings page
+    that survives every later decision about who can read this repository.
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.budget_alert_email))
+    error_message = "budget_alert_email must be an address. The budget alarm is the last line of the cost controls; a typo here is silence at exactly the wrong moment."
+  }
+}
+
 variable "github_repo" {
   description = "Repository name. Together with the owner and an environment this is the whole of what the deploy role trusts."
   type        = string

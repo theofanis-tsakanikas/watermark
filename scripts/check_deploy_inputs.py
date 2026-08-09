@@ -23,6 +23,19 @@ WORKFLOW = ROOT / ".github" / "workflows" / "deploy.yml"
 #: given the chance to answer a prompt.
 NOT_DEPLOYED = {"bootstrap"}
 
+#: The only two repository variables any workflow may read.
+#:
+#: Everything else a deploy needs is a consequence of a name `infra/bootstrap` already chose, so
+#: it is published to SSM and resolved after the role is assumed. These two cannot be: CI has to
+#: know *which* account and *which* region before it can ask that account anything, and reading
+#: a parameter is already asking.
+#:
+#: The rule exists because a transcribed value is indistinguishable from an independent setting.
+#: Rename the state bucket and a copied `TF_STATE_BUCKET` becomes a deploy that fails on a
+#: backend nobody can find, with the fix in a settings page rather than in a diff — and nothing
+#: in the repository would have gone red first.
+RESOLVABLE_FROM_AWS = {"AWS_ACCOUNT_ID", "AWS_REGION"}
+
 
 def _variables_without_defaults(layer: Path) -> set[str]:
     """Brace-counted rather than pattern-matched.
@@ -69,13 +82,30 @@ def main() -> int:
                     "already created."
                 )
 
+    # The other half: nothing may be transcribed that the account can be asked for.
+    transcribed: set[str] = set()
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        used = set(re.findall(r"vars\.([A-Z_]+)", path.read_text(encoding="utf-8")))
+        transcribed |= used
+        for name in sorted(used - RESOLVABLE_FROM_AWS):
+            problems.append(
+                f"{path.name}: reads `vars.{name}`. Only {sorted(RESOLVABLE_FROM_AWS)} may be "
+                "repository variables — everything else is published by infra/bootstrap and "
+                "resolved after the role is assumed, so it cannot drift from the layer that "
+                "chose it."
+            )
+
     if problems:
-        print("deploy-inputs: a required variable is not supplied\n", file=sys.stderr)
+        print("deploy-inputs: the deploy wiring is wrong\n", file=sys.stderr)
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1
 
-    print(f"deploy-inputs: {checked} required variables, all supplied by deploy.yml")
+    print(
+        f"deploy-inputs: {checked} required variables all supplied; "
+        f"{len(transcribed)} repository variables set by hand "
+        f"({', '.join(sorted(transcribed)) or 'none'}), none of them resolvable from AWS"
+    )
     return 0
 
 

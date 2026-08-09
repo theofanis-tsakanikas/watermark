@@ -365,6 +365,22 @@ def _flatter_the_bias_gate(root: Path) -> bool:
     )
 
 
+def _transcribe_the_state_bucket_into_a_repository_variable(root: Path) -> bool:
+    """Read the backend bucket from a settings page instead of from the layer that named it.
+
+    The plausible version of this is a hurry: the SSM lookup fails once, somebody pastes the
+    bucket name into a repository variable to get the deploy moving, and it works. Nothing goes
+    red — the deploy is green that day and every day after, right up until the bucket is
+    renamed and the failure is a backend nobody can find, with the fix in a settings page
+    rather than in a diff.
+    """
+    return _replace(
+        root / ".github/workflows/deploy.yml",
+        '-backend-config="bucket=$TF_STATE_BUCKET"',
+        '-backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"',
+    )
+
+
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "import a cloud SDK into the stream core",
@@ -563,6 +579,17 @@ MUTATIONS: tuple[Mutation, ...] = (
         _flatter_the_bias_gate,
         "The bug the analysis actually found, restored. A five-fold difference in label "
         "coverage then reads as a pass and the model that should be refused promotes.",
+    ),
+    Mutation(
+        "transcribe the state bucket into a repository variable",
+        "deploy inputs",
+        "deploy-inputs",
+        ["scripts/check_deploy_inputs.py"],
+        "vars.TF_STATE_BUCKET",
+        _transcribe_the_state_bucket_into_a_repository_variable,
+        "A value copied by hand looks like an independent setting. It is green the day it is "
+        "pasted and every day after, and the failure arrives when the layer that owns the name "
+        "changes it — in a settings page nothing in this repository can see.",
     ),
 )
 

@@ -51,3 +51,8 @@ infra/streaming/lib/
 # should carry: it is about a career, not about this system. Kept on disk, out of the history
 # from the commit that removed it.
 docs/PORTFOLIO-CONTEXT.md
+
+# Personal notes and explanatory material. A reading aid for the author, not part of the
+# repository's public surface — the folder is ignored rather than the file, so anything added
+# later is covered by the same decision instead of needing a new one.
+notes/

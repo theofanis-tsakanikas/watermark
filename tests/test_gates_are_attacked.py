@@ -36,6 +36,13 @@ def _load_gate_proof() -> ModuleType:
 #: and both are attacked through the harness that scores them.
 CLAIMS = {f"claim-{number}" for number in range(1, 8)}
 
+#: Controls that guard how the repository is *wired* rather than what it computes. They have no
+#: runtime module because nothing imports them — they read workflows and Terraform and refuse a
+#: shape. `deploy-inputs` is the rule that no value the account can be asked for may be
+#: transcribed into a settings page, which is a control precisely because its failure mode is
+#: silent and lives outside the repository.
+WIRING = {"deploy-inputs"}
+
 
 def _targets() -> set[str]:
     return {mutation.module for mutation in _load_gate_proof().MUTATIONS}
@@ -51,7 +58,7 @@ def test_every_mutation_names_a_gate_or_a_claim_that_exists() -> None:
     would be reported STALE by the harness, but only once somebody runs it; this fails in the
     fast suite instead."""
     gates = {path.stem for path in GATES.glob("*.py") if path.stem != "__init__"}
-    unknown = _targets() - gates - CLAIMS
+    unknown = _targets() - gates - CLAIMS - WIRING
     assert not unknown, f"mutations against neither a gate nor a claim: {sorted(unknown)}"
 
 

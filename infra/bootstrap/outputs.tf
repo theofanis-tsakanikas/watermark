@@ -13,8 +13,16 @@ output "state_kms_key_arn" {
 }
 
 output "deploy_role_arn" {
-  description = "Role assumed by GitHub Actions. Goes into the workflows as a repository variable, not a secret — it is an ARN, and a role ARN with no trust for the caller is not a credential."
+  description = "Role assumed by GitHub Actions. Not transcribed anywhere: the workflows compose it from the account id and the name this layer chose, and `published.tf` writes it to SSM as well so a human can check what the workflow composed."
   value       = aws_iam_role.deploy.arn
+}
+
+output "repository_variables" {
+  description = "The only two values a person sets by hand. Everything else the deploy needs is published to SSM and resolved after the role is assumed."
+  value = {
+    AWS_ACCOUNT_ID = data.aws_caller_identity.current.account_id
+    AWS_REGION     = var.aws_region
+  }
 }
 
 output "backend_configuration" {

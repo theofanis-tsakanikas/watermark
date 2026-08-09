@@ -103,6 +103,25 @@ data "aws_iam_policy_document" "state_access" {
     ]
     resources = [aws_kms_key.state.arn]
   }
+
+  # Read back what `published.tf` wrote, and nothing else.
+  #
+  # Scoped to this layer's prefix rather than `/${var.project}/*`: later layers will publish
+  # parameters of their own, and a deploy that can read all of them is a deploy that can read
+  # whatever the next person puts there without anybody revisiting this grant.
+  #
+  # Easy to forget, and it fails in the worst place — *after* `configure-aws-credentials`
+  # succeeds, when the chain looks like it worked.
+  statement {
+    sid       = "ReadWhatBootstrapPublished"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${var.project}/bootstrap/*"]
+  }
+
+  # The budget address is a SecureString encrypted with this layer's own key, so decrypting it
+  # needs no grant beyond `UseTheStateKey` above. That is the reason for using that key rather
+  # than the AWS-managed SSM one: one key, one grant, one thing to reason about.
 }
 
 resource "aws_iam_role_policy" "state_access" {

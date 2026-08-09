@@ -67,9 +67,35 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          # Composed from the account id and the name bootstrap chose. See deploy.yml.
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
           aws-region: ${{ vars.AWS_REGION }}
           role-duration-seconds: 3600
+
+      - name: resolve what bootstrap published
+        run: |
+          set -euo pipefail
+          read_param() {
+            aws ssm get-parameter --name "/watermark/bootstrap/$1" \
+              --with-decryption --query 'Parameter.Value' --output text
+          }
+          {
+            echo "TF_STATE_BUCKET=$(read_param state_bucket)"
+            echo "BUDGET_ALERT_EMAIL=$(read_param budget_alert_email)"
+          } >> "$GITHUB_ENV"
+
+      - name: the substations, from the generator that declares them
+        # A destroy does not care what the value is, only that the configuration evaluates. It
+        # is read from the same source as the deploy anyway: a second copy here would be the
+        # copy that drifts, and a teardown that fails on a stale variable is a teardown that
+        # leaves the estate standing and billing.
+        run: |
+          set -euo pipefail
+          python3 -c '
+          import json
+          from data.cast import SUBSTATIONS
+          print("SUBSTATIONS=" + json.dumps(list(SUBSTATIONS)))
+          ' >> "$GITHUB_ENV"
 
       - name: destroy the layers, in reverse dependency order
         env:
@@ -78,8 +104,11 @@ jobs:
           # teardown prompt for input in a workflow that has no terminal.
           TF_VAR_expires_at: "2000-01-01T00:00:00Z"
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-          TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
+          TF_VAR_budget_alert_email: ${{ env.BUDGET_ALERT_EMAIL }}
           TF_VAR_github_owner: ${{ github.repository_owner }}
+          # Same reason as `expires_at` above: `substations` has no default, and a destroy that
+          # cannot evaluate the streaming configuration cannot tear it down either.
+          TF_VAR_substations: ${{ env.SUBSTATIONS }}
         run: |
           set -euo pipefail
           ORDER="governance ml lakehouse streaming foundation"
@@ -88,7 +117,7 @@ jobs:
           for layer in $ORDER; do
             echo "::group::$layer"
             terraform -chdir="infra/$layer" init \
-              -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+              -backend-config="bucket=$TF_STATE_BUCKET" \
               -backend-config="region=${{ vars.AWS_REGION }}"
             terraform -chdir="infra/$layer" destroy -auto-approve
             echo "::endgroup::"

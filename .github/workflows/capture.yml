@@ -58,7 +58,8 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          # Composed from the account id and the name bootstrap chose. See deploy.yml.
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: start the Flink application

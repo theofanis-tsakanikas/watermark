@@ -73,7 +73,7 @@ fmt: ## Apply ruff formatting
 #   claim 7  no automatic consequential decision on a person — phase 3
 
 .PHONY: claims
-claims: core-pure adapter-thin parity-independent flink-versions contracts-validate seed-check claim-1 claim-2 claim-3 claim-4 claim-5 claim-7 ## Every claim gate that exists today
+claims: core-pure adapter-thin parity-independent flink-versions contracts-validate seed-check claim-1 claim-2 claim-3 claim-4 claim-5 claim-6 claim-7 policy cost ## Every claim gate that exists today
 
 .PHONY: core-pure
 core-pure: ## The stream core imports no framework and no cloud SDK
@@ -127,9 +127,25 @@ claim-4: ## CLAIM 4 — no decision on a stale feature
 claim-5: ## CLAIM 5 — no model reaches an endpoint ungated
 	$(PY) -m evals.promotion
 
+.PHONY: claim-6
+claim-6: ## CLAIM 6 — erasure is complete to a declared boundary
+	$(PY) -m evals.erasure
+
+.PHONY: policy
+policy: ## The Lake Formation access suite: every reachable set, and every closed path
+	$(PY) scripts/check_policy_access.py
+
+.PHONY: cost
+cost: ## A full capture stays inside the design's cost envelope
+	$(PY) scripts/check_cost_envelope.py
+
 .PHONY: claim-7
 claim-7: ## CLAIM 7 — no automatic consequential decision about a person
 	$(PY) -m evals.oversight
+
+.PHONY: annex-iv
+annex-iv: ## Regenerate the Annex IV technical documentation from the contracts
+	$(PY) scripts/generate_annex_iv.py
 
 .PHONY: gate-proof
 gate-proof: ## Break every gate on purpose; each must be refused, for the right reason

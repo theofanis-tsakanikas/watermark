@@ -131,6 +131,20 @@ CHECKS: list[Check] = [
     ),
     Check(
         "correctness",
+        "claim 6 · erasure",
+        [PYTHON, "-m", "evals.erasure"],
+        "The system refuses to certify unless every leg confirms, and the certificate states "
+        "the one leg deletion cannot reach.",
+    ),
+    Check(
+        "correctness",
+        "policy access",
+        [PYTHON, "scripts/check_policy_access.py"],
+        "Every reachable set exact and every closed path closed. A suite asserting only the "
+        "first passes on a policy that grants everything.",
+    ),
+    Check(
+        "correctness",
         "claim 7 · oversight",
         [PYTHON, "-m", "evals.oversight"],
         "The automated path is structurally incapable of a consequential decision about a "
@@ -192,6 +206,20 @@ CHECKS: list[Check] = [
         "format",
         [RUFF, "format", "--check", "src", "tests", "scripts", "data", "evals", "streaming"],
         "The same command CI runs.",
+    ),
+    Check(
+        "consistency",
+        "Annex IV documentation",
+        [PYTHON, "scripts/generate_annex_iv.py", "--check"],
+        "Generated from the contracts. A hand-edited generated document is one that describes "
+        "the system somebody meant to build.",
+    ),
+    Check(
+        "consistency",
+        "cost envelope",
+        [PYTHON, "scripts/check_cost_envelope.py"],
+        "A full capture stays inside the €100 the design is constrained by. An estimate from a "
+        "rate card, never a bill — nothing here has been applied.",
     ),
     # ── Deployability ───────────────────────────────────────────────────────
     Check(

@@ -307,6 +307,64 @@ def _accept_an_unnamed_reviewer(root: Path) -> bool:
     )
 
 
+def _let_a_policy_grant_be_a_disjunction(root: Path) -> bool:
+    """Match *any* tag instead of all of them.
+
+    `all` to `any` — one word, and it reads identically in the YAML. A purpose-limited grant
+    becomes a sensitivity-limited one, so the settlement role can read everything collected for
+    a fraud investigation and nothing anywhere looks different.
+    """
+    return _replace(
+        root / "src/watermark/policy/evaluator.py",
+        "        return all(tags.get(key) in values for key, values in self.match.items())",
+        "        return any(tags.get(key) in values for key, values in self.match.items())",
+    )
+
+
+def _certify_an_incomplete_erasure(root: Path) -> bool:
+    """Issue a certificate even when a leg was never attempted.
+
+    Plausible as a fix for a flaky orchestration step. It is the one change that makes claim 6
+    a lie rather than a limitation: the subject is told they are gone, and the residual becomes
+    invisible.
+    """
+    return _replace(
+        root / "src/watermark/erasure/certificate.py",
+        "    if missing or unfinished:",
+        "    if False:",
+    )
+
+
+def _let_a_second_leg_declare_a_boundary(root: Path) -> bool:
+    """Allow any leg to be BOUNDED, not just the model artefacts.
+
+    How "we could not finish that one either" becomes a second declared boundary, and then a
+    third, until the certificate declares a boundary around everything it did not do.
+    """
+    # The check, not the constant. Widening BOUNDABLE to "*" inverts it — the legitimate
+    # bounded leg is then the one refused — which would be a mutation that fails for a reason
+    # unrelated to the rule. Removing the check is the change somebody would actually make.
+    return _replace(
+        root / "src/watermark/erasure/certificate.py",
+        "    if misbounded:",
+        "    if False:",
+    )
+
+
+def _flatter_the_bias_gate(root: Path) -> bool:
+    """Make the precision-gap check one-sided again.
+
+    This is the bug the analysis actually found, restored. Under the finding the expression is
+    negative, so a five-fold difference in label coverage reads as a pass — and the model that
+    should be refused promotes. See docs/BIAS-FINDING.md.
+    """
+    return _replace(
+        root / "src/watermark/models/promotion.py",
+        "        gap = abs(bias.precision_least_deprived - bias.precision_most_deprived)",
+        "        gap = bias.precision_least_deprived - bias.precision_most_deprived",
+    )
+
+
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "import a cloud SDK into the stream core",
@@ -465,6 +523,46 @@ MUTATIONS: tuple[Mutation, ...] = (
         _accept_an_unnamed_reviewer,
         "Plausible as a fix for an integration test with no real inspectors in it. An entry "
         "with a blank signature then actuates, and the record looks exactly like a reviewed one.",
+    ),
+    Mutation(
+        "let a policy grant match any tag instead of all",
+        "policy evaluation",
+        "core_purity",
+        ["scripts/check_policy_access.py"],
+        "and must not",
+        _let_a_policy_grant_be_a_disjunction,
+        "One word, and it reads identically in the YAML. A purpose-limited grant becomes a "
+        "sensitivity-limited one and nothing anywhere looks different.",
+    ),
+    Mutation(
+        "certify an incomplete erasure",
+        "claim 6",
+        "claim-6",
+        ["-m", "evals.erasure"],
+        "certificate was issued",
+        _certify_an_incomplete_erasure,
+        "Plausible as a fix for a flaky orchestration step. It is the change that makes claim "
+        "6 a lie rather than a limitation.",
+    ),
+    Mutation(
+        "let a second leg declare a boundary",
+        "claim 6",
+        "claim-6",
+        ["-m", "evals.erasure"],
+        "second leg declared a boundary",
+        _let_a_second_leg_declare_a_boundary,
+        "How 'we could not finish that one either' becomes a second boundary, and then a "
+        "third, until the certificate declares one around everything it did not do.",
+    ),
+    Mutation(
+        "make the bias gate one-sided again",
+        "claim 5",
+        "claim-5",
+        ["-m", "evals.promotion"],
+        "precision gap",
+        _flatter_the_bias_gate,
+        "The bug the analysis actually found, restored. A five-fold difference in label "
+        "coverage then reads as a pass and the model that should be refused promotes.",
     ),
 )
 

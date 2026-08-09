@@ -12,7 +12,7 @@ Store · Lake Formation · Step Functions · Terraform*
 
 ---
 
-> **Status: phase 1 complete, and the estate is deploy-ready. Never deployed.** The scoreboard
+> **Status: all four phases complete. Every claim proved offline; the estate is deploy-ready and has never been deployed.** The scoreboard
 > below lists what is provable today, which is not yet much; it grows one row per claim, and a
 > row appears only when the command that produces it exists.
 >
@@ -75,18 +75,36 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 
 | check | result |
 |---|---|
-| **claim 1** · no decision from an unclosed window | **7/7** labelled situations — a silent substation, a stalled stream, a device three hours fast, a partition down at start-up, and the healthy day that must *not* trip any of them |
+| **claim 1** · no decision from an unclosed window | **7/7** — a silent substation, a stalled stream, a device three hours fast, a partition down at start-up, and the healthy day that must *not* trip any of them |
 | **claim 2** · replay is identical | **5/5** — the same day shuffled under five seeds and delivered twice over produces the same 3,584 published values, the same 283 restatements and the same lineage ids |
-| `make gate-proof` | **10 refused, 0 accepted, 0 stale** |
-| `make core-pure` | the stream core imports **no framework and no cloud SDK**, and reads no clock, no environment and no file |
-| `make adapter-thin` | the PyFlink adapter carries **no semantic literal** — every duration is a name resolved from the core (ADR-0003) |
-| `make contracts-validate` | **6 entity contracts** load and cross-check; **4** hold personal data and every one declares its purpose |
+| **claim 3** · train/serve parity | **5/5** — two independent mechanisms over one contract, compared bitemporally with no tolerance, including the planted future-leakage case |
+| **claim 4** · no decision on a stale feature | **7/7** — the gate is in front of the input, and the fallback marker survives into the record |
+| **claim 5** · no model reaches an endpoint ungated | **11/11** — and **the shipped model is refused**, for the finding in [docs/BIAS-FINDING.md](docs/BIAS-FINDING.md) |
+| **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach |
+| **claim 7** · no automatic decision about a person | **8/8** — the contract does not load and the actuation type cannot be constructed |
+| `make gate-proof` | **20 refused, 0 accepted, 0 stale** |
+| `make policy` | **24 principal-resource pairs** — every reachable set exact and every closed path closed |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined, net restatement **+2,261 Wh** |
-| `make test` | **176 passing**, offline, credential-free, no JVM, under a second |
+| `make test` | **207 passing**, offline, credential-free, no JVM, under a second |
 | `terraform validate` | **6/6 layers** against real provider schemas |
 | `checkov` | **0 findings**, 36 deliberate exceptions each carrying a written reason beside the resource |
-| `make preflight` | **18 passed, 0 failed, 0 skipped** |
+| `make preflight` | **27 passed, 0 failed, 0 skipped** |
 | core↔Flink equivalence | **not yet observed green anywhere** — see below |
+
+Two rows are worth reading twice.
+
+**Claim 5 refuses the model this repository trained.** Not a threshold that happens to be
+tight — a finding. Precision measured 1000/1000 in the most deprived tercile against 181/1000
+in the least, because every true case there was confirmed by an inspector and almost none
+elsewhere was. The model looks excellent exactly where the dispatch log is densest. The gate
+had been written to catch the *opposite* shape and would have called it a pass;
+[docs/BIAS-FINDING.md](docs/BIAS-FINDING.md) has the numbers, what changed, and what is still
+not fixed.
+
+**`gate-proof` is the row to read first.** A suite tells you the code does what it does; this
+copies the repository, plants twenty real violations, and requires the *named* gate to refuse
+each one *for the right reason*. Four of the twenty are mistakes this project actually made and
+the harness caught.
 
 **One row is deliberately absent from the scoreboard.** ADR-0003's tier two runs the real
 PyFlink job on a MiniCluster and asserts it produces the same bytes as the pure core. It cannot

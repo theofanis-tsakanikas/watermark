@@ -94,8 +94,27 @@ jobs:
         # docs/BIAS-FINDING.md. That is the result, and the harness asserts the refusal.
         run: python -m evals.promotion
 
+      - name: "claim 6 — erasure is complete to a declared boundary"
+        run: python -m evals.erasure
+
+      - name: the Lake Formation access suite
+        # Both halves: what each principal can reach and what must stay closed. A suite that
+        # only asserts the first passes just as happily on a policy that grants everything —
+        # which is the direction a tag policy fails in.
+        run: python scripts/check_policy_access.py
+
+      - name: a full capture stays inside the cost envelope
+        # CLAUDE.md says a design that pushes past €100 is wrong before the budget is. That is
+        # only load-bearing if something checks it.
+        run: python scripts/check_cost_envelope.py
+
       - name: "claim 7 — no automatic consequential decision about a person"
         run: python -m evals.oversight
+
+      - name: the technical documentation has not drifted from the contracts
+        # AI Act Art. 11 and Annex IV, generated rather than written. A hand-edited generated
+        # document describes the system somebody meant to build.
+        run: python scripts/generate_annex_iv.py --check
 
       - name: the two feature mechanisms are independent
         # ADR-0004. Without this, the first refactor to notice that the two aggregators look
@@ -119,8 +138,8 @@ jobs:
         # the deployed job disagree about what late means with only the job being right.
         run: python scripts/check_adapter_is_thin.py
 
-      # Claim 6 arrives with phase 4. A step here for a claim that is not yet provable
-      # would be a green tick over work that has not happened.
+      # All seven claims are checked above. Every one of them runs on a runner with no AWS
+      # account, which is the same thing as saying a reviewer can check them on a laptop.
 
   gate-proof:
     name: attack our own gates

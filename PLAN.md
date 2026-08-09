@@ -86,25 +86,25 @@ named reason, and the late batch restates rather than overwrites.
 
 *Unlocks claims 3 and 4. This is where the project becomes an AI data engineering project.*
 
-- [ ] `contracts/features/` — one file per feature: definition, window, grain, **freshness
+- [x] `contracts/features/` — one file per feature: definition, window, grain, **freshness
       budget**, purpose (GDPR Art. 5), owner. A feature without a freshness budget or a
       declared purpose must fail to load, with a test asserting it.
-- [ ] `src/watermark/features/` — offline resolution (as-of SQL over Iceberg) and online
+- [x] `src/watermark/features/` — offline resolution (as-of SQL over Iceberg) and online
       resolution (streaming materialisation into the Feature Store) from **one contract and
       two deliberately different mechanisms**. The contract is shared; the execution is not.
       Collapsing them into one shared function would make claim 3 compare code with itself
       and report green — see ADR-0004.
-- [ ] `evals/parity/` — **claim 3**. For every feature and a population of entities, the
+- [x] `evals/parity/` — **claim 3**. For every feature and a population of entities, the
       online value equals the offline value computed at the same instant. Deliberately
       include a case where a naive implementation would leak a future value, and assert the
       harness catches it.
-- [ ] `evals/freshness/` — **claim 4**. A feature past its budget is never served; the
+- [x] `evals/freshness/` — **claim 4**. A feature past its budget is never served; the
       decision falls back; the fallback marker survives to the decision record.
-- [ ] `contracts/decisions/` — the three decision contracts, including fallback rules and
+- [x] `contracts/decisions/` — the three decision contracts, including fallback rules and
       actuation policy. **Load-time enforcement of claim 7** goes in here now, even though
       its eval arrives in Phase 3: a contract with `effect: significant_on_person` and
       `actuation: automatic` must fail to load.
-- [ ] `src/watermark/decisions/` — the decision engine and the deterministic fallback rules.
+- [x] `src/watermark/decisions/` — the decision engine and the deterministic fallback rules.
       The curtailment fallback must be computable with no model and no fresh features.
 - [x] `infra/lakehouse/` and the Feature Store definitions in `infra/ml/`. Glue Data Quality
       rules as a gate on the offline side. *(Done early, in phase 1: the whole estate was
@@ -120,23 +120,23 @@ decision, and every decision record states whether it came from a model or a fal
 
 *Unlocks claims 5 and 7.*
 
-- [ ] `src/watermark/models/` — training for both models from the offline store, as-of a
+- [x] `src/watermark/models/` — training for both models from the offline store, as-of a
       pinned snapshot. Reproducible: the same snapshot yields the same model metrics.
-- [ ] Bias analysis on the anomaly path, with the proxy-discrimination risk from
+- [x] Bias analysis on the anomaly path, with the proxy-discrimination risk from
       `docs/SCENARIO.md` as the thing actually measured — not a generic fairness metric
       chosen because it is easy to compute. Write down what was found, including if it is
       uncomfortable.
-- [ ] The **promotion gate**: performance thresholds, bias thresholds, a model card generated
+- [x] The **promotion gate**: performance thresholds, bias thresholds, a model card generated
       from the training run, and a named human approver. Nothing self-approves (doctrine 5).
-- [ ] `evals/promotion/` — **claim 5**. A model that fails each threshold in turn is refused,
+- [x] `evals/promotion/` — **claim 5**. A model that fails each threshold in turn is refused,
       and refused *for that threshold*.
-- [ ] `src/watermark/decisions/` oversight queue: the anomaly path's inspector flow, the
+- [x] `src/watermark/decisions/` oversight queue: the anomaly path's inspector flow, the
       recorded accept/reject, and the rejection as a training signal.
-- [ ] `evals/oversight/` — **claim 7**. Attempt to actuate a significant decision without a
+- [x] `evals/oversight/` — **claim 7**. Attempt to actuate a significant decision without a
       recorded human decision, through every path that exists. All must fail.
-- [ ] SageMaker Pipelines, Model Registry, Clarify, Model Monitor, Model Cards, endpoint with
+- [x] SageMaker Pipelines, Model Registry, Clarify, Model Monitor, Model Cards, endpoint with
       shadow → canary → auto-rollback on drift or p99 SLO breach. In `infra/ml/`, validated.
-- [ ] A rollback rolls back *both* the model and the feature snapshot it was trained against.
+- [x] A rollback rolls back *both* the model and the feature snapshot it was trained against.
 
 **Done when:** claims 5 and 7 pass offline, the bias finding is written down, and a rollback
 is demonstrated end to end in the offline harness.
@@ -147,27 +147,27 @@ is demonstrated end to end in the offline harness.
 
 *Unlocks claim 6 and closes the project.*
 
-- [ ] `src/watermark/policy/` — Lake Formation tag policy authored in the repository and
+- [x] `src/watermark/policy/` — Lake Formation tag policy authored in the repository and
       evaluated **offline**, the way Attestor evaluates Cedar. The deployed grants and the
       offline evaluator must read the same bytes.
-- [ ] A Lake Formation access suite: for each principal and each tag combination, the
+- [x] A Lake Formation access suite: for each principal and each tag combination, the
       expected reachable set — and the paths that must be closed.
-- [ ] `src/watermark/erasure/` — the KMS key hierarchy, the Step Functions orchestration
+- [x] `src/watermark/erasure/` — the KMS key hierarchy, the Step Functions orchestration
       across Iceberg, offline store, online store, training sets and model artefacts, and the
       **completeness proof**. The system refuses to report "erased" unless every leg confirms.
-- [ ] `evals/erasure/` — **claim 6**. Erase a subject, then attempt to reach them through
+- [x] `evals/erasure/` — **claim 6**. Erase a subject, then attempt to reach them through
       every store. Include a deliberately incomplete run and assert the system refuses to
       certify it.
-- [ ] Recovery drill: kill the job mid-window, restore from savepoint, assert no double
+- [x] Recovery drill: kill the job mid-window, restore from savepoint, assert no double
       counting. Declared RPO/RTO, tested rather than written.
-- [ ] Generated technical documentation (Annex IV shape) + the DPIA for the anomaly path,
+- [x] Generated technical documentation (Annex IV shape) + the DPIA for the anomaly path,
       CI-failing on drift from the code.
-- [ ] Cost telemetry: cost per decision, cost per meter.
-- [ ] `scripts/preflight.py` — every claim, every consistency invariant, `terraform validate`
+- [x] Cost telemetry: cost per decision, cost per meter.
+- [x] `scripts/preflight.py` — every claim, every consistency invariant, `terraform validate`
       against real provider schemas, checkov at zero findings. One command, all checks.
-- [ ] `README.md` with a scoreboard, in the style of Attestor's: numbers that are the output
+- [x] `README.md` with a scoreboard, in the style of Attestor's: numbers that are the output
       of a command in the repository, not a summary of one.
-- [ ] ~~**The live capture.**~~ **Out of scope — nothing is ever applied to AWS.** The estate
+- [—] ~~**The live capture.**~~ **Out of scope — nothing is ever applied to AWS.** The estate
       is built, validated against real provider schemas, scanned, and left unapplied. Decided
       2026-08-09: a live capture costs real money and adds nothing to any of the seven claims,
       every one of which is provable offline by construction. The replacement deliverable is

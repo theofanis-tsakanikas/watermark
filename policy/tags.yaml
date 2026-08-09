@@ -1,0 +1,81 @@
+# The Lake Formation tag policy, authored here and evaluated offline.
+#
+# The deployed grants in `infra/governance/lake_formation.tf` and the evaluator in
+# `src/watermark/policy/` read **these bytes**. That is the whole arrangement: a policy suite
+# that tests a Python re-implementation of the grants tests a second thing that happens to
+# resemble the first, and the two diverge on the first busy afternoon.
+#
+# Tags rather than per-table grants. A list of tables somebody maintains is a list that is
+# wrong; a tag says *what a column is*, a grant says *who may see that kind of thing*, and a
+# new table inherits the policy by being tagged rather than by being remembered.
+
+tags:
+  watermark:sensitivity:
+    description: What kind of thing this is, for access purposes.
+    values:
+      - operational      # substation load, thermal limits, topology. Nobody is identifiable.
+      - internal         # business data that is not personal: group totals, market positions.
+      - personal         # attributable to a household. Everything claim 6 must reach.
+
+  watermark:purpose:
+    description: >
+      GDPR Art. 5(1)(b) in the access layer. A principal granted `settlement` may not read a
+      column collected for `network-operations`, even though both live in one warehouse and one
+      account — which is the difference between purpose limitation as a policy and as a control.
+    values:
+      - settlement
+      - network-operations
+      - fraud-investigation
+
+# Every resource this policy governs, and the tags it carries. Terraform applies these; the
+# evaluator reads them. `scripts/check_policy_matches_terraform.py` fails when they drift.
+resources:
+  - resource: watermark_gold.settlement_hour
+    tags: { watermark:sensitivity: personal, watermark:purpose: settlement }
+  - resource: watermark_gold.settlement_balancing_group
+    tags: { watermark:sensitivity: internal, watermark:purpose: settlement }
+  - resource: watermark_silver.meter_interval
+    tags: { watermark:sensitivity: personal, watermark:purpose: settlement }
+  - resource: watermark_bronze.quarantine
+    tags: { watermark:sensitivity: personal, watermark:purpose: settlement }
+  - resource: watermark_gold.substation_telemetry
+    tags: { watermark:sensitivity: operational, watermark:purpose: network-operations }
+  - resource: watermark_gold.inspection_outcome
+    tags: { watermark:sensitivity: personal, watermark:purpose: fraud-investigation }
+
+# The grants. Each one is a decision written down, and the suite in `evals/` asserts both what
+# each principal *can* reach and what it must not.
+grants:
+  - principal: role/watermark-settlement
+    description: The billing platform. Reads settled totals and the intervals behind them.
+    permissions: [SELECT]
+    match:
+      watermark:sensitivity: [personal, internal]
+      watermark:purpose: [settlement]
+
+  - principal: role/watermark-network-operations
+    description: >
+      The control room. Deliberately has no access to anything personal — a curtailment
+      decision is about a substation, and the operator does not need to know whose house is
+      behind it.
+    permissions: [SELECT]
+    match:
+      watermark:sensitivity: [operational]
+      watermark:purpose: [network-operations]
+
+  - principal: role/watermark-revenue-protection
+    description: >
+      Revenue protection. Reads the inspection outcomes and nothing collected for settlement —
+      the purpose tag is what stops a fraud investigation becoming a general licence to read
+      consumption.
+    permissions: [SELECT]
+    match:
+      watermark:sensitivity: [personal]
+      watermark:purpose: [fraud-investigation]
+
+  - principal: role/watermark-analyst
+    description: Analytics. Aggregates only; nothing attributable to a household.
+    permissions: [SELECT]
+    match:
+      watermark:sensitivity: [internal, operational]
+      watermark:purpose: [settlement, network-operations]

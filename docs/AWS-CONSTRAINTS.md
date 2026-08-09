@@ -230,3 +230,22 @@ Every section above is dated. AWS changes; a constraint recorded in August 2026 
 in December 2026 is a memory, not a fact. When a phase begins, the sections it depends on are
 re-read and re-dated, and a change that invalidates a decision produces an ADR rather than a
 quiet edit.
+
+---
+
+## PyFlink cannot be installed on this machine
+
+**Verified 2026-08-09.** `pip install apache-flink` fails on macOS/arm64 under Python 3.12:
+`apache-flink` requires `apache-beam`, which has no wheel for that combination and fails to
+build from source. Java 17 is present, so the JVM is not the obstacle.
+
+**What it means for ADR-0003's tier two.** The core↔Flink equivalence test — the one that
+establishes that Flink's mechanics do not change the answers the core computes — **has not been
+executed anywhere.** It is written to run on a Linux runner, where the wheels exist, as its own
+CI job with `WATERMARK_REQUIRE_FLINK=1` so that a missing runtime is a failure rather than a
+skip. Until that job has run and gone green, the honest statement is that tier two exists and
+is unproven, and it is recorded that way in the README rather than counted on the scoreboard.
+
+This is written down rather than worked around because the alternative was worse: shipping a
+test file that has never executed, in a repository whose rule is that generated-but-unrun code
+is not done. A check nobody has watched pass is indistinguishable from one that cannot.

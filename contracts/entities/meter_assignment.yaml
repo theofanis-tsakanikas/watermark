@@ -1,0 +1,26 @@
+id: meter_assignment
+title: Which customer a meter belongs to, over time
+kind: reference
+owner: metering-platform
+source: cdc/dms:public.meter_assignment
+grain: meter
+key: [meter_id]
+
+personal_data: true
+purpose: >
+  Attributing a reading to the party responsible for it at the time the electricity was used.
+  GDPR Art. 5(1)(b). This is the join that makes a reading personal data, and it is the join
+  that a point-in-time error gets wrong: resolving it against today's assignment prices last
+  month's consumption to the wrong customer.
+
+scd2:
+  valid_from: valid_from
+  valid_to: valid_to
+  tracked:
+    - customer_id
+
+references:
+  - entity: meter
+    via: meter_id
+  - entity: customer
+    via: customer_id

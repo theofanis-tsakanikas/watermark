@@ -90,6 +90,19 @@ CHECKS: list[Check] = [
     ),
     Check(
         "correctness",
+        "claim 1 · watermark",
+        [PYTHON, "-m", "evals.watermark"],
+        "No decision comes out of a window that has not closed — including when a substation "
+        "goes silent, which is the case that fails without raising anything.",
+    ),
+    Check(
+        "correctness",
+        "claim 2 · replay",
+        [PYTHON, "-m", "evals.replay"],
+        "The same events, shuffled and duplicated, produce the same bytes and the same lineage.",
+    ),
+    Check(
+        "correctness",
         "gate-proof",
         [PYTHON, "scripts/gate_proof.py"],
         "Each gate refuses a real violation, for the right reason. Slow, and the most "
@@ -99,14 +112,28 @@ CHECKS: list[Check] = [
     # ── Consistency ─────────────────────────────────────────────────────────
     Check(
         "consistency",
+        "entity contracts",
+        [PYTHON, "scripts/check_contracts.py"],
+        "Every contract loads, every reference resolves, and nothing holds personal data "
+        "without a declared purpose.",
+    ),
+    Check(
+        "consistency",
+        "seed reproduces the recording",
+        [PYTHON, "scripts/seed_check.py"],
+        "If the generated day drifts, every claim above was scored against a different day "
+        "than the one that was reviewed — which is the same as not having scored them.",
+    ),
+    Check(
+        "consistency",
         "lint",
-        [RUFF, "check", "src", "tests", "scripts"],
+        [RUFF, "check", "src", "tests", "scripts", "data", "evals"],
         "The same command CI runs.",
     ),
     Check(
         "consistency",
         "format",
-        [RUFF, "format", "--check", "src", "tests", "scripts"],
+        [RUFF, "format", "--check", "src", "tests", "scripts", "data", "evals"],
         "The same command CI runs.",
     ),
     # ── Deployability ───────────────────────────────────────────────────────

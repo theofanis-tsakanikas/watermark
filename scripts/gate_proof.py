@@ -42,9 +42,10 @@ ROOT = Path(__file__).resolve().parents[1]
 class Mutation:
     name: str
     gate: str
-    #: The gate module under `src/watermark/gates/` this mutation attacks. Declared rather
-    #: than inferred, so `tests/test_gates_are_attacked.py` can insist that every gate in the
-    #: package is named here — a gate nobody attacks is a gate nobody has seen refuse.
+    #: What this mutation attacks: a gate module under `src/watermark/gates/`, or `claim-N` for
+    #: one of the seven claims. Declared rather than inferred, so
+    #: `tests/test_gates_are_attacked.py` can insist that every gate in the package is named
+    #: here — a gate nobody attacks is a gate nobody has seen refuse.
     module: str
     #: The command that must fail, run inside the mutated copy.
     command: list[str]
@@ -118,6 +119,90 @@ def _let_the_core_reach_back_into_the_package(root: Path) -> bool:
     )
 
 
+def _publish_before_the_window_closes(root: Path) -> bool:
+    """Let a window publish whether or not the watermark has passed it.
+
+    One condition. It is the line claim 1 is made of, and removing it does not raise, does not
+    log, and produces totals that look entirely normal — computed from whatever had arrived.
+    """
+    return _replace(
+        root / "src/watermark/core/windows.py",
+        "                view.status.may_close_windows",
+        "                True or view.status.may_close_windows",
+    )
+
+
+def _keep_whichever_copy_arrived_first(root: Path) -> bool:
+    """Deduplicate by arrival instead of by content.
+
+    The natural implementation, and the one that makes a replay a different run: two copies of
+    a reading differ in ingestion time, firmware and source, so whichever arrives first is an
+    accident of partitioning and retry timing. Every total stays correct.
+    """
+    return _replace(
+        root / "src/watermark/core/dedup.py",
+        "    representatives = [min(copies, key=_retry_order) for copies in by_content.values()]",
+        "    representatives = [copies[0] for copies in by_content.values()]",
+    )
+
+
+def _let_a_redelivery_change_the_lineage(root: Path) -> bool:
+    """Stop de-duplicating a derived id's parents.
+
+    Found by claim 2's harness rather than by review. Under at-least-once delivery the same
+    record arrives twice, and hashing `[id, id]` differently from `[id]` gives every published
+    total a new lineage id in a replay while every number stays identical.
+    """
+    return _replace(
+        root / "src/watermark/lineage/identity.py",
+        "    return _digest(kind, [key, *sorted(set(parents))])",
+        "    return _digest(kind, [key, *sorted(parents)])",
+    )
+
+
+def _accept_a_device_reporting_from_the_future(root: Path) -> bool:
+    """Stop quarantining clock skew.
+
+    Plausible as a fix for "too many quarantines from one substation". What it actually does
+    is let a meter three hours fast advance the watermark, which closes every window in the
+    grid three hours early, on incomplete data, with nothing anywhere reporting an error. The
+    most damaging single change available in this system, and it is one condition.
+    """
+    return _replace(
+        root / "src/watermark/core/normalise.py",
+        "    if skew.millis > policy.skew_tolerance.millis:",
+        "    if False:",
+    )
+
+
+def _let_a_contract_hold_personal_data_with_no_purpose(root: Path) -> bool:
+    """Strip the declared purpose from an entity that holds personal data.
+
+    GDPR Art. 5(1)(b) requires a specified purpose, and a purpose that is not written down is
+    not specified. The plausible version is not deletion — it is a new contract added in a
+    hurry without one.
+    """
+    path = root / "contracts/entities/meter_assignment.yaml"
+    text = path.read_text(encoding="utf-8")
+    marker = "purpose: >"
+    if marker not in text:
+        return False
+    start = text.index(marker)
+    end = text.index("\nscd2:", start)
+    path.write_text(text[:start] + text[end + 1 :], encoding="utf-8")
+    return True
+
+
+def _point_a_contract_at_an_entity_that_does_not_exist(root: Path) -> bool:
+    """Rename an entity in one place. The join compiles, returns nothing, and reads as a
+    customer with no consumption."""
+    return _replace(
+        root / "contracts/entities/meter_assignment.yaml",
+        "  - entity: customer\n",
+        "  - entity: customers\n",
+    )
+
+
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "import a cloud SDK into the stream core",
@@ -148,6 +233,66 @@ MUTATIONS: tuple[Mutation, ...] = (
         "Looks like reuse of our own pure code. It is the boundary dissolving one honest "
         "import at a time.",
     ),
+    Mutation(
+        "publish a window the watermark has not passed",
+        "claim 1",
+        "claim-1",
+        ["-m", "evals.watermark"],
+        "interval end",
+        _publish_before_the_window_closes,
+        "One condition, removed. It does not raise, does not log, and produces totals that "
+        "look entirely normal — computed from whatever had arrived by then.",
+    ),
+    Mutation(
+        "accept a device reporting from the future",
+        "claim 1",
+        "claim-1",
+        ["-m", "evals.watermark"],
+        "quarantined for clock skew",
+        _accept_a_device_reporting_from_the_future,
+        "One meter three hours fast then closes every window in the grid early, on incomplete "
+        "data, silently. The most damaging ordering mistake available here.",
+    ),
+    Mutation(
+        "deduplicate by arrival instead of by content",
+        "claim 2",
+        "claim-2",
+        ["-m", "evals.replay"],
+        "shuffling the input changed the output",
+        _keep_whichever_copy_arrived_first,
+        "The natural implementation. Two copies differ in ingestion time and firmware, so "
+        "which one is kept is an accident of partitioning — and every total stays correct.",
+    ),
+    Mutation(
+        "let a redelivery change a lineage id",
+        "claim 2",
+        "claim-2",
+        ["-m", "evals.replay"],
+        "lineage id",
+        _let_a_redelivery_change_the_lineage,
+        "Found by the harness rather than by review: at-least-once delivery then gives every "
+        "published total a new lineage id while every number stays identical.",
+    ),
+    Mutation(
+        "hold personal data with no declared purpose",
+        "entity contracts",
+        "claim-6",
+        ["scripts/check_contracts.py"],
+        "declares no purpose",
+        _let_a_contract_hold_personal_data_with_no_purpose,
+        "Not deletion — a contract added in a hurry without one. GDPR Art. 5(1)(b) requires a "
+        "specified purpose, and one that is not written down is not specified.",
+    ),
+    Mutation(
+        "reference an entity that does not exist",
+        "entity contracts",
+        "claim-6",
+        ["scripts/check_contracts.py"],
+        "does not exist",
+        _point_a_contract_at_an_entity_that_does_not_exist,
+        "A rename in one place. The join compiles, returns nothing, and reads as a customer "
+        "with no consumption.",
+    ),
 )
 
 
@@ -165,6 +310,8 @@ def _argv(command: list[str]) -> list[str]:
     """
     if command[0] == "pytest":
         return [sys.executable, "-m", "pytest", *command[1:]]
+    if command[0] == "-m":
+        return [sys.executable, *command]
     if command[0].endswith(".py"):
         return [sys.executable, *command]
     return list(command)

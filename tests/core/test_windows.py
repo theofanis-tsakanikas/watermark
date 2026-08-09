@@ -42,7 +42,7 @@ def reading(
 
 def view_at(moment: str, partitions: tuple[str, ...] = ("S1",)) -> WatermarkView:
     state = WatermarkState.declare(list(partitions))
-    _, view = observe(state, [(partitions[0], Instant.from_iso(moment))])
+    _, view = observe(state, [(partitions[0], Instant.from_iso(moment))], Instant.from_iso(moment))
     return view
 
 
@@ -77,9 +77,18 @@ class TestClaimOne:
                 ("S1", Instant.from_iso("2026-03-14T09:20:00Z")),
                 ("S2", Instant.from_iso("2026-03-14T09:20:00Z")),
             ],
+            Instant.from_iso("2026-03-14T09:21:00Z"),
         )
-        state, first = observe(state, [("S1", Instant.from_iso("2026-03-14T09:45:00Z"))])
-        state, second = observe(state, [("S1", Instant.from_iso("2026-03-14T10:00:00Z"))])
+        state, first = observe(
+            state,
+            [("S1", Instant.from_iso("2026-03-14T09:45:00Z"))],
+            Instant.from_iso("2026-03-14T09:46:00Z"),
+        )
+        state, second = observe(
+            state,
+            [("S1", Instant.from_iso("2026-03-14T10:00:00Z"))],
+            Instant.from_iso("2026-03-14T10:01:00Z"),
+        )
         second = held_back_by(second, first)
 
         assert second.status is WatermarkStatus.HELD_BACK
@@ -90,8 +99,12 @@ class TestClaimOne:
         manager = WindowManager()
         manager.admit(reading(312, "2026-03-14T09:17:00Z"))
         state = WatermarkState.declare(["S1"])
+        arrived = Instant.from_iso("2026-03-14T11:01:00Z")
         for _ in range(5):
-            state, view = observe(state, [("S1", Instant.from_iso("2026-03-14T11:00:00Z"))])
+            state, view = observe(
+                state, [("S1", Instant.from_iso("2026-03-14T11:00:00Z"))], arrived
+            )
+            arrived = arrived.plus(Duration.of_minutes(15))
         assert view.status is WatermarkStatus.STALLED
         assert manager.close(view).is_empty
 
@@ -222,8 +235,16 @@ class TestTheHoleInTheTotal:
         manager.admit(reading(312, "2026-03-14T09:17:00Z"))
 
         state = WatermarkState.declare(["S1", "S2"])
-        state, _ = observe(state, [("S1", Instant.from_iso("2026-03-14T09:20:00Z"))])
-        state, view = observe(state, [("S1", Instant.from_iso("2026-03-14T11:00:00Z"))])
+        state, _ = observe(
+            state,
+            [("S1", Instant.from_iso("2026-03-14T09:20:00Z"))],
+            Instant.from_iso("2026-03-14T09:21:00Z"),
+        )
+        state, view = observe(
+            state,
+            [("S1", Instant.from_iso("2026-03-14T11:00:00Z"))],
+            Instant.from_iso("2026-03-14T11:01:00Z"),
+        )
 
         result = manager.close(view).published[0]
         assert result.watermark_status is WatermarkStatus.ADVANCING_WITH_IDLE

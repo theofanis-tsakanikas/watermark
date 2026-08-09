@@ -1,0 +1,24 @@
+id: customer
+title: The party responsible for a connection point
+kind: reference
+owner: billing-platform
+source: cdc/dms:public.customer
+grain: customer
+key: [customer_id]
+
+# The whole of GDPR's reach into this platform starts here. A household's identity is personal
+# data by any reading, and 15-minute consumption attributed to it is behavioural data — it
+# shows when the house is empty.
+personal_data: true
+purpose: >
+  Attributing metered consumption to the party contractually responsible for it, so that
+  settlement and billing can be performed. GDPR Art. 5(1)(b): the specified, explicit and
+  legitimate purpose for which this data is collected. It is not used to profile the household,
+  to market to it, or to infer occupancy.
+
+scd2:
+  valid_from: valid_from
+  valid_to: valid_to
+  tracked:
+    - billing_group
+    - postcode_area

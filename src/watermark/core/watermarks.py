@@ -57,6 +57,11 @@ from typing import Final
 from watermark.core.records import METER_INTERVAL
 from watermark.core.time import Duration, Instant
 
+#: Twice the metering interval plus a margin. Long enough that an ordinary upload burst — where
+#: the highest event time does not move for the length of an interval — is never mistaken for a
+#: stall; short enough that a replay of old data is caught within one settlement period.
+DEFAULT_STALL_AFTER: Final = Duration.of_minutes(30)
+
 
 class WatermarkStatus(Enum):
     """What the watermark is currently able to assert."""
@@ -124,19 +129,27 @@ class WatermarkPolicy:
     #: as the threshold allows.
     idle_after: Duration
 
-    #: How many consecutive non-empty observations may leave the *leader* unmoved before the
-    #: stream is called stalled. More than one, because a single batch of only-late records is
-    #: ordinary. Counted in observations rather than event time on purpose: a stalled stream
-    #: has no advancing event time to measure itself against, which is what makes it stalled.
-    stall_tolerance: int = 3
+    #: How long records may keep arriving with the *leader* unmoved before the stream is called
+    #: stalled. Measured in **ingestion** time, taken from the records themselves.
+    #:
+    #: The first version counted consecutive observations instead, and running it over a day of
+    #: real generated traffic showed why that is wrong: meters report on a fifteen-minute
+    #: cadence, so the highest event time only moves once per interval, and every ordinary
+    #: upload burst produced hundreds of consecutive observations with an unmoved leader. Two
+    #: thirds of a normal day was reported STALLED. A threshold that fires on the healthy case
+    #: is worse than no threshold, because it is switched off within a week.
+    #:
+    #: Ingestion time is the right axis and it costs nothing: it is on every record, so the
+    #: module stays a pure function of its input and never reads a clock.
+    stall_after: Duration = DEFAULT_STALL_AFTER
 
     def __post_init__(self) -> None:
         if self.out_of_orderness.millis < 0:
             raise ValueError("out-of-orderness cannot be negative; it is a delay, not a lead")
         if not self.idle_after.is_positive:
             raise ValueError("idle_after must be positive; zero would idle every partition")
-        if self.stall_tolerance < 1:
-            raise ValueError("stall_tolerance below 1 calls the first quiet observation a stall")
+        if not self.stall_after.is_positive:
+            raise ValueError("stall_after must be positive; zero calls every batch a stall")
 
 
 #: Chosen against the scenario rather than by taste. Two minutes of out-of-orderness covers
@@ -161,8 +174,8 @@ class WatermarkState:
     highest: Mapping[str, Instant | None]
     #: The highest event time seen anywhere, carried so a stall can be recognised.
     previous_leader: Instant | None = None
-    #: Consecutive non-empty observations in which the leader did not move.
-    leader_unmoved: int = 0
+    #: The ingestion instant at which the leader last moved. A stall is how long ago that was.
+    leader_last_moved_at: Instant | None = None
 
     @staticmethod
     def declare(partitions: Iterable[str]) -> WatermarkState:
@@ -216,9 +229,15 @@ class WatermarkView:
 def observe(
     state: WatermarkState,
     events: Iterable[tuple[str, Instant]],
+    at: Instant,
     policy: WatermarkPolicy = DEFAULT_POLICY,
 ) -> tuple[WatermarkState, WatermarkView]:
     """Fold a batch of `(partition, event_time)` pairs into the state, and report.
+
+    `at` is the batch's **ingestion** instant, supplied by the caller and read off the records
+    rather than off a clock. It is what makes a stall measurable: "records have been arriving
+    for half an hour and the highest event time has not moved" is a statement about two times,
+    and only one of them is event time.
 
     Deterministic in the batch as a *set*: the highest event time per partition does not depend
     on the order the batch is iterated in. That is what lets claim 2 shuffle the input and still
@@ -242,12 +261,18 @@ def observe(
     leader_moved = leader is not None and (
         state.previous_leader is None or leader.epoch_millis > state.previous_leader.epoch_millis
     )
-    unmoved = 0 if leader_moved or not batch else state.leader_unmoved + 1
+    last_moved_at = (
+        at if leader_moved or state.leader_last_moved_at is None else (state.leader_last_moved_at)
+    )
+    stalled_for = at.since(last_moved_at)
 
     view = _view(highest, policy)
-    if unmoved >= policy.stall_tolerance and view.status not in (
-        WatermarkStatus.UNSTARTED,
-        WatermarkStatus.STARVED,
+    # An empty batch cannot stall anything: quiet and stuck are different facts, and calling a
+    # quiet Sunday a stall is how the alarm gets muted before the real one.
+    if (
+        batch
+        and stalled_for.millis > policy.stall_after.millis
+        and view.status not in (WatermarkStatus.UNSTARTED, WatermarkStatus.STARVED)
     ):
         view = WatermarkView(
             WatermarkStatus.STALLED,
@@ -259,7 +284,7 @@ def observe(
         )
 
     return (
-        WatermarkState(highest=highest, previous_leader=leader, leader_unmoved=unmoved),
+        WatermarkState(highest=highest, previous_leader=leader, leader_last_moved_at=last_moved_at),
         view,
     )
 

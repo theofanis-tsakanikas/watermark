@@ -31,19 +31,34 @@ def _load_gate_proof() -> ModuleType:
     return module
 
 
+#: The claims a mutation may name instead of a gate module. Not every control in this system is
+#: a module under `gates/`: claim 1 lives in a windowing condition and claim 2 in a sort order,
+#: and both are attacked through the harness that scores them.
+CLAIMS = {f"claim-{number}" for number in range(1, 8)}
+
+
+def _targets() -> set[str]:
+    return {mutation.module for mutation in _load_gate_proof().MUTATIONS}
+
+
 def test_every_gate_module_is_attacked() -> None:
     gates = {path.stem for path in GATES.glob("*.py") if path.stem != "__init__"}
-    attacked = {mutation.module for mutation in _load_gate_proof().MUTATIONS}
-    assert gates <= attacked, f"gates with no mutation against them: {sorted(gates - attacked)}"
+    assert gates <= _targets(), f"gates with no mutation against them: {sorted(gates - _targets())}"
 
 
-def test_every_mutation_names_a_gate_that_exists() -> None:
+def test_every_mutation_names_a_gate_or_a_claim_that_exists() -> None:
     """The other direction. A mutation pointing at a module that has been renamed or deleted
     would be reported STALE by the harness, but only once somebody runs it; this fails in the
     fast suite instead."""
     gates = {path.stem for path in GATES.glob("*.py") if path.stem != "__init__"}
-    attacked = {mutation.module for mutation in _load_gate_proof().MUTATIONS}
-    assert attacked <= gates, f"mutations against no gate: {sorted(attacked - gates)}"
+    unknown = _targets() - gates - CLAIMS
+    assert not unknown, f"mutations against neither a gate nor a claim: {sorted(unknown)}"
+
+
+def test_both_claims_proved_in_this_phase_are_attacked() -> None:
+    """Claims 1 and 2 are what phase 1 delivers. A claim with a harness and no mutation is a
+    harness nobody has seen refuse anything."""
+    assert {"claim-1", "claim-2"} <= _targets()
 
 
 def test_no_two_mutations_share_a_name() -> None:

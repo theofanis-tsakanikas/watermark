@@ -16,7 +16,7 @@ RUFF := $(if $(wildcard $(VENV)/bin/ruff),$(VENV)/bin/ruff,ruff)
 CHECKOV_VENV := .venv-checkov
 CHECKOV := $(if $(wildcard $(CHECKOV_VENV)/bin/checkov),$(CHECKOV_VENV)/bin/checkov,checkov)
 
-LINT_PATHS := src tests scripts
+LINT_PATHS := src tests scripts data evals
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Everything above the "cloud" section runs with NO AWS account and NO
@@ -82,11 +82,27 @@ fmt: ## Apply ruff formatting
 #   claim 7  no automatic consequential decision on a person — phase 3
 
 .PHONY: claims
-claims: core-pure ## Run every claim gate that exists today
+claims: core-pure contracts-validate seed-check claim-1 claim-2 ## Every claim gate that exists today
 
 .PHONY: core-pure
 core-pure: ## The stream core imports no framework and no cloud SDK
 	$(PY) scripts/check_core_is_pure.py
+
+.PHONY: contracts-validate
+contracts-validate: ## Every entity contract loads and cross-checks
+	$(PY) scripts/check_contracts.py
+
+.PHONY: seed-check
+seed-check: ## The generated day reproduces its recording, exactly
+	$(PY) scripts/seed_check.py
+
+.PHONY: claim-1
+claim-1: ## CLAIM 1 — no decision comes out of a window that has not closed
+	$(PY) -m evals.watermark
+
+.PHONY: claim-2
+claim-2: ## CLAIM 2 — replay is identical
+	$(PY) -m evals.replay
 
 .PHONY: gate-proof
 gate-proof: ## Break every gate on purpose; each must be refused, for the right reason

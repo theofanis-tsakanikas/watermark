@@ -50,8 +50,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install -e ".[dev]"
-      - run: ruff check src tests scripts
-      - run: ruff format --check src tests scripts
+      - run: ruff check src tests scripts data evals
+      - run: ruff format --check src tests scripts data evals
       # Tier one of ADR-0003: pure, no JVM, under a second. Everything except the core↔Flink
       # equivalence is proved here.
       - run: pytest -q
@@ -66,15 +66,32 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install -e ".[dev]"
 
+      - name: the entity contracts load and cross-check
+        # A personal-data entity with no declared purpose does not load (GDPR Art. 5(1)(b)),
+        # and neither does a set whose references point at entities that do not exist.
+        run: python scripts/check_contracts.py
+
+      - name: the generated day reproduces its recording
+        # The hinge. If the fixture drifts, every claim below was scored against a different
+        # day than the one that was reviewed; if the fixture holds and the fingerprint moves,
+        # the system changed.
+        run: python scripts/seed_check.py
+
+      - name: "claim 1 — no decision from a window that has not closed"
+        run: python -m evals.watermark
+
+      - name: "claim 2 — replay is identical"
+        run: python -m evals.replay
+
       - name: the stream core is framework-free and reads no ambient state
         # The precondition for every other claim. The day a boto3 import or a `datetime.now()`
         # appears three levels down inside a windowing function, nothing fails — the suite just
         # stops being runnable by a stranger, and that was the whole of the evidence.
         run: python scripts/check_core_is_pure.py
 
-      # Claims 1 and 2 arrive with phase 1, claims 3 and 4 with phase 2, claims 5 and 7 with
-      # phase 3, claim 6 with phase 4. A step here for a claim that is not yet provable would
-      # be a green tick over work that has not happened.
+      # Claims 3 and 4 arrive with phase 2, claims 5 and 7 with phase 3, claim 6 with phase 4.
+      # A step here for a claim that is not yet provable would be a green tick over work that
+      # has not happened.
 
   gate-proof:
     name: attack our own gates

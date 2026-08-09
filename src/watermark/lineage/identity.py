@@ -52,11 +52,20 @@ def of_reading(reading: MeterReading) -> LineageId:
 def derive(kind: str, key: str, parents: Iterable[LineageId]) -> LineageId:
     """An id for something computed from other things.
 
-    Parents are sorted before hashing. Without that, the id of a total would depend on the
-    order its readings happened to arrive in — which is the whole failure claim 2 exists to
-    catch, reappearing in the one place designed to prove it did not happen.
+    Parents are **sorted and de-duplicated**, and both halves were earned.
+
+    Sorting, because otherwise the id of a total would depend on the order its readings
+    happened to arrive in — the whole failure claim 2 exists to catch, reappearing in the one
+    place designed to prove it did not happen.
+
+    De-duplicating, because claim 2's harness found the other half. Under at-least-once
+    delivery the same record arrives twice, and a record delivered twice is *one* parent seen
+    twice: `[id, id]` and `[id]` describe the same provenance and must hash alike. Without
+    this, every published total in a replay with redeliveries carried a different lineage id
+    while every number was identical — which is precisely the shape of failure that no
+    reconciliation of totals would ever surface.
     """
-    return _digest(kind, [key, *sorted(parents)])
+    return _digest(kind, [key, *sorted(set(parents))])
 
 
 def of_result(result: WindowResult, contributing: Iterable[LineageId]) -> LineageId:

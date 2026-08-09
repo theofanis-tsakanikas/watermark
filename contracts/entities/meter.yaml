@@ -1,0 +1,28 @@
+id: meter
+title: A physical metering device at a connection point
+kind: reference
+owner: metering-platform
+source: cdc/dms:public.meter
+grain: meter
+key: [meter_id]
+
+# A meter id alone identifies a device, not a person — but it is trivially linkable to one
+# through `meter_assignment`, which makes it a pseudonymous identifier rather than anonymous
+# data. Declared as personal on that basis rather than on the narrower reading, because the
+# narrower reading is how a dataset ends up outside the erasure scope in claim 6.
+personal_data: true
+purpose: >
+  Identifying the device a reading came from, so that consumption can be attributed and a
+  fault or tamper signature can be investigated. GDPR Art. 5(1)(b).
+
+scd2:
+  valid_from: valid_from
+  valid_to: valid_to
+  tracked:
+    - firmware
+    - installed_at_substation
+    - meter_class
+
+references:
+  - entity: substation
+    via: installed_at_substation

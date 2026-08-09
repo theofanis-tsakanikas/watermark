@@ -1,0 +1,19 @@
+id: substation
+title: A distribution substation with a declared thermal limit
+kind: reference
+owner: network-operations
+source: cdc/dms:public.substation
+grain: substation
+key: [substation_id]
+
+# No natural person is identifiable from a substation. Declaring it false is not a shortcut:
+# it is what keeps the erasure scope in claim 6 honest, because an erasure that had to reach
+# every table would reach none of them properly.
+personal_data: false
+
+scd2:
+  valid_from: valid_from
+  valid_to: valid_to
+  tracked:
+    - name
+    - region

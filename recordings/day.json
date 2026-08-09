@@ -1,0 +1,18 @@
+{
+  "confirmed": 0,
+  "day": "2026-03-14",
+  "deliveries": 4312,
+  "meters": 40,
+  "net_restatement_wh": 2261,
+  "published": 3584,
+  "quarantined": 284,
+  "restated": 283,
+  "run_fingerprint": "d5e3a9932af39620dc8d6483972be3bbf9341d7060653ea250a8a232496576d4",
+  "stream_digest": "c3539626e23b3c9aa2dbbeb8da05b47d949a1e7fab8cc47a1dc95c9355afb9f5",
+  "substations": [
+    "SUB-01",
+    "SUB-02",
+    "SUB-03",
+    "SUB-04"
+  ]
+}

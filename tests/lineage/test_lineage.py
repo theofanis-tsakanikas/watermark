@@ -31,7 +31,11 @@ def reading(
 
 
 def view_at(moment: str):
-    _, view = observe(WatermarkState.declare(["S1"]), [("S1", Instant.from_iso(moment))])
+    _, view = observe(
+        WatermarkState.declare(["S1"]),
+        [("S1", Instant.from_iso(moment))],
+        Instant.from_iso(moment),
+    )
     return view
 
 

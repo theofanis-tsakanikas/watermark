@@ -1,0 +1,26 @@
+id: tariff
+title: The tariff in force for a meter, which can change mid-period
+kind: reference
+owner: billing-platform
+source: cdc/dms:public.tariff_assignment
+grain: meter
+key: [meter_id]
+
+personal_data: true
+purpose: >
+  Pricing metered consumption. GDPR Art. 5(1)(b). A tariff is linked to a customer through the
+  meter, so it inherits the same reach.
+
+# The mid-period change in `docs/SCENARIO.md`. A feature computed today with today's tariff is
+# wrong for a reading from last month, and getting this wrong is also the classic route to
+# label leakage in training — see `src/watermark/core/pit.py`.
+scd2:
+  valid_from: valid_from
+  valid_to: valid_to
+  tracked:
+    - tariff_code
+    - unit_price_cents_per_kwh
+
+references:
+  - entity: meter
+    via: meter_id

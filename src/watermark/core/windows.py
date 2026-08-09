@@ -83,6 +83,17 @@ class WindowResult:
     watermark_status: WatermarkStatus
     idle_partitions: tuple[str, ...]
 
+    #: When the winning copy of this reading was first ingested — the answer to "when could we
+    #: first have known this number?".
+    #:
+    #: It is what makes the deduplication rule *observable*. `gate-proof` planted a rule that
+    #: kept whichever copy arrived first and claim 2 accepted it, because at that point nothing
+    #: a result carried came from the winning copy: two retries have the same energy, so the
+    #: choice between them was invisible and therefore untestable. A determinism rule nothing
+    #: downstream can see is a determinism rule nobody can prove, and it stops being true the
+    #: first time somebody simplifies it.
+    first_seen_at: Instant
+
     #: 0 for the first publication, 1 for the first restatement, and so on.
     revision: int = 0
     #: What this replaces. `None` at revision 0. Doctrine 4: the prior value survives.
@@ -205,7 +216,9 @@ class WindowManager:
         is not automatically safe (ADR-0001) — the decision path reads the status and takes its
         declared fallback. The window still does not publish.
         """
-        if not view.status.may_close_windows:
+        if view.watermark is None:
+            # UNSTARTED or STARVED: there is no watermark at all, so there is nothing to
+            # publish and nothing to restate — not even a `closed_at` to record.
             return Emission()
 
         published: list[WindowResult] = []
@@ -229,11 +242,35 @@ class WindowManager:
         )
 
     def _closable(self, view: WatermarkView) -> list[tuple[str, int]]:
-        # Sorted so that the *set* of keys, not the insertion order of a dictionary, decides
-        # what is processed and in what sequence. Python preserves insertion order, which is
-        # exactly the arrival-order dependency claim 2 forbids.
+        """Which open windows may be acted on now — and the distinction claim 1 turns on.
+
+        **A first publication requires the watermark's permission.** That is the claim: no
+        number leaves this system for a window the watermark has not passed.
+
+        **A restatement does not.** The window it revises has already closed; its closure is an
+        established fact, recorded in `closed_at` on the result that was published. A late
+        correction is a statement about a window that *has* closed, so the guard has nothing to
+        say about it — and applying it anyway would mean a settled number cannot be corrected
+        while the stream is stalled, which is precisely when corrections arrive. The legacy
+        head-end's three-day-late file is a replay of old event times: it advances nothing, so
+        it stalls the watermark by construction. Refusing to restate during a stall would make
+        the restatement path unreachable by the only data that uses it.
+
+        The lateness allowance is what bounds this, at admission rather than here: a reading
+        past it never enters an open window at all.
+
+        Sorted so that the *set* of keys, not a dictionary's insertion order, decides what is
+        processed and in what sequence — insertion order is the arrival-order dependency claim
+        2 forbids.
+        """
         return sorted(
-            key for key in self._open if view.may_close(Instant(key[1]).plus(self.policy.length))
+            key
+            for key in self._open
+            if key in self._published
+            or (
+                view.status.may_close_windows
+                and view.may_close(Instant(key[1]).plus(self.policy.length))
+            )
         )
 
     def _publish(
@@ -279,6 +316,7 @@ class WindowManager:
             meter_id=key[0],
             interval_start=Instant(key[1]),
             energy_wh=collapsed.winner.energy_wh,
+            first_seen_at=collapsed.winner.ingest_time,
             readings=prior_readings + len(arrivals),
             duplicates_suppressed=prior_duplicates + new_duplicates,
             corrections_absorbed=prior_corrections + len(collapsed.superseded),

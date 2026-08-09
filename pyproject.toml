@@ -20,12 +20,17 @@ keywords = [
     "gdpr",
 ]
 
-# Empty, today, and that is a statement rather than an accident: nothing in this repository
-# yet needs anything but the standard library, and `src/watermark/core/` — where claims 1–4
-# are proved — is never allowed to need more. The contract layer will add `pydantic` and
-# `pyyaml` in phase 1 and the CLI will add `typer`; each arrives in the commit that imports
-# it. `tests/test_dependencies.py` fails on a dependency nothing imports, in either direction.
-dependencies = []
+# Short, and it stays short. **`src/watermark/core/` imports none of these** — the stream core
+# is the standard library and nothing else, which is what makes claims 1 to 4 checkable on a
+# laptop with no cluster and no account, and `scripts/check_core_is_pure.py` enforces it.
+#
+# These serve the contract layer, which sits outside the core: contracts are YAML data, and a
+# contract that loads with a wrong shape is worse than one that fails to load.
+# `tests/test_dependencies.py` fails on a dependency nothing imports, in either direction.
+dependencies = [
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 # Cloud clients are NOT a hard dependency. The whole suite, every eval and every gate run
@@ -71,7 +76,10 @@ ignore = [
 # in a different order produce the same bytes, so a *seeded, reproducible, non-cryptographic*
 # generator is exactly the right tool — and the seed is what makes a failure reproducible.
 "tests/**" = ["PLR2004", "S105", "S106", "S311"]
-"evals/**" = ["PLR2004"]
+# S311: the replay harness shuffles with a *seeded* generator, which is the point — claim 2 is
+# that a different order produces the same bytes, and the seed is what makes a failure
+# reproducible by the person reading it.
+"evals/**" = ["PLR2004", "S311"]
 # These scripts shell out to `terraform`, `make` and `git` by name. A hardcoded absolute path
 # would be wrong on every machine but the one that wrote it, and the commands are fixed
 # literals with no user input anywhere near them.

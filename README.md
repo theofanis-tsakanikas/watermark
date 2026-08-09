@@ -12,7 +12,7 @@ Store · Lake Formation · Step Functions · Terraform*
 
 ---
 
-> **Status: phase 0 of four — foundations. Ready to deploy, never deployed.** The scoreboard
+> **Status: phase 1 of four — the stream is correct. Ready to deploy, never deployed.** The scoreboard
 > below lists what is provable today, which is not yet much; it grows one row per claim, and a
 > row appears only when the command that produces it exists.
 >
@@ -75,12 +75,16 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 
 | check | result |
 |---|---|
+| **claim 1** · no decision from an unclosed window | **7/7** labelled situations — a silent substation, a stalled stream, a device three hours fast, a partition down at start-up, and the healthy day that must *not* trip any of them |
+| **claim 2** · replay is identical | **5/5** — the same day shuffled under five seeds and delivered twice over produces the same 3,584 published values, the same 283 restatements and the same lineage ids |
+| `make gate-proof` | **9 refused, 0 accepted, 0 stale** |
 | `make core-pure` | the stream core imports **no framework and no cloud SDK**, and reads no clock, no environment and no file |
-| `make gate-proof` | **3 refused, 0 accepted, 0 stale** |
-| `make test` | **45 passing**, offline, credential-free, **0.2 s** |
+| `make contracts-validate` | **6 entity contracts** load and cross-check; **4** hold personal data and every one declares its purpose |
+| `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined, net restatement **+2,261 Wh** |
+| `make test` | **151 passing**, offline, credential-free, under a second |
 | `terraform validate` | **1/1 layer** against real provider schemas |
 | `checkov` | **0 findings**, 9 deliberate exceptions each carrying a written reason |
-| `make preflight` | **8 passed, 0 failed, 0 skipped** |
+| `make preflight` | **12 passed, 0 failed, 0 skipped** |
 
 The `gate-proof` row is the one worth reading first. A suite tells you the code does what it
 does; `gate-proof` copies the repository, plants a real violation, and requires the *named*
@@ -144,8 +148,12 @@ splitting them, and for why a skipped tier must fail rather than pass in CI, is
 | [`docs/adr/`](docs/adr/) | Every decision that would otherwise be re-argued next month |
 | [`infra/`](infra/) | Terraform. `bootstrap/` applies from a laptop; every other layer only from a gated workflow |
 
-Planned and not yet present: `contracts/`, `data/`, `streaming/`, `evals/`, `recordings/`,
-`pipelines/`. Their shape is fixed in [CLAUDE.md](CLAUDE.md) and the order they arrive in is
+| [`contracts/entities/`](contracts/entities/) | **The source of truth** for reference data — YAML, validated at load; personal data without a declared purpose does not load |
+| [`data/`](data/) | The synthetic operator: a fixed cast and a seeded day with every pathology in the scenario, present on purpose and labelled |
+| [`evals/`](evals/) | The claim harnesses — labelled situations, scored, credential-free |
+| [`recordings/`](recordings/) | The golden day. `make seed-check` proves the generator still reproduces it |
+
+Planned and not yet present: `streaming/`, `queries/`, `pipelines/`. Their shape is fixed in [CLAUDE.md](CLAUDE.md) and the order they arrive in is
 [PLAN.md](PLAN.md).
 
 ### The documents that decide things

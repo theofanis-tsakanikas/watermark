@@ -1,0 +1,22 @@
+id: substation_limit
+title: The thermal limit in force for a substation, which changes seasonally
+kind: reference
+owner: network-operations
+source: cdc/dms:public.substation_limit
+grain: substation
+key: [substation_id]
+
+personal_data: false
+
+# This is the reference data the curtailment fallback rule reads. The fallback must be
+# computable with no model and no fresh features (ADR-0001), so the limit has to resolve
+# point-in-time from here rather than from a feature store.
+scd2:
+  valid_from: valid_from
+  valid_to: valid_to
+  tracked:
+    - limit_w
+
+references:
+  - entity: substation
+    via: substation_id

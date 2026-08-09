@@ -33,15 +33,24 @@ def drive(
     partitions: list[str],
     batches: list[list[tuple[str, Instant]]],
     policy: WatermarkPolicy = DEFAULT_POLICY,
+    *,
+    seconds_apart: int = 60,
 ) -> tuple[WatermarkState, WatermarkView]:
-    """Run a sequence of batches through a declared set of partitions, tracking held-back."""
+    """Run a sequence of batches through a declared set of partitions, tracking held-back.
+
+    Batches arrive a minute apart in ingestion time unless a test says otherwise. Ingestion
+    time is what a stall is measured in, so a helper that did not advance it would make every
+    stall test a test of a stream that arrived in one instant.
+    """
     state = WatermarkState.declare(partitions)
     view = WatermarkView(WatermarkStatus.UNSTARTED, None, (), None, Duration.of_millis(0))
     previous: WatermarkView | None = None
+    arrived = Instant.from_iso("2026-03-14T09:00:00Z")
     for batch in batches:
-        state, view = observe(state, batch, policy)
+        state, view = observe(state, batch, arrived, policy)
         view = held_back_by(view, previous)
         previous = view
+        arrived = arrived.plus(Duration.of_seconds(seconds_apart))
     return state, view
 
 
@@ -164,23 +173,30 @@ class TestStalled:
     def test_records_arriving_with_no_new_event_time_is_a_stall(self) -> None:
         """A replay of old data, or a source whose clocks went backwards. There is no laggard
         to name and no threshold that resolves it."""
-        _, view = drive(["A"], [[("A", at(9, 30))]] * 5)
+        _, view = drive(["A"], [[("A", at(9, 30))]] * 40)
         assert view.status is WatermarkStatus.STALLED
         assert not view.status.will_resolve_itself
 
-    def test_one_quiet_observation_is_not_a_stall(self) -> None:
-        """A single batch of only-late records is ordinary. Crying wolf here is how the alarm
-        gets turned off before the real one."""
-        _, view = drive(["A"], [[("A", at(9, 30))], [("A", at(9, 20))]])
+    def test_an_ordinary_upload_burst_is_not_a_stall(self) -> None:
+        """The failure the first version of this module had, and the reason a stall is measured
+        in ingestion time rather than in observations.
+
+        Meters report on a fifteen-minute cadence, so the highest event time moves once per
+        interval and stays put for everything in between. Counting observations reported two
+        thirds of a healthy day as stalled — and a threshold that fires on the healthy case is
+        switched off within a week.
+        """
+        burst = [[("A", at(9, 30))] for _ in range(30)]
+        _, view = drive(["A"], burst, seconds_apart=1)
         assert view.status is not WatermarkStatus.STALLED
 
     def test_an_empty_batch_never_counts_towards_a_stall(self) -> None:
         """Quiet and stuck are different facts, and an empty batch is the first one."""
-        _, view = drive(["A"], [[("A", at(9, 30))], [], [], [], [], []])
+        _, view = drive(["A"], [[("A", at(9, 30))], *([[]] * 60)])
         assert view.status is WatermarkStatus.ADVANCING
 
     def test_a_stalled_stream_closes_nothing(self) -> None:
-        _, view = drive(["A"], [[("A", at(11, 0))]] * 5)
+        _, view = drive(["A"], [[("A", at(11, 0))]] * 40)
         assert not view.may_close(at(9, 30))
 
 
@@ -196,7 +212,7 @@ class TestStarved:
         """Whether silence is an incident is a question about wall-clock time, and wall-clock
         time is the adapter's. This module reports; it does not start a timer."""
         state = WatermarkState.declare(["A"])
-        state_after, _ = observe(state, [("A", at(9, 30))])
+        state_after, _ = observe(state, [("A", at(9, 30))], at(9, 31))
         assert observe_silence(state_after).status is WatermarkStatus.ADVANCING
 
 
@@ -206,7 +222,7 @@ class TestPolicyValidation:
         [
             ({"out_of_orderness": Duration.of_minutes(-1)}, "negative"),
             ({"idle_after": Duration.of_minutes(0)}, "positive"),
-            ({"stall_tolerance": 0}, "stall_tolerance"),
+            ({"stall_after": Duration.of_minutes(0)}, "stall_after"),
         ],
     )
     def test_an_unusable_policy_is_refused_at_construction(

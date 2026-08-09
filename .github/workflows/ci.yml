@@ -83,6 +83,21 @@ jobs:
       - name: "claim 2 — replay is identical"
         run: python -m evals.replay
 
+      - name: "claim 3 — train/serve parity"
+        run: python -m evals.parity
+
+      - name: "claim 4 — no decision on a stale feature"
+        run: python -m evals.freshness
+
+      - name: "claim 7 — no automatic consequential decision about a person"
+        run: python -m evals.oversight
+
+      - name: the two feature mechanisms are independent
+        # ADR-0004. Without this, the first refactor to notice that the two aggregators look
+        # alike merges them — reasonably — and claim 3 compares a function with itself from
+        # that day on, reporting green in eleven milliseconds forever.
+        run: python scripts/check_parity_paths_are_independent.py
+
       - name: the stream core is framework-free and reads no ambient state
         # The precondition for every other claim. The day a boto3 import or a `datetime.now()`
         # appears three levels down inside a windowing function, nothing fails — the suite just
@@ -99,9 +114,8 @@ jobs:
         # the deployed job disagree about what late means with only the job being right.
         run: python scripts/check_adapter_is_thin.py
 
-      # Claims 3 and 4 arrive with phase 2, claims 5 and 7 with phase 3, claim 6 with phase 4.
-      # A step here for a claim that is not yet provable would be a green tick over work that
-      # has not happened.
+      # Claim 5 arrives with phase 3 and claim 6 with phase 4. A step here for a claim that
+      # is not yet provable would be a green tick over work that has not happened.
 
   gate-proof:
     name: attack our own gates

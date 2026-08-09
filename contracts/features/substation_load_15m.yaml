@@ -1,0 +1,26 @@
+id: substation_load_15m
+title: Mean measured load per substation over the last fifteen minutes
+owner: network-operations
+
+entity: substation
+entity_key: substation_id
+
+window:
+  length_seconds: 900
+  grain_seconds: 60
+
+# Sixty seconds. The curtailment decision has a horizon of seconds, and a load figure two
+# minutes old is a figure from before the thing that is about to overload started. This is the
+# number claim 4 is measured against, and it is short because the decision is.
+freshness_budget_seconds: 60
+
+# A substation is not a person, and nothing about this feature is attributable to a household.
+personal_data: false
+
+value_type: Integral
+scale: 1
+
+aggregation: mean
+source_table: substation_telemetry
+source_column: load_w
+event_time_column: event_time

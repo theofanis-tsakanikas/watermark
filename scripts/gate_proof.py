@@ -218,6 +218,95 @@ def _bake_a_window_into_the_framework(root: Path) -> bool:
     )
 
 
+def _merge_the_two_parity_mechanisms(root: Path) -> bool:
+    """Have the offline resolver import the online fold.
+
+    The tidy refactor. `offline._aggregate` and `online._fold` do look alike, and merging them
+    is the obvious cleanup — after which claim 3 compares a function with itself and reports
+    green in eleven milliseconds, forever.
+    """
+    return _replace(
+        root / "src/watermark/features/offline.py",
+        "from watermark.core.time import Instant",
+        "from watermark.core.time import Instant"
+        + chr(10)
+        + "from watermark.features.online import _fold",
+    )
+
+
+def _let_a_feature_be_a_double(root: Path) -> bool:
+    """Allow a Fractional feature.
+
+    Plausible as a simplification — the value *is* a mean, after all. It replaces exact integer
+    equality with a comparison that only ever passes with a tolerance, and doctrine 7 says the
+    parity door has no key.
+    """
+    return _replace(
+        root / "src/watermark/contracts/features.py",
+        '        if self.value_type == "Fractional":',
+        "        if False:",
+    )
+
+
+def _drop_a_freshness_budget(root: Path) -> bool:
+    """Give a feature no freshness budget.
+
+    Not deletion — a feature added in a hurry by copying the one above it. Claim 4 then holds
+    vacuously for that feature, and the decision path reading it never falls back.
+    """
+    return _replace(
+        root / "contracts/features/substation_load_15m.yaml",
+        "freshness_budget_seconds: 60",
+        "freshness_budget_seconds: 0",
+    )
+
+
+def _let_the_fallback_read_the_feature_store(root: Path) -> bool:
+    """Have the curtailment fallback declare that it reads served features.
+
+    Not hypothetical: it is what the first draft of `proportional_throttle` actually did, and
+    claim 4's harness is what caught it. A fallback that reads the feature store is unavailable
+    in exactly the conditions the primary path is.
+    """
+    return _replace(
+        root / "contracts/decisions/curtailment.yaml",
+        "  uses_features: false",
+        "  uses_features: true",
+    )
+
+
+def _automate_a_decision_about_a_person(root: Path) -> bool:
+    """Set the anomaly path to actuate automatically.
+
+    The one-word change claim 7 exists to make impossible, and the change somebody makes when
+    the inspection queue is three weeks deep.
+    """
+    return _replace(
+        root / "contracts/decisions/meter_anomaly.yaml",
+        "actuation: human_gated",
+        "actuation: automatic",
+    )
+
+
+def _accept_an_unnamed_reviewer(root: Path) -> bool:
+    """Stop requiring a review to name a human.
+
+    Plausible as a fix for an integration test that has no real inspectors in it, and it is the
+    single change that makes claim 7 false while every other test keeps passing: an entry with
+    a blank signature actuates, and the record looks exactly like a reviewed one.
+
+    (An earlier version of this mutation gave `reviewer` a *default* instead. It broke the
+    dataclass — a defaulted field before two undefaulted ones — so the import failed and the
+    harness correctly reported "something failed, but not claim 7". That is the second rule
+    working: a non-zero exit is not evidence.)
+    """
+    return _replace(
+        root / "src/watermark/decisions/oversight.py",
+        "        if not self.reviewer.strip():",
+        "        if False:",
+    )
+
+
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "import a cloud SDK into the stream core",
@@ -317,6 +406,65 @@ MUTATIONS: tuple[Mutation, ...] = (
         _point_a_contract_at_an_entity_that_does_not_exist,
         "A rename in one place. The join compiles, returns nothing, and reads as a customer "
         "with no consumption.",
+    ),
+    Mutation(
+        "merge the two parity mechanisms",
+        "parity independence",
+        "adapter_thinness",
+        ["scripts/check_parity_paths_are_independent.py"],
+        "compare it with itself",
+        _merge_the_two_parity_mechanisms,
+        "The tidy refactor. They do look alike, and after the merge claim 3 reports green in "
+        "eleven milliseconds forever.",
+    ),
+    Mutation(
+        "let a feature be a double",
+        "claim 3",
+        "claim-3",
+        ["-m", "evals.parity"],
+        "tolerance",
+        _let_a_feature_be_a_double,
+        "Plausible as a simplification — the value is a mean. It replaces integer equality "
+        "with a comparison that only passes with a tolerance.",
+    ),
+    Mutation(
+        "drop a freshness budget",
+        "claim 4",
+        "claim-4",
+        ["scripts/check_contracts.py"],
+        "greater than 0",
+        _drop_a_freshness_budget,
+        "A feature added in a hurry by copying the one above it. Claim 4 then holds vacuously "
+        "for it, and the decision path reading it never falls back.",
+    ),
+    Mutation(
+        "let the fallback read the feature store",
+        "claim 4",
+        "claim-4",
+        ["scripts/check_contracts.py"],
+        "reads the feature store",
+        _let_the_fallback_read_the_feature_store,
+        "What the first draft of proportional_throttle actually did, caught by the harness. A "
+        "fallback that needs the feature store is unavailable exactly when the primary is.",
+    ),
+    Mutation(
+        "automate a decision about a person",
+        "claim 7",
+        "claim-7",
+        ["scripts/check_contracts.py"],
+        "Art. 22",
+        _automate_a_decision_about_a_person,
+        "One word, and the change somebody makes when the inspection queue is three weeks deep.",
+    ),
+    Mutation(
+        "accept an unnamed reviewer",
+        "claim 7",
+        "claim-7",
+        ["-m", "evals.oversight"],
+        "blank reviewer",
+        _accept_an_unnamed_reviewer,
+        "Plausible as a fix for an integration test with no real inspectors in it. An entry "
+        "with a blank signature then actuates, and the record looks exactly like a reviewed one.",
     ),
 )
 

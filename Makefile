@@ -73,7 +73,7 @@ fmt: ## Apply ruff formatting
 #   claim 7  no automatic consequential decision on a person — phase 3
 
 .PHONY: claims
-claims: core-pure adapter-thin flink-versions contracts-validate seed-check claim-1 claim-2 ## Every claim gate that exists today
+claims: core-pure adapter-thin parity-independent flink-versions contracts-validate seed-check claim-1 claim-2 claim-3 claim-4 claim-7 ## Every claim gate that exists today
 
 .PHONY: core-pure
 core-pure: ## The stream core imports no framework and no cloud SDK
@@ -82,6 +82,10 @@ core-pure: ## The stream core imports no framework and no cloud SDK
 .PHONY: adapter-thin
 adapter-thin: ## The streaming adapter carries no semantic literal (ADR-0003)
 	$(PY) scripts/check_adapter_is_thin.py
+
+.PHONY: parity-independent
+parity-independent: ## The two feature mechanisms share the contract and nothing else (ADR-0004)
+	$(PY) scripts/check_parity_paths_are_independent.py
 
 .PHONY: contracts-validate
 contracts-validate: ## Every entity contract loads and cross-checks
@@ -110,6 +114,18 @@ package: ## Vendor the package into infra/streaming/.package so terraform can zi
 	$(PIP) install --quiet --target infra/streaming/.package --no-compile --no-deps .
 	cp -R streaming contracts infra/streaming/.package/
 	@echo "packaged infra/streaming/.package ($$(du -sh infra/streaming/.package | cut -f1))"
+
+.PHONY: claim-3
+claim-3: ## CLAIM 3 — train/serve parity, between two mechanisms
+	$(PY) -m evals.parity
+
+.PHONY: claim-4
+claim-4: ## CLAIM 4 — no decision on a stale feature
+	$(PY) -m evals.freshness
+
+.PHONY: claim-7
+claim-7: ## CLAIM 7 — no automatic consequential decision about a person
+	$(PY) -m evals.oversight
 
 .PHONY: gate-proof
 gate-proof: ## Break every gate on purpose; each must be refused, for the right reason

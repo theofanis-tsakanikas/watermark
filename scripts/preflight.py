@@ -110,6 +110,34 @@ CHECKS: list[Check] = [
     ),
     Check(
         "correctness",
+        "claim 3 · parity",
+        [PYTHON, "-m", "evals.parity"],
+        "One contract compiled two ways, agreeing — including on the planted case where a "
+        "naive resolver reads a value from after the instant it is resolving.",
+    ),
+    Check(
+        "correctness",
+        "claim 4 · freshness",
+        [PYTHON, "-m", "evals.freshness"],
+        "A stale feature never reaches the model, and the fallback marker survives into the "
+        "record. A fallback that looks like a model decision is worse than an outage.",
+    ),
+    Check(
+        "correctness",
+        "claim 7 · oversight",
+        [PYTHON, "-m", "evals.oversight"],
+        "The automated path is structurally incapable of a consequential decision about a "
+        "person — the contract does not load and the actuation type cannot be built.",
+    ),
+    Check(
+        "correctness",
+        "parity independence",
+        [PYTHON, "scripts/check_parity_paths_are_independent.py"],
+        "The two mechanisms share the contract and nothing else. Merged, claim 3 compares a "
+        "function with itself and reports green forever.",
+    ),
+    Check(
+        "correctness",
         "gate-proof",
         [PYTHON, "scripts/gate_proof.py"],
         "Each gate refuses a real violation, for the right reason. Slow, and the most "

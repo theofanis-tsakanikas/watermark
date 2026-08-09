@@ -1,0 +1,25 @@
+id: substation_headroom_15m
+title: Minimum headroom to the thermal limit per substation over the last fifteen minutes
+owner: network-operations
+
+entity: substation
+entity_key: substation_id
+
+window:
+  length_seconds: 900
+  grain_seconds: 60
+
+freshness_budget_seconds: 60
+
+personal_data: false
+
+value_type: Integral
+scale: 1
+
+# The minimum, not the mean. A substation that sat at ninety per cent for fourteen minutes and
+# touched its limit for one has touched its limit, and an average hides exactly the minute the
+# curtailment decision exists for.
+aggregation: min
+source_table: substation_telemetry
+source_column: headroom_w
+event_time_column: event_time

@@ -19,9 +19,21 @@ def main() -> int:
     except ContractError as exc:
         print(exc, file=sys.stderr)
         return 1
-    personal = contracts.personal_data_entities
-    print(f"contracts: {len(contracts.entities)} entities load and cross-check")
-    print(f"  personal data in {len(personal)}: {', '.join(personal)}")
+    entities = contracts.personal_data_entities
+    features = contracts.personal_data_features
+    print(
+        f"contracts: {len(contracts.entities)} entities and {len(contracts.features)} features "
+        "load and cross-check"
+    )
+    print(f"  personal data in {len(entities)} entities: {', '.join(entities)}")
+    print(f"  personal data in {len(features)} features: {', '.join(features)}")
+    print("  every feature declares a freshness budget and every personal one a purpose")
+    automatic = contracts.automatic_decisions
+    named = ", ".join(automatic)
+    print(
+        f"  {len(contracts.decisions)} decisions; {len(automatic)} actuate automatically: {named}"
+    )
+    print("  no decision with a significant effect on a person actuates automatically (claim 7)")
     return 0
 
 

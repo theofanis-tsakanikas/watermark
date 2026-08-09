@@ -1,0 +1,38 @@
+id: settlement_publication
+title: Publish an hourly settled total per meter and per balancing group
+owner: billing-platform
+
+# Days. The legacy head-end is three days behind by design, and a total published before it
+# arrives is a total that will restate.
+horizon_seconds: 345600
+
+effect: commercial
+actuation: advisory
+
+features: []
+model: null
+
+permitted_actions:
+  - publish
+  - restate
+
+fallback:
+  id: withhold_and_restate
+  description: >
+    Publish nothing for the affected interval and restate when the data arrives. Silence is the
+    safe state here for the same reason it is not for curtailment: a number not yet stated has
+    no physical consequence, and a wrong one invoiced does. Doctrine 4 does the rest — the
+    correction never erases what was previously stated.
+  uses_model: false
+  uses_features: false
+  permitted_actions:
+    - restate
+
+legal_basis: >
+  Commercial. No AI Act obligation attaches — there is no AI system in this path, and saying
+  there were in order to claim more coverage would be the same overclaim in the other
+  direction. Reproducibility is a market-settlement requirement, met by claim 2.
+
+hazard: >
+  A published total that cannot be reproduced from the state it was computed from. The control
+  is the tagged Iceberg snapshot and the expiry job that refuses to remove one (ADR-0002).

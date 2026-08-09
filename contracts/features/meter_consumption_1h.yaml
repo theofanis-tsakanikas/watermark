@@ -1,0 +1,34 @@
+id: meter_consumption_1h
+title: Total consumption per meter over the last hour
+owner: metering-platform
+
+entity: meter
+entity_key: meter_id
+
+window:
+  length_seconds: 3600
+  grain_seconds: 900
+
+# Fifteen minutes — one metering interval. The anomaly path has a horizon of hours and its
+# output is a position in an inspector's queue, so a value one interval old is fine. Compare
+# with the substation feature above: same platform, same claim, two budgets, because the two
+# decisions cost differently when they are late.
+freshness_budget_seconds: 900
+
+personal_data: true
+purpose: >
+  Scoring a meter for tampering, faults and non-technical loss, so that an inspector's visit
+  can be prioritised. GDPR Art. 5(1)(b). The output is a ranked queue with reasons attached and
+  is never actuated automatically (claim 7); it is not used to profile the household, to infer
+  occupancy, or for any purpose other than the one stated here.
+
+value_type: Integral
+# Watt-hours, not kilowatt-hours. ADR-0004: there is no decimal type, and kWh as a double
+# differs from the same quantity in Iceberg in the last bits — so the scale is declared and the
+# comparison is integer equality.
+scale: 1000
+
+aggregation: sum
+source_table: meter_interval
+source_column: energy_wh
+event_time_column: interval_start

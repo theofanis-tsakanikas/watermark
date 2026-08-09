@@ -1,0 +1,48 @@
+id: meter_anomaly
+title: Rank a meter for inspection on suspicion of tampering, fault or non-technical loss
+owner: revenue-protection
+
+# Hours. An inspector is dispatched tomorrow, so a feature one metering interval old is fine —
+# and the freshness budget on meter_consumption_1h says exactly that.
+horizon_seconds: 14400
+
+# The line claim 7 turns on. Dispatching an inspection, and what follows a tampering finding —
+# back-billing, contract action, referral — is a significant effect on a natural person.
+effect: significant_on_person
+# Therefore never automatic. Setting this to `automatic` makes the contract fail to load; there
+# is no runtime in which the combination exists.
+actuation: human_gated
+
+features:
+  - meter_consumption_1h
+model: meter_anomaly
+
+permitted_actions:
+  - queue_for_inspection
+  - dismiss
+
+fallback:
+  id: no_queue_entry
+  description: >
+    Produce nothing. This is the one path where silence *is* the safe state, and ADR-0001 says
+    why the distinction is not arbitrary: no meter is queued, no inspector is dispatched, and
+    nothing in the physical world moves. Compare curtailment, where producing nothing means the
+    substation keeps heating while nobody decides.
+  uses_model: false
+  uses_features: false
+  permitted_actions:
+    - dismiss
+
+legal_basis: >
+  GDPR Art. 22 — an automated individual decision producing legal effects or similarly
+  significantly affecting the data subject. Deliberately **not** AI Act Annex III: this is not a
+  safety component, and asserting it were to make the project sound weightier would be the
+  failure this portfolio exists to argue against. Art. 22(1) is not engaged because the path
+  cannot actuate; see docs/REGULATORY.md, verified 2026-08-09.
+
+hazard: >
+  Proxy discrimination. A model trained on *confirmed* cases learns where inspectors
+  historically went, not where tampering historically was, and the proxies for that correlate
+  with income. AI Act Art. 10(2)(f)-(g) is the bias examination; Art. 4a(2) as inserted by
+  Reg. (EU) 2026/1744 is what permits processing the special-category data needed to measure it
+  — and creates no obligation to, which is why doing it is stated as a choice.

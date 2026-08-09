@@ -1,0 +1,45 @@
+id: curtailment
+title: Throttle EV charging when a substation approaches its thermal limit
+owner: network-operations
+
+# Seconds. This is the number a caller compares the watermark's lag against, and it is why the
+# watermark module reports a lag rather than judging one: settlement tolerates days, this
+# tolerates almost nothing, and one threshold cannot serve both.
+horizon_seconds: 5
+
+effect: physical
+actuation: automatic
+
+features:
+  - substation_load_15m
+  - substation_headroom_15m
+model: curtailment_forecast
+
+permitted_actions:
+  - throttle
+  - release
+
+fallback:
+  id: proportional_on_measured_load
+  description: >
+    Throttle every active session on the substation in proportion to how far measured load
+    exceeds the declared limit, using the last telemetry reading and the point-in-time limit
+    and nothing else. More aggressive than the forecast would be: it costs customers charging
+    speed and it does not cost the substation. Marked as fallback for its whole life, into the
+    actuator, the decision record and the dashboard (doctrine 2).
+  uses_model: false
+  uses_features: false
+  permitted_actions:
+    - throttle
+
+legal_basis: >
+  EU AI Act Annex III(2) — a safety component in the supply of electricity. Argued high-risk;
+  the argument, including the Art. 6(3) derogation considered and rejected, is in
+  docs/REGULATORY.md, verified against source text 2026-08-09. The obligations apply from
+  2 December 2027 (Art. 113 as amended by Reg. (EU) 2026/1744); this is built to them in
+  advance, not compliant with obligations in force.
+
+hazard: >
+  Thermal overload of a distribution substation. The failure mode is physical, not commercial:
+  a wrong decision does not cost money, it heats a transformer. AI Act Art. 9 — the hazard the
+  fallback rule mitigates.

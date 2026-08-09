@@ -7,7 +7,20 @@ those are enforced at load time rather than reviewed: see `model.py`.
 
 from __future__ import annotations
 
+from watermark.contracts.decisions import DecisionContract, FallbackRule
+from watermark.contracts.features import FeatureContract, Window
 from watermark.contracts.loader import ContractError, ContractSet, load
 from watermark.contracts.model import EntityContract, Reference, Scd2
 
-__all__ = ["ContractError", "ContractSet", "EntityContract", "Reference", "Scd2", "load"]
+__all__ = [
+    "ContractError",
+    "ContractSet",
+    "DecisionContract",
+    "EntityContract",
+    "FallbackRule",
+    "FeatureContract",
+    "Reference",
+    "Scd2",
+    "Window",
+    "load",
+]

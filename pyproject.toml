@@ -84,6 +84,19 @@ ignore = [
 # that a different order produces the same bytes, and the seed is what makes a failure
 # reproducible by the person reading it.
 "evals/**" = ["PLR2004", "S311"]
+# S608 flags the f-string that compiles a feature contract into SQL. It is right to look and
+# wrong about this one: every interpolated value comes from a contract already validated by
+# `contracts/features.py` — the aggregation is a key into a closed mapping, the identifiers
+# match `^[a-z][a-z0-9_]*$`, the window is an integer. What is never interpolated is the *data*:
+# the entity id and both time bounds are `?` placeholders the caller binds. The suppression is
+# per-file rather than per-line because ruff attributes the diagnostic to a multi-line string
+# it cannot be annotated inside, and a `noqa` that silently does nothing is worse than none.
+"src/watermark/features/offline.py" = ["S608"]
+# PLR0917: the parity comparison takes the contract, both mechanisms, the population, the
+# instants and the serving lag. Bundling them into a context object would hide which of the two
+# mechanisms a given line touches, and that visibility is the one thing a reader of this
+# function needs — it is the function whose whole purpose is that the two are separate.
+"src/watermark/features/parity.py" = ["PLR0917"]
 # These scripts shell out to `terraform`, `make` and `git` by name. A hardcoded absolute path
 # would be wrong on every machine but the one that wrote it, and the commands are fixed
 # literals with no user input anywhere near them.

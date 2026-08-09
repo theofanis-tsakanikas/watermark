@@ -159,12 +159,18 @@ is demonstrated end to end in the offline harness.
       against real provider schemas, checkov at zero findings. One command, all checks.
 - [ ] `README.md` with a scoreboard, in the style of Attestor's: numbers that are the output
       of a command in the repository, not a summary of one.
-- [ ] **The live capture.** One gated dispatch: stand up, drive the scenario end to end,
-      capture evidence, destroy. Record the wall-clock time and the euro cost, and publish
-      both.
+- [ ] ~~**The live capture.**~~ **Out of scope — nothing is ever applied to AWS.** The estate
+      is built, validated against real provider schemas, scanned, and left unapplied. Decided
+      2026-08-09: a live capture costs real money and adds nothing to any of the seven claims,
+      every one of which is provable offline by construction. The replacement deliverable is
+      `make preflight` green, `terraform validate` against real provider schemas, and checkov
+      at zero findings — the same posture as `../attestor`: **ready to deploy, not deployed.**
+      Consequences that are easy to get wrong: no screenshot, no wall-clock time and no euro
+      figure may be published as if it were measured, and the €100 target is a design
+      constraint rather than a result.
 
-**Done when:** `make preflight` is green, the estate has been stood up and destroyed once,
-and the README's scoreboard is reproducible by a stranger with no AWS account.
+**Done when:** `make preflight` is green, every layer validates and scans clean, and the
+README's scoreboard is reproducible by a stranger with no AWS account.
 
 ---
 

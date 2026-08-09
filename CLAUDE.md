@@ -224,6 +224,14 @@ Changing a feature's window, grain or definition is a **restatement**: it requir
 
 ## Cost controls — always active
 
+> **Nothing is ever applied to AWS.** Decided 2026-08-09; see `docs/DECISIONS.md` 15. The
+> estate is built, validated against real provider schemas and scanned clean, and left
+> unapplied — including `infra/bootstrap/`. Every claim is provable offline by construction, so
+> a live run would produce a screenshot rather than a proof. The controls below are therefore a
+> *design* discipline: they decide what may be built, and they rule out designs that could only
+> be afforded by watching a bill. No euro figure and no wall-clock time in this repository is a
+> measurement, and none may be written as if it were.
+
 - **Nothing is applied outside a gated workflow.** No exceptions.
 - Every resource carries `watermark:expires-at`; a scheduled reaper destroys what expired.
 - An AWS Budget action disables the deploy role at its threshold.

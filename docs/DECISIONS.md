@@ -78,14 +78,40 @@ casually. A new claim must be as sharply falsifiable as the existing seven.
 that breaks it, in the same commit. Attestor's rules apply: green first; a non-zero exit is
 not evidence; a moved target is STALE, not passed.
 
-**15 · Live capture once, at the end, and destroyed.** The estate stands up in one gated
-workflow, drives the scenario, captures evidence, and is destroyed. Target under €100.
+**15 · Nothing is ever applied to AWS.** *Revised 2026-08-09; this supersedes the original
+"live capture once, at the end, and destroyed."*
+
+The estate is built, formatted, validated against real provider schemas and scanned to zero
+findings — and left unapplied. Not once, not briefly, not from a laptop.
+
+The reasoning is that the capture was never load-bearing. All seven claims are provable
+offline **by construction** — that is the whole design, and it is why `src/watermark/core/`
+may not import a cloud SDK. A live run would therefore have produced a screenshot, not a
+proof, and it would have cost real money to produce something the repository already
+demonstrates for free. The posture is Attestor's: **ready to deploy, not deployed.**
+
+What this forbids, because these are the ways it gets softened by accident:
+
+- No screenshot, dashboard image or console capture from a real estate. There isn't one.
+- No wall-clock time and no euro figure stated as if it were measured. The **under €100**
+  target stays in `CLAUDE.md` as a *design constraint* — a design that pushes past it is wrong
+  before the budget is — and never appears as a result.
+- No claim of the form "the estate has been stood up and destroyed". `terraform validate`
+  against real provider schemas is what is claimed, and its limits are stated in
+  `scripts/tf_validate.py`: green means every attribute exists, not that every value is
+  acceptable.
+- `infra/bootstrap/` is written and validated but **not applied either**, despite being the one
+  layer whose design permits a laptop apply.
+
+`docs/DAY-ONE.md` stays exactly as it is: the written record of the manual work an operator
+would have to do. Writing it down was always the deliverable; doing it was not.
 
 **16 · The repository is English. The conversation is Greek.**
 
 ## Deliberately deferred
 
-- Live capture, screenshots and the video walkthrough — Phase 4.
+- The video walkthrough — Phase 4. (Live capture and screenshots are not deferred; see 15.
+  They are out of scope.)
 - The site and CV integration — see `docs/PORTFOLIO-CONTEXT.md`; it is real work and it is
   not part of building the system.
 - The second worked example (the Readiness Framework scored against Watermark) — after the

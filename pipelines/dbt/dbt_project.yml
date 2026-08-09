@@ -1,0 +1,43 @@
+# dbt-athena over the Iceberg lakehouse.
+#
+# dbt owns the *gold* layer and nothing above it. Silver — the closed windows and their
+# restatements — is written by the Flink job, because that is where claim 1 is decided and a
+# second implementation of window closure in SQL would be exactly the "two implementations of
+# one thing" that `docs/SCENARIO.md` lists as a pathology. What dbt does is aggregate what the
+# stream already published, which is arithmetic, and arithmetic is the part SQL should own.
+#
+# The silver models below are `source` declarations and tests, not transformations. They exist
+# so that a change to the stream's output shape breaks `dbt build` at parse time rather than
+# three models downstream.
+
+name: watermark
+version: 1.0.0
+config-version: 2
+profile: watermark
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  watermark:
+    +materialized: table
+    gold:
+      +schema: gold
+      # Iceberg, so every gold table has the same erasure surface as the rest of the lakehouse.
+      # A Hive-format gold table would be a set of files claim 6 could only reach by rewriting
+      # a prefix, and it would be the one table nobody remembers.
+      +table_type: iceberg
+      +format: parquet
+      +table_properties:
+        write.delete.mode: merge-on-read
+        write.update.mode: merge-on-read
+
+vars:
+  # Bound at run time by the orchestration, never interpolated into SQL by hand. A settlement
+  # query built by string concatenation is one somebody eventually builds from a
+  # customer-supplied meter id.
+  settlement_from: "1970-01-01"
+  settlement_to: "2100-01-01"

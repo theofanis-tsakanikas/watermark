@@ -126,6 +126,12 @@ gate-proof: ## Break every gate on purpose; each must be refused, for the right 
 
 # ── Infrastructure (offline validation only — no cloud calls) ────────────────
 
+.PHONY: wiring
+wiring: ## The offline stand-ins for a plan nobody can run without credentials
+	$(PY) scripts/check_lakehouse_wiring.py
+	$(PY) scripts/check_vpc_endpoints.py
+	$(PY) scripts/check_oidc_subjects.py
+
 .PHONY: tf-fmt
 tf-fmt: ## terraform fmt across every layer
 	terraform fmt -recursive infra

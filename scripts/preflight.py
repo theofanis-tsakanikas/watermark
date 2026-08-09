@@ -161,6 +161,29 @@ CHECKS: list[Check] = [
     # ── Deployability ───────────────────────────────────────────────────────
     Check(
         "deployability",
+        "lakehouse wiring",
+        [PYTHON, "scripts/check_lakehouse_wiring.py"],
+        "Terraform, dbt and the queries describe one lakehouse three times. `dbt parse` "
+        "resolves a source against sources.yml rather than a catalogue, so a table that exists "
+        "nowhere compiles cleanly and the first real build fails — or a resolver reads an empty "
+        "table and calls it zero.",
+    ),
+    Check(
+        "deployability",
+        "VPC endpoints",
+        [PYTHON, "scripts/check_vpc_endpoints.py"],
+        "Egress is the endpoint list and nothing else. A service with no endpoint does not "
+        "refuse the connection — it waits, while the control plane reports healthy.",
+    ),
+    Check(
+        "deployability",
+        "OIDC subjects",
+        [PYTHON, "scripts/check_oidc_subjects.py"],
+        "Every trusted subject names this repository and one environment. CKV_AWS_358 reads "
+        "only the first value of the condition list, so this is the check that covers the trust.",
+    ),
+    Check(
+        "deployability",
         "terraform fmt",
         ["terraform", "fmt", "-check", "-recursive", "infra"],
         "Formatting drift makes a real diff unreadable.",

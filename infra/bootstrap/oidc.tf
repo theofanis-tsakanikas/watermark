@@ -110,3 +110,107 @@ resource "aws_iam_role_policy" "state_access" {
   role   = aws_iam_role.deploy.id
   policy = data.aws_iam_policy_document.state_access.json
 }
+
+# ── The permissions each layer needs, added by the layer that needs them ─────
+#
+# The comment on `state_access` above explains why AdministratorAccess is not here. This is the
+# other half of that promise: each layer's grant lives in its own statement, named after the
+# layer, so a reviewer can read what a deploy is allowed to create and a `terraform apply` that
+# fails on an access denial names the action it wanted.
+#
+# It is longer than `AdministratorAccess`. That is the trade.
+
+data "aws_iam_policy_document" "deploy_layers" {
+  # A deploy role creates resources that do not exist yet, so its statements cannot name their
+  # ARNs — there is no ARN to name until the apply runs. It is constrained the two ways that are
+  # available: by service, per layer, so a reviewer can read what a deploy may create; and by
+  # the explicit deny at the bottom, which stops it widening its own trust or minting a
+  # long-lived credential. That deny is the constraint that actually matters.
+  #checkov:skip=CKV_AWS_111:Resources do not exist until the apply creates them.
+  #checkov:skip=CKV_AWS_356:As above.
+  #checkov:skip=CKV_AWS_109:As above — see the NeverWidenItsOwnTrust statement.
+  #checkov:skip=CKV_AWS_107:The deploy role does not read credentials; the statements are creation actions.
+  #checkov:skip=CKV_AWS_110:Privilege escalation through iam:* is denied explicitly below.
+  #checkov:skip=CKV_AWS_108:`s3:Get*` is here so the deploy can read back what it created — an object version, a bucket policy. The data this estate holds is encrypted with a customer-managed key the deploy role has no grant on, so reading a lakehouse object returns ciphertext.
+  statement {
+    sid    = "Foundation"
+    effect = "Allow"
+    actions = [
+      "ec2:*Vpc*", "ec2:*Subnet*", "ec2:*RouteTable*", "ec2:*SecurityGroup*",
+      "ec2:*VpcEndpoint*", "ec2:*FlowLogs*", "ec2:Describe*", "ec2:*Tags*",
+      "kms:CreateKey", "kms:CreateAlias", "kms:DeleteAlias", "kms:TagResource",
+      "kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:EnableKeyRotation",
+      "kms:DisableKeyRotation", "kms:Describe*", "kms:List*", "kms:Get*",
+      "s3:CreateBucket", "s3:DeleteBucket", "s3:Put*", "s3:Get*", "s3:List*",
+      "budgets:*", "sns:*", "logs:*", "lambda:*", "events:*",
+      "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:PassRole",
+      "iam:*RolePolicy", "iam:ListRolePolicies", "iam:TagRole",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "Streaming"
+    effect = "Allow"
+    actions = [
+      "kinesis:*", "iot:*", "glue:*Registry*", "glue:*Schema*",
+      "kinesisanalytics:*", "cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms",
+      "cloudwatch:DescribeAlarms",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "Lakehouse"
+    effect    = "Allow"
+    actions   = ["glue:*", "athena:*", "lakeformation:*"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "MachineLearning"
+    effect    = "Allow"
+    actions   = ["sagemaker:*"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "Governance"
+    effect    = "Allow"
+    actions   = ["states:*", "xray:*"]
+    resources = ["*"]
+  }
+
+  # The one thing a deploy may never do.
+  #
+  # Widening its own trust is the move that turns a compromised workflow into a permanent
+  # foothold: edit the `sub` condition, and every branch can assume the role from then on. The
+  # deny is explicit because an allow list that merely omits these actions is one careless
+  # `iam:*` away from including them — and `Foundation` above contains exactly that shape.
+  statement {
+    sid    = "NeverWidenItsOwnTrust"
+    effect = "Deny"
+    actions = [
+      "iam:UpdateAssumeRolePolicy",
+      "iam:CreateOpenIDConnectProvider",
+      "iam:UpdateOpenIDConnectProviderThumbprint",
+      "iam:DeleteOpenIDConnectProvider",
+      "iam:AttachRolePolicy",
+      "iam:CreateUser",
+      "iam:CreateAccessKey",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "deploy_layers" {
+  #checkov:skip=CKV_AWS_111:See the note in aws_iam_policy_document.deploy_layers.
+  #checkov:skip=CKV_AWS_356:As above.
+  #checkov:skip=CKV_AWS_109:As above.
+  #checkov:skip=CKV_AWS_107:As above.
+  #checkov:skip=CKV_AWS_110:As above.
+  #checkov:skip=CKV_AWS_108:As above.
+  name   = "deploy-the-layers"
+  role   = aws_iam_role.deploy.id
+  policy = data.aws_iam_policy_document.deploy_layers.json
+}

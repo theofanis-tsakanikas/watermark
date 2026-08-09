@@ -1,0 +1,23 @@
+# Committed, and it contains no secret — that is the point of it being here.
+#
+# Athena authenticates with the caller's role. There is no password, no connection string with
+# a credential in it, and nothing for `gitleaks` to find, because the whole estate runs on
+# short-lived credentials from OIDC and execution roles (CLAUDE.md: no long-lived access keys,
+# ever).
+
+watermark:
+  target: deployed
+  outputs:
+    deployed:
+      type: athena
+      s3_staging_dir: "s3://{{ env_var('WATERMARK_LAKEHOUSE_BUCKET') }}/dbt-staging/"
+      s3_data_dir: "s3://{{ env_var('WATERMARK_LAKEHOUSE_BUCKET') }}/warehouse/gold/"
+      region_name: "{{ env_var('WATERMARK_REGION') }}"
+      database: awsdatacatalog
+      schema: "{{ env_var('WATERMARK_PROJECT', 'watermark') }}_gold"
+      work_group: "{{ env_var('WATERMARK_PROJECT', 'watermark') }}"
+      threads: 4
+      # The workgroup already enforces SSE-KMS on results; stating it here too means a run
+      # against a misconfigured workgroup fails rather than writing plaintext.
+      encryption: sse_kms
+      kms_key: "alias/{{ env_var('WATERMARK_PROJECT', 'watermark') }}-data"

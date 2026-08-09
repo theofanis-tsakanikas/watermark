@@ -1,0 +1,163 @@
+# The only way anything reaches AWS. Manual dispatch, a required reviewer, and OIDC.
+#
+# **Nothing here has ever run.** `docs/DECISIONS.md` 15 puts the whole estate out of scope for
+# application: it is built, validated against real provider schemas, scanned clean, and left
+# unapplied. This file exists so that "ready to deploy" is a checkable statement rather than an
+# adjective — a reviewer can read what would happen, and it is the same thing that would happen.
+#
+# Four properties are worth reading for.
+#
+# **CI runs first, against the exact ref.** Not "CI passed on main last night". The whole suite,
+# every claim, every gate and every scan re-run against the commit being deployed, as a
+# reusable workflow — because a deploy of a ref nobody tested is a deploy of an untested ref no
+# matter how green the branch looks.
+#
+# **Layers apply in order, and each one stops the next.** Foundation creates the VPC and the
+# keys that streaming reads through data sources; a streaming apply against a half-built
+# foundation fails somewhere in the middle and leaves both.
+#
+# **The expensive things stay off.** The Managed Flink application is created stopped, the
+# Feature Store online store and the endpoint are behind flags that default to false. Starting
+# them is `capture.yml`'s job, in a bounded block, deliberately.
+#
+# **Every resource gets an expiry.** `expires_at` is required, has no default, and the reaper
+# enforces it hourly. An estate that outlives its purpose is the only way this project spends
+# money it did not mean to.
+
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      layer:
+        description: "Which layer to apply. `all` applies them in dependency order."
+        required: true
+        type: choice
+        options: [all, foundation, streaming, lakehouse, ml, governance]
+        default: all
+      expires_at:
+        description: "RFC-3339 instant after which the reaper destroys this estate, e.g. 2026-08-10T18:00:00Z"
+        required: true
+        type: string
+      confirm:
+        description: "Type the word `apply` to confirm. A dispatch form with one button is a button somebody presses by accident."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token. There is no secret anywhere in this file.
+
+concurrency:
+  # Never two applies at once. The S3 backend takes a lock, so the second would fail — noisily,
+  # halfway, with one layer applied and another waiting on a lock that outlives its job.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  confirm:
+    name: confirm the intent
+    runs-on: ubuntu-latest
+    steps:
+      - name: the confirmation word
+        run: |
+          if [ "${{ inputs.confirm }}" != "apply" ]; then
+            echo "::error::Type 'apply' in the confirm field. This creates billable resources."
+            exit 1
+          fi
+      - name: the expiry is in the future and not far in it
+        # A far-future expiry is the same as no expiry, which is the failure mode the tag
+        # exists to prevent. Seven days is longer than any capture this project would run.
+        run: |
+          python3 - <<'PY'
+          import datetime as dt, sys
+          raw = "${{ inputs.expires_at }}"
+          try:
+              expires = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+          except ValueError:
+              sys.exit(f"::error::{raw!r} is not an RFC-3339 instant")
+          now = dt.datetime.now(dt.UTC)
+          if expires <= now:
+              sys.exit("::error::the expiry is in the past; the reaper would destroy this immediately")
+          if expires > now + dt.timedelta(days=7):
+              sys.exit("::error::an expiry more than seven days out is the same as no expiry")
+          print(f"expires {expires.isoformat()}, in {(expires - now)}")
+          PY
+
+  verify:
+    name: the whole suite, against this exact ref
+    needs: confirm
+    uses: ./.github/workflows/ci.yml
+
+  apply:
+    name: terraform apply
+    needs: verify
+    runs-on: ubuntu-latest
+    # The environment is the authorisation. Required reviewers hang off it, and the OIDC subject
+    # the deploy role trusts names it — without the environment the token's `sub` does not
+    # match and the role cannot be assumed. That is the intended failure, not a misconfiguration.
+    environment: deploy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+
+      - run: pip install -e ".[dev]"
+
+      - name: build the Flink application package
+        # Before the credentials, deliberately. A packaging failure should stop the deploy while
+        # nothing has been created, not four minutes in with the foundation already up.
+        run: make package
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          # Short. The apply takes minutes; an hour-long session is fifty minutes of credential
+          # nobody needs.
+          role-duration-seconds: 3600
+
+      - name: apply the layers, in dependency order
+        env:
+          TF_VAR_expires_at: ${{ inputs.expires_at }}
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          ORDER="foundation streaming lakehouse ml governance"
+          if [ "${{ inputs.layer }}" != "all" ]; then ORDER="${{ inputs.layer }}"; fi
+
+          for layer in $ORDER; do
+            echo "::group::$layer"
+            terraform -chdir="infra/$layer" init \
+              -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+              -backend-config="region=${{ vars.AWS_REGION }}"
+            # The plan is written out and printed before it is applied. A reviewer approving an
+            # environment approves an intent; the plan is what the intent turned out to mean.
+            terraform -chdir="infra/$layer" plan -out=tfplan
+            terraform -chdir="infra/$layer" show -no-color tfplan
+            terraform -chdir="infra/$layer" apply -auto-approve tfplan
+            echo "::endgroup::"
+          done
+
+      - name: what exists now, and when it expires
+        env:
+          TF_VAR_expires_at: ${{ inputs.expires_at }}
+        run: |
+          echo "### Applied" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Expires at \`${{ inputs.expires_at }}\`; the reaper runs hourly." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The Flink application was created **stopped**, and the Feature Store online" >> "$GITHUB_STEP_SUMMARY"
+          echo "store and the inference endpoint are **off**. Those three are what cost money" >> "$GITHUB_STEP_SUMMARY"
+          echo "while idle; starting them is a separate, deliberate act." >> "$GITHUB_STEP_SUMMARY"

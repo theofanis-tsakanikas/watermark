@@ -42,3 +42,5 @@ savepoints/
 .DS_Store
 infra/streaming/.package/
 infra/*/.build/
+pipelines/dbt/target/
+pipelines/dbt/dbt_packages/

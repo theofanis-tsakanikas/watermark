@@ -1,0 +1,103 @@
+# Take it all down. Also never run, and more important than the deploy.
+#
+# A deploy that cannot be reversed is a deploy nobody should make. This workflow is the reason
+# the €100 target in `CLAUDE.md` is a constraint rather than a hope: the estate exists in
+# bounded blocks because taking it down is one dispatch rather than an afternoon in the console
+# finding things.
+#
+# **Reverse dependency order.** Governance and ml first, foundation last — destroying the VPC
+# while the Flink application is still attached leaves elastic network interfaces the VPC
+# delete cannot remove, and the layer hangs for twenty minutes before failing.
+#
+# **The state bucket survives.** `infra/bootstrap` is not in the list and `prevent_destroy` is
+# on the bucket. Destroying the backend leaves an estate nothing can reach — the one failure
+# worse than paying for an idle one.
+#
+# **It does not need CI to pass.** Deliberately. The moment somebody most needs to destroy an
+# estate is the moment something is broken, and a teardown gated on a green suite is a teardown
+# that is unavailable exactly when the bill is running.
+
+name: destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type `destroy` to confirm."
+        required: true
+        type: string
+      layer:
+        description: "Which layer, or `all` for everything except bootstrap."
+        required: true
+        type: choice
+        options: [all, governance, ml, lakehouse, streaming, foundation]
+        default: all
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  destroy:
+    name: terraform destroy
+    runs-on: ubuntu-latest
+    environment: destroy
+
+    steps:
+      - name: the confirmation word
+        run: |
+          if [ "${{ inputs.confirm }}" != "destroy" ]; then
+            echo "::error::Type 'destroy' in the confirm field."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 3600
+
+      - name: destroy the layers, in reverse dependency order
+        env:
+          # Required by the variable, unused by a destroy. Supplied so that `terraform destroy`
+          # can evaluate the configuration at all — a missing required variable makes a
+          # teardown prompt for input in a workflow that has no terminal.
+          TF_VAR_expires_at: "2000-01-01T00:00:00Z"
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          ORDER="governance ml lakehouse streaming foundation"
+          if [ "${{ inputs.layer }}" != "all" ]; then ORDER="${{ inputs.layer }}"; fi
+
+          for layer in $ORDER; do
+            echo "::group::$layer"
+            terraform -chdir="infra/$layer" init \
+              -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+              -backend-config="region=${{ vars.AWS_REGION }}"
+            terraform -chdir="infra/$layer" destroy -auto-approve
+            echo "::endgroup::"
+          done
+
+      - name: what is left
+        run: |
+          echo "### Destroyed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`infra/bootstrap\` is deliberately untouched: the state bucket and the role" >> "$GITHUB_STEP_SUMMARY"
+          echo "this workflow assumed to do the destroying live there. An estate nothing can" >> "$GITHUB_STEP_SUMMARY"
+          echo "reach is the one failure worse than an idle one." >> "$GITHUB_STEP_SUMMARY"

@@ -158,7 +158,7 @@ resource "aws_kinesisanalyticsv2_application" "watermark" {
 
     flink_application_configuration {
       checkpoint_configuration {
-        configuration_type = "CUSTOM"
+        configuration_type    = "CUSTOM"
         checkpointing_enabled = true
         # A minute. Shorter costs throughput for state this size; longer means more to reprocess
         # after a restore, and the reprocessing is bounded by stream retention rather than by

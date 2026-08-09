@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: settlement_hour
+    description: >
+      What an invoice line reads. Must agree with watermark.settlement.totals.settle to the
+      watt-hour; the two are different mechanisms over one definition, which is what makes the
+      agreement evidence rather than a tautology.
+
+    columns:
+      - name: meter_id
+        tests: [not_null]
+      - name: hour_start
+        tests: [not_null]
+      - name: energy_wh
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: intervals
+        description: Never more than four. Fewer is carried honestly by is_complete; more is double-counting.
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 4
+      - name: is_complete
+        tests: [not_null]
+
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [meter_id, hour_start]

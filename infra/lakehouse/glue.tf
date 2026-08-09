@@ -33,21 +33,21 @@ locals {
   # one of them is a table whose maintenance behaves differently from every other, and nothing
   # about it looks different.
   iceberg_properties = {
-    "table_type"                         = "ICEBERG"
-    "format-version"                     = "2"
-    "write.format.default"               = "parquet"
-    "write.parquet.compression-codec"    = "zstd"
+    "table_type"                      = "ICEBERG"
+    "format-version"                  = "2"
+    "write.format.default"            = "parquet"
+    "write.parquet.compression-codec" = "zstd"
     # Merge-on-read. The erasure path (claim 6) issues row-level deletes against a subject, and
     # copy-on-write would rewrite whole files on every one of them. The cost is that reads merge
     # delete files until compaction runs, which is a job this layer schedules rather than a
     # service's cron.
-    "write.delete.mode"                  = "merge-on-read"
-    "write.update.mode"                  = "merge-on-read"
-    "write.merge.mode"                   = "merge-on-read"
+    "write.delete.mode" = "merge-on-read"
+    "write.update.mode" = "merge-on-read"
+    "write.merge.mode"  = "merge-on-read"
     # Snapshot retention is a policy in this repository, not a default. Anything a published
     # number was computed from is tagged, and the expiry job refuses to remove a tagged
     # snapshot — see maintenance.tf.
-    "history.expire.max-snapshot-age-ms" = "2592000000"
+    "history.expire.max-snapshot-age-ms"   = "2592000000"
     "history.expire.min-snapshots-to-keep" = "10"
   }
 }

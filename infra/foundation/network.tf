@@ -107,6 +107,9 @@ locals {
     "secretsmanager",
     "ecr.api",
     "ecr.dkr",
+    # The Flink application traces from inside the VPC. Without this the trace segment
+    # upload hangs rather than failing, on the hot path, for as long as the SDK retries.
+    "xray",
   ])
 }
 

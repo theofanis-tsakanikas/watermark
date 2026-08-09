@@ -65,7 +65,7 @@ resource "aws_cloudwatch_metric_alarm" "consumer_falling_behind" {
   threshold         = 1800000
   alarm_description = "The consumer is more than two metering intervals behind. Windows are still closing; they are closing late, which is the failure that does not announce itself."
 
-  dimensions = { StreamName = each.value }
+  dimensions    = { StreamName = each.value }
   alarm_actions = [aws_sns_topic.stream_alarms.arn]
   ok_actions    = [aws_sns_topic.stream_alarms.arn]
 }

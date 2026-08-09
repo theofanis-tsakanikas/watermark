@@ -148,6 +148,18 @@ jobs:
         # This is what catches an attribute that does not exist, and it is the difference
         # between "this should apply" and "this applies".
         run: python scripts/tf_validate.py
+      - name: Terraform, dbt and the queries agree on the lakehouse
+        # `dbt parse` resolves sources against sources.yml, not against a catalogue: an invented
+        # table name compiles cleanly and fails on the first real build, after the estate is up.
+        run: python scripts/check_lakehouse_wiring.py
+      - name: everything reached from inside the VPC has a way out
+        # There is no NAT gateway. A service with no endpoint does not fail — it hangs, and the
+        # control plane reports the application healthy throughout.
+        run: python scripts/check_vpc_endpoints.py
+      - name: every OIDC subject names this repository and an environment
+        # CKV_AWS_358 cannot parse GitHub's immutable subject and reads only the first value of
+        # the list. This reads all of them and refuses any wildcard.
+        run: python scripts/check_oidc_subjects.py
       - name: the application package builds
         # Not a formality. archive_file needs a directory to zip, and a packaging step that has
         # only ever run on a laptop fails inside a deploy — which is the expensive place.

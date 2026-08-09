@@ -1,0 +1,101 @@
+# Start the expensive things, drive the scenario, stop them again.
+#
+# **Never run, and it is the file most likely to be misread**, so: the three things this starts
+# — the Managed Flink application, the Feature Store online store and the inference endpoint —
+# are the three `CLAUDE.md` names as the expensive ones. They bill continuously from the moment
+# they run, whether or not anything reads them, which is why `deploy.yml` creates the first one
+# stopped and leaves the other two behind flags. Nothing but this workflow turns them on.
+#
+# It is one job with a `stop` step that runs `if: always()`. A capture that fails halfway and
+# leaves an endpoint running is the exact shape of accident the €100 target exists to rule out,
+# and the ordering here is the only thing standing between a failed run and a monthly bill.
+
+name: capture
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "How long to run the scenario. Kept short; this is billing by the minute."
+        required: true
+        type: number
+        default: 30
+      confirm:
+        description: "Type `capture` to confirm. This starts billable compute."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: capture-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    name: stand up, drive, capture, stop
+    runs-on: ubuntu-latest
+    environment: deploy
+    # A hard ceiling above the requested duration. If the workflow itself hangs, the runner
+    # kills it — and the `always()` stop step still runs.
+    timeout-minutes: 120
+
+    steps:
+      - name: the confirmation word
+        run: |
+          if [ "${{ inputs.confirm }}" != "capture" ]; then
+            echo "::error::Type 'capture' in the confirm field."
+            exit 1
+          fi
+          if [ "${{ inputs.minutes }}" -gt 60 ]; then
+            echo "::error::More than an hour is not a capture, it is an environment."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: start the Flink application
+        run: |
+          aws kinesisanalyticsv2 start-application \
+            --application-name watermark \
+            --run-configuration '{"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'
+
+      - name: drive the scenario
+        run: |
+          echo "Publishing the generated day to IoT Core for ${{ inputs.minutes }} minutes."
+          python -m data.publish --minutes "${{ inputs.minutes }}"
+
+      - name: capture the evidence
+        run: |
+          mkdir -p out/capture
+          aws kinesisanalyticsv2 describe-application --application-name watermark \
+            > out/capture/application.json
+          aws cloudwatch get-metric-statistics \
+            --namespace AWS/KinesisAnalytics --metric-name uptime \
+            --dimensions Name=Application,Value=watermark \
+            --start-time "$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)" \
+            --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --period 60 --statistics Maximum > out/capture/uptime.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capture
+          path: out/capture
+
+      - name: stop everything that bills
+        # `always()`. This is the most important line in the file: a capture that fails halfway
+        # and leaves an endpoint running is precisely the accident the cost posture exists to
+        # rule out, and a stop step that only runs on success does not prevent it.
+        if: always()
+        run: |
+          aws kinesisanalyticsv2 stop-application --application-name watermark --force || true
+          echo "### Stopped" >> "$GITHUB_STEP_SUMMARY"
+          echo "The reaper will remove whatever remains at its expiry, hourly." >> "$GITHUB_STEP_SUMMARY"

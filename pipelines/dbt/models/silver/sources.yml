@@ -1,0 +1,47 @@
+version: 2
+
+sources:
+  - name: silver
+    description: >
+      Written by the Flink job, not by dbt. Claim 1 is decided in the stream core and a second
+      implementation of window closure in SQL would be two implementations of one thing —
+      exactly the pathology docs/SCENARIO.md warns about. dbt reads this and aggregates.
+    schema: "{{ env_var('WATERMARK_PROJECT', 'watermark') }}_silver"
+
+    tables:
+      - name: meter_interval
+        description: One meter's energy for one 15-minute interval, at its newest revision.
+        columns:
+          - name: meter_id
+            tests: [not_null]
+          - name: interval_start
+            tests: [not_null]
+          - name: energy_wh
+            description: Integer watt-hours. Never a decimal — ADR-0004 replaced the parity tolerance with a scaled integer.
+            tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  min_value: 0
+          - name: closed_at
+            description: >
+              The watermark that permitted publication. This column is claim 1, checkable in
+              SQL after the fact: a row whose closed_at precedes its own interval end could not
+              have come from the core.
+            tests: [not_null]
+          - name: revision
+            tests: [not_null]
+          - name: lineage_id
+            tests: [not_null]
+
+        tests:
+          - dbt_utils.unique_combination_of_columns:
+              combination_of_columns: [meter_id, interval_start, revision]
+              # Two rows for one meter, interval and revision is a duplicate that survived
+              # deduplication — a customer billed twice for the same electricity.
+
+  - name: reference
+    description: SCD-2 reference data from the CDC pipeline.
+    schema: "{{ env_var('WATERMARK_PROJECT', 'watermark') }}_gold"
+    tables:
+      - name: meter_assignment_scd2
+      - name: customer_scd2

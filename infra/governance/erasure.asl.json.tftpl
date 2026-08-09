@@ -1,0 +1,202 @@
+{
+  "Comment": "Erase one data subject to a declared boundary, and refuse to certify anything less. See infra/governance/erasure.tf for why the legs are not equal.",
+  "StartAt": "RecordTheRequest",
+  "States": {
+    "RecordTheRequest": {
+      "Type": "Pass",
+      "Comment": "The request itself is evidence. It is recorded before anything is destroyed, so that a run which fails halfway leaves a trace of what was attempted rather than a subject in an unknown state.",
+      "Parameters": {
+        "subject_id.$": "$.subject_id",
+        "requested_at.$": "$$.Execution.StartTime",
+        "execution.$": "$$.Execution.Name",
+        "residual_days": ${residual_days}
+      },
+      "ResultPath": "$.request",
+      "Next": "EraseEveryLeg"
+    },
+
+    "EraseEveryLeg": {
+      "Type": "Parallel",
+      "Comment": "Parallel because the legs are independent, and because a sequential run that fails on leg three leaves legs four and five untried — which makes the failure look smaller than it is.",
+      "ResultPath": "$.legs",
+      "Branches": [
+        {
+          "StartAt": "CryptoShred",
+          "States": {
+            "CryptoShred": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:kms:scheduleKeyDeletion",
+              "Parameters": {
+                "KeyId.$": "States.Format('alias/${project}-subject-{}', $.subject_id)",
+                "PendingWindowInDays": 7
+              },
+              "ResultSelector": {
+                "leg": "crypto_shred",
+                "confirmed": true,
+                "deletes_at.$": "$.DeletionDate"
+              },
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "ShredFailed"
+                }
+              ],
+              "End": true
+            },
+            "ShredFailed": {
+              "Type": "Pass",
+              "Parameters": { "leg": "crypto_shred", "confirmed": false },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "DeleteRowsPhysically",
+          "States": {
+            "DeleteRowsPhysically": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+              "Parameters": {
+                "QueryString.$": "States.Format('DELETE FROM ${project}_silver.meter_interval WHERE meter_id IN (SELECT meter_id FROM ${project}_gold.meter_assignment_scd2 WHERE customer_id = ''{}'')', $.subject_id)",
+                "WorkGroup": "${project}"
+              },
+              "ResultPath": "$.delete",
+              "Next": "Compact",
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PhysicalDeleteFailed" }
+              ]
+            },
+            "Compact": {
+              "Type": "Task",
+              "Comment": "Waited on, not scheduled. The certificate has to state which run removed which files — ADR-0002 kept these jobs precisely so this step can be synchronous.",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": { "JobName": "${compaction_job}" },
+              "ResultPath": "$.compaction",
+              "Next": "RemoveOrphanFiles",
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PhysicalDeleteFailed" }
+              ]
+            },
+            "RemoveOrphanFiles": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": { "JobName": "${orphan_files_job}" },
+              "ResultSelector": { "leg": "physical_deletion", "confirmed": true },
+              "End": true,
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PhysicalDeleteFailed" }
+              ]
+            },
+            "PhysicalDeleteFailed": {
+              "Type": "Pass",
+              "Parameters": { "leg": "physical_deletion", "confirmed": false },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "DeleteFromTheOnlineStore",
+          "States": {
+            "DeleteFromTheOnlineStore": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:sagemakerfeaturestoreruntime:deleteRecord",
+              "Parameters": {
+                "FeatureGroupName": "${project}-meter-consumption",
+                "RecordIdentifierValueAsString.$": "$.subject_id",
+                "EventTime.$": "$$.Execution.StartTime"
+              },
+              "ResultSelector": { "leg": "online_store", "confirmed": true },
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "OnlineStoreFailed" }
+              ],
+              "End": true
+            },
+            "OnlineStoreFailed": {
+              "Type": "Pass",
+              "Parameters": { "leg": "online_store", "confirmed": false },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "RederiveTrainingSets",
+          "States": {
+            "RederiveTrainingSets": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+              "Parameters": {
+                "QueryString.$": "States.Format('DELETE FROM ${project}_gold.training_snapshot WHERE customer_id = ''{}''', $.subject_id)",
+                "WorkGroup": "${project}"
+              },
+              "ResultSelector": { "leg": "training_sets", "confirmed": true },
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "TrainingSetsFailed" }
+              ],
+              "End": true
+            },
+            "TrainingSetsFailed": {
+              "Type": "Pass",
+              "Parameters": { "leg": "training_sets", "confirmed": false },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "QuarantineAffectedModels",
+          "States": {
+            "QuarantineAffectedModels": {
+              "Type": "Pass",
+              "Comment": "The leg that cannot be completed. A model trained before this request keeps the subject's contribution in its weights; no key protects that and destroying one does not remove it. What this leg does is quarantine the model and start the retraining clock. The residual window goes on the certificate. Machine unlearning is not claimed.",
+              "Parameters": {
+                "leg": "model_artefacts",
+                "confirmed": true,
+                "boundary": "declared",
+                "residual_days": ${residual_days},
+                "note": "Models trained before this request retain the subject statistically. They are quarantined and retrained from the shredded corpus within the residual window; crypto-shredding does not reach model weights and machine unlearning is not claimed."
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "EveryLegConfirmed"
+    },
+
+    "EveryLegConfirmed": {
+      "Type": "Choice",
+      "Comment": "The refusal. This is what claim 6 actually delivers — not a deletion mechanism, but a system that will not say 'erased' unless every leg came back confirmed.",
+      "Choices": [
+        {
+          "And": [
+            { "Variable": "$.legs[0].confirmed", "BooleanEquals": true },
+            { "Variable": "$.legs[1].confirmed", "BooleanEquals": true },
+            { "Variable": "$.legs[2].confirmed", "BooleanEquals": true },
+            { "Variable": "$.legs[3].confirmed", "BooleanEquals": true },
+            { "Variable": "$.legs[4].confirmed", "BooleanEquals": true }
+          ],
+          "Next": "WriteTheCertificate"
+        }
+      ],
+      "Default": "RefuseToCertify"
+    },
+
+    "WriteTheCertificate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:putObject",
+      "Parameters": {
+        "Bucket": "${certificate_bucket}",
+        "Key.$": "States.Format('erasure-certificates/{}/{}.json', $.request.subject_id, $$.Execution.Name)",
+        "Body.$": "$",
+        "ServerSideEncryption": "aws:kms"
+      },
+      "End": true
+    },
+
+    "RefuseToCertify": {
+      "Type": "Fail",
+      "Error": "IncompleteErasure",
+      "Cause": "At least one leg did not confirm. No certificate is written. A partial erasure reported as complete is worse than none: the subject is told they are gone and the residual becomes invisible."
+    }
+  }
+}

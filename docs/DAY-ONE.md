@@ -76,16 +76,6 @@ days.
 
 *Has an API (`service-quotas`), with a human approval and a lead time behind it.*
 
----
-
-## The rule for adding to this list
-
-A new entry needs three things: **what** was done, **why it has no API**, and **how a reader
-detects that it has not been done**. The third is the one that matters. An undone manual step
-that fails loudly is an inconvenience; one that fails silently is an estate that does not
-behave the way this repository says it does.
-
----
 
 ## 7 · Two more repository variables, once the layers exist
 
@@ -106,3 +96,13 @@ somebody who may drive a scenario but not create infrastructure — that is a th
 and a third OIDC subject in `infra/bootstrap/oidc.tf`, not a widened trust on the existing one.
 
 *Recorded now because the temptation at that moment is to add a wildcard.*
+
+---
+
+## The rule for adding to this list
+
+A new entry needs three things: **what** was done, **why it has no API**, and **how a reader
+detects that it has not been done**. The third is the one that matters. An undone manual step
+that fails loudly is an inconvenience; one that fails silently is an estate that does not
+behave the way this repository says it does.
+

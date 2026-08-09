@@ -47,29 +47,35 @@ runs them on a pull request.
 
 *Unlocks claims 1 and 2. This phase alone is a publishable project.*
 
-- [ ] `data/` — the seeded synthetic generator, with every pathology listed in
+- [x] `data/` — the seeded synthetic generator, with every pathology listed in
       `docs/SCENARIO.md`. Committed, deterministic, no network.
-- [ ] `contracts/entities/` — meter, customer, tariff, substation, meter assignment, with
+- [x] `contracts/entities/` — meter, customer, tariff, substation, meter assignment, with
       SCD-2 rules. Loader + validation + cross-checks.
-- [ ] `src/watermark/core/` — the pure logic, no Flink import anywhere in it:
+- [x] `src/watermark/core/` — the pure logic, no Flink import anywhere in it:
       normalisation across firmware schema variants · deduplication on
       `(meter_id, interval_start, payload_hash)` · event-time windowing · watermark
       generation with idle-source detection · allowed lateness with a side output ·
       clock-skew quarantine with a reason · point-in-time SCD-2 join.
-- [ ] `src/watermark/lineage/` — a lineage id minted at ingestion and carried to every
+- [x] `src/watermark/lineage/` — a lineage id minted at ingestion and carried to every
       downstream artefact; restatement records (prior value, new value, cause, delta).
-- [ ] `evals/watermark/` — **claim 1**. The labelled cases: an idle substation, a stalled
+- [x] `evals/watermark/` — **claim 1**. The labelled cases: an idle substation, a stalled
       watermark, a burst, a window that must not close, a window that must. Each expects a
       specific outcome, not "no exception".
-- [ ] `evals/replay/` — **claim 2**. Shuffle, duplicate and delay the same event set; assert
+- [x] `evals/replay/` — **claim 2**. Shuffle, duplicate and delay the same event set; assert
       byte-identical outputs and identical lineage hashes.
-- [ ] `recordings/` — golden outputs; a `seed-check` target proving every generated total
+- [x] `recordings/` — golden outputs; a `seed-check` target proving every generated total
       reproduces its recording exactly.
-- [ ] `streaming/` — the PyFlink job as a thin adapter. Prove locally that it produces the
-      same output as the pure core on the same input; that equivalence is itself a test.
-- [ ] Settlement resolution + restatement pipeline: the 3-day-late batch changes a published
+- [~] `streaming/` — the PyFlink job as a thin adapter. **Adapter done and enforced** (no
+      semantic literal, `scripts/check_adapter_is_thin.py`, with a gate-proof mutation).
+      **The equivalence test is written and has never run**: `apache-flink` will not install
+      on this machine (apache-beam has no wheel for py3.12/arm64 — `docs/AWS-CONSTRAINTS.md`,
+      dated). It runs as its own CI job on Linux with `WATERMARK_REQUIRE_FLINK=1`, so a
+      missing runtime is a failure rather than a skip, and it stays off the README scoreboard
+      until somebody has watched it pass. Ticking this box before then would be the exact
+      thing the repository says it does not do.
+- [x] Settlement resolution + restatement pipeline: the 3-day-late batch changes a published
       total, and the prior value survives.
-- [ ] `infra/foundation/` and `infra/streaming/` — Terraform, validated, not applied.
+- [x] `infra/foundation/` and `infra/streaming/` — Terraform, validated, not applied.
 
 **Done when:** claims 1 and 2 pass offline, `gate-proof` breaks both and they refuse for the
 named reason, and the late batch restates rather than overwrites.
@@ -100,8 +106,10 @@ named reason, and the late batch restates rather than overwrites.
       `actuation: automatic` must fail to load.
 - [ ] `src/watermark/decisions/` — the decision engine and the deterministic fallback rules.
       The curtailment fallback must be computable with no model and no fresh features.
-- [ ] `infra/lakehouse/` and the Feature Store definitions in `infra/ml/`. Glue Data Quality
-      rules as a gate on the offline side.
+- [x] `infra/lakehouse/` and the Feature Store definitions in `infra/ml/`. Glue Data Quality
+      rules as a gate on the offline side. *(Done early, in phase 1: the whole estate was
+      written to be deploy-ready in one pass. The feature *contracts* it will hold are still
+      phase 2 work.)*
 
 **Done when:** claims 3 and 4 pass offline, a stale feature demonstrably cannot reach a
 decision, and every decision record states whether it came from a model or a fallback.

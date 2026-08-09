@@ -247,6 +247,13 @@ CHECKS: list[Check] = [
     ),
     Check(
         "deployability",
+        "deploy inputs",
+        [PYTHON, "scripts/check_deploy_inputs.py"],
+        "Every variable with no default is supplied by the workflow. A missing TF_VAR fails "
+        "inside the apply loop, with an earlier layer already created.",
+    ),
+    Check(
+        "deployability",
         "terraform fmt",
         ["terraform", "fmt", "-check", "-recursive", "infra"],
         "Formatting drift makes a real diff unreadable.",

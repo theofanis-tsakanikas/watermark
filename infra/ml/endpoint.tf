@@ -8,6 +8,11 @@
 # Phase 3 with the models they watch. Provisioning a monitoring schedule for a model that does
 # not exist would be a green tick over work that has not happened.
 
+# The model this configuration serves is created by the *promotion*, not by Terraform. A model
+# resource here would be a model with no artefact behind it, and an endpoint serving it would
+# report healthy while answering from nothing — so the name is a required variable with no
+# default, and an apply with `endpoint_enabled = true` and no model named fails at plan time
+# rather than serving.
 resource "aws_sagemaker_endpoint_configuration" "anomaly" {
   count = var.endpoint_enabled ? 1 : 0
 
@@ -16,7 +21,7 @@ resource "aws_sagemaker_endpoint_configuration" "anomaly" {
 
   production_variants {
     variant_name           = "primary"
-    model_name             = "${var.project}-anomaly-placeholder"
+    model_name             = var.promoted_model_name
     initial_instance_count = 1
     instance_type          = "ml.m5.large"
     initial_variant_weight = 1

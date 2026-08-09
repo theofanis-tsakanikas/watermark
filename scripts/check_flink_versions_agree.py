@@ -36,13 +36,37 @@ def _declared_runtime() -> tuple[int, int] | None:
     return (int(match.group(1)), int(match.group(2))) if match else None
 
 
+def _declared_connector() -> tuple[int, int] | None:
+    """The Flink minor the Kinesis connector JAR is built for.
+
+    Third place the version is stated, and the one that fails latest: a mismatched connector
+    does not fail at package time or at apply time. The application starts, reports READY, and
+    reads nothing — which is the most expensive shape a failure can take.
+    """
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    match = re.search(r"CONNECTOR_VERSION := [\d.]+-(\d+)\.(\d+)", makefile)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
 def main() -> int:
     extra, runtime = _declared_extra(), _declared_runtime()
+    connector = _declared_connector()
     if extra is None:
         print("no apache-flink floor in the `flink` extra of pyproject.toml", file=sys.stderr)
         return 1
     if runtime is None:
         print("no FLINK-x_y default for runtime_environment in infra/streaming", file=sys.stderr)
+        return 1
+    if connector is None:
+        print("no CONNECTOR_VERSION in the Makefile", file=sys.stderr)
+        return 1
+    if connector != runtime:
+        print(
+            f"the Kinesis connector is built for Flink {connector[0]}.{connector[1]} and the "
+            f"deployment runs Flink {runtime[0]}.{runtime[1]}. This does not fail at package "
+            "time or at apply time — the application starts, reports READY, and reads nothing.",
+            file=sys.stderr,
+        )
         return 1
     if extra != runtime:
         print(
@@ -53,7 +77,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"flink-versions: the tier and the deployment both run Flink {extra[0]}.{extra[1]}")
+    print(
+        f"flink-versions: the equivalence tier, the connector and the deployment all run "
+        f"Flink {extra[0]}.{extra[1]}"
+    )
     return 0
 
 

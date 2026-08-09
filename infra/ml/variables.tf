@@ -38,3 +38,26 @@ variable "endpoint_enabled" {
   default     = false
   description = "Whether a real-time inference endpoint exists. The third expensive thing, and the one that bills per instance-hour with nothing to show for it between requests."
 }
+
+variable "promoted_model_name" {
+  type    = string
+  default = ""
+
+  description = <<-EOT
+    The SageMaker model an endpoint serves. Created by a promotion, never by Terraform.
+
+    A Terraform-managed model resource would be a model with no artefact behind it, and an
+    endpoint serving it would report healthy while answering from nothing. Empty is refused
+    below whenever an endpoint is asked for, so an apply fails at plan time rather than at the
+    first inference.
+  EOT
+}
+
+# Cross-variable validation lives in a check block: a `validation` on one variable cannot see
+# another. Terraform evaluates this during plan, which is where the failure belongs.
+check "an_endpoint_needs_a_promoted_model" {
+  assert {
+    condition     = !var.endpoint_enabled || trimspace(var.promoted_model_name) != ""
+    error_message = "endpoint_enabled is true and promoted_model_name is empty. An endpoint serving a model that does not exist reports healthy and answers from nothing."
+  }
+}

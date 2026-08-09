@@ -16,7 +16,13 @@ RUFF := $(if $(wildcard $(VENV)/bin/ruff),$(VENV)/bin/ruff,ruff)
 CHECKOV_VENV := .venv-checkov
 CHECKOV := $(if $(wildcard $(CHECKOV_VENV)/bin/checkov),$(CHECKOV_VENV)/bin/checkov,checkov)
 
-LINT_PATHS := src tests tests_flink scripts data evals streaming
+LINT_PATHS := src tests tests_flink scripts data evals streaming pipelines/jobs
+
+# The suffix must match the Flink minor version in infra/streaming/variables.tf. The connector
+# is built per Flink release and a mismatched one fails at job start rather than at package
+# time, which is the expensive place — the application reports READY and reads nothing.
+# `scripts/check_flink_versions_agree.py` compares the two.
+CONNECTOR_VERSION := 5.1.0-1.20
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Everything above the "cloud" section runs with NO AWS account and NO
@@ -113,6 +119,16 @@ package: ## Vendor the package into infra/streaming/.package so terraform can zi
 	mkdir -p infra/streaming/.package
 	$(PIP) install --quiet --target infra/streaming/.package --no-compile --no-deps .
 	cp -R streaming contracts infra/streaming/.package/
+	@# The Kinesis connector is a JAR the job cannot start without, and it is not vendored: a
+	@# 20 MB binary in a repository whose whole claim is that everything in it is checkable is
+	@# the one file nobody would ever verify. `make connector` fetches it; this refuses to
+	@# package without it, rather than producing an archive that deploys and never reads.
+	@test -f infra/streaming/lib/flink-sql-connector-kinesis.jar || { \
+		echo "missing infra/streaming/lib/flink-sql-connector-kinesis.jar — run 'make connector'"; \
+		exit 1; \
+	}
+	mkdir -p infra/streaming/.package/lib
+	cp infra/streaming/lib/*.jar infra/streaming/.package/lib/
 	@echo "packaged infra/streaming/.package ($$(du -sh infra/streaming/.package | cut -f1))"
 
 .PHONY: claim-3
@@ -147,6 +163,16 @@ claim-7: ## CLAIM 7 — no automatic consequential decision about a person
 annex-iv: ## Regenerate the Annex IV technical documentation from the contracts
 	$(PY) scripts/generate_annex_iv.py
 
+.PHONY: connector
+connector: ## Fetch the Kinesis connector JAR the Flink job cannot start without
+	@mkdir -p infra/streaming/lib
+	@echo "Fetching the Flink Kinesis connector for the runtime in infra/streaming/variables.tf."
+	@echo "Not vendored: a 20 MB binary in a repository whose claim is that everything in it is"
+	@echo "checkable is the one file nobody would verify. The download is a deliberate act."
+	curl -fsSL -o infra/streaming/lib/flink-sql-connector-kinesis.jar \
+		"https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kinesis/$(CONNECTOR_VERSION)/flink-sql-connector-kinesis-$(CONNECTOR_VERSION).jar"
+	@echo "fetched $$(du -h infra/streaming/lib/flink-sql-connector-kinesis.jar | cut -f1)"
+
 .PHONY: gate-proof
 gate-proof: ## Break every gate on purpose; each must be refused, for the right reason
 	$(PY) scripts/gate_proof.py
@@ -158,6 +184,7 @@ wiring: ## The offline stand-ins for a plan nobody can run without credentials
 	$(PY) scripts/check_lakehouse_wiring.py
 	$(PY) scripts/check_vpc_endpoints.py
 	$(PY) scripts/check_oidc_subjects.py
+	$(PY) scripts/check_deploy_inputs.py
 
 .PHONY: tf-fmt
 tf-fmt: ## terraform fmt across every layer

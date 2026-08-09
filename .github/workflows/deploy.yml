@@ -132,6 +132,12 @@ jobs:
         env:
           TF_VAR_expires_at: ${{ inputs.expires_at }}
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_github_owner: ${{ github.repository_owner }}
+          TF_VAR_budget_alert_email: ${{ vars.BUDGET_ALERT_EMAIL }}
+          # The substations the watermark generator declares. A repository variable rather than
+          # a default: it is a fact about the estate being deployed, and a default would mean a
+          # substation missing from the list is silently excluded from every window.
+          TF_VAR_substations: ${{ vars.WATERMARK_SUBSTATIONS }}
         run: |
           set -euo pipefail
           ORDER="foundation streaming lakehouse ml governance"

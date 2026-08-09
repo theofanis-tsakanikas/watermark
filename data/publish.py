@@ -62,18 +62,37 @@ def plan(minutes: int) -> Plan:
 
 
 def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — needs an estate
-    """Publish for real. Reached only from `capture.yml`, and never run.
+    """Publish for real, at the compressed pace the plan describes.
 
-    `boto3` is imported here rather than at module scope so that importing this file costs
-    nothing on a machine with no cloud extra — which is every machine the suite runs on.
+    Reached only from `capture.yml`, and never run. `boto3` and `time` are imported here rather
+    than at module scope so that importing this file costs nothing on a machine with no cloud
+    extra — which is every machine the suite runs on, and `time` is a clock the rest of this
+    repository is careful not to have.
+
+    **It paces.** An earlier version computed the offset and discarded it, which would have
+    published the whole day as fast as the API allowed: the burst that `infra/streaming`'s shard
+    count is sized against would have arrived as one flat wall, the capture would have shown
+    throttling that the design does not have, and the number it produced would have been about
+    the publisher rather than about the platform.
     """
+    import time  # noqa: PLC0415
+
     import boto3  # noqa: PLC0415
 
     client = boto3.client("iot-data")
+    described = plan(minutes)
+    started = time.monotonic()
     published = 0
+
     for delivery in generate():
+        # Where this delivery sits in the day, compressed into the capture window. Sleeping
+        # until then is what reproduces the burst shape rather than the daily average.
         offset = delivery.ingest_time.since(DAY_START)
-        _ = offset  # the pacing loop lives here; see the module docstring for the compression
+        due = offset.millis / 1000 / described.compression
+        behind = due - (time.monotonic() - started)
+        if behind > 0:
+            time.sleep(behind)
+
         client.publish(
             topic=f"{topic_prefix}/meter/{_meter_of(delivery.raw)}/reading",
             qos=1,

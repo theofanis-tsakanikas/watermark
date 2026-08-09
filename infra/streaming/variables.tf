@@ -105,3 +105,39 @@ variable "max_parallelism" {
     recovery drill would be a Phase 1 omission surfacing at the worst moment.
   EOT
 }
+
+variable "substations" {
+  type = list(string)
+
+  description = <<-EOT
+    Every substation the watermark generator declares.
+
+    Declared rather than discovered from the stream, and that is the whole of claim 1's
+    start-up case: a partition the generator has never heard of cannot hold the watermark back,
+    so a substation that is down when the job starts would be silently excluded and every
+    window would close without it. Declared and silent is a fact; unknown is an assumption.
+  EOT
+
+  validation {
+    condition     = length(var.substations) > 0
+    error_message = "Name at least one substation; an empty set makes every window closeable by nobody's data."
+  }
+}
+
+variable "initial_stream_position" {
+  type    = string
+  default = "TRIM_HORIZON"
+
+  description = <<-EOT
+    Where a fresh application starts reading.
+
+    `TRIM_HORIZON` for a replay of everything still on the stream, `LATEST` for a live start.
+    The default is the conservative one: starting at LATEST silently skips whatever was already
+    buffered, and the gap shows up days later as a settlement total that is short.
+  EOT
+
+  validation {
+    condition     = contains(["TRIM_HORIZON", "LATEST"], var.initial_stream_position)
+    error_message = "initial_stream_position is TRIM_HORIZON or LATEST."
+  }
+}

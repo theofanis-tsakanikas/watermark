@@ -23,7 +23,6 @@ This document is the single source of truth for what this project is. Alongside 
 | `docs/SCENARIO.md` | The domain — data model, volumes, the failure modes that must be handled |
 | `docs/REGULATORY.md` | The legal posture, argued rather than asserted, with what still needs verifying |
 | `docs/DECISIONS.md` | Decisions already locked before the first line of code, and why |
-| `docs/PORTFOLIO-CONTEXT.md` | How this fits the site, the CV and the Readiness Framework — and what to update when it lands |
 
 **Language:** all repository content is written in **English** (the audience is
 international, as with every other project in this portfolio). Conversation with the author
@@ -193,7 +192,6 @@ watermark/
 ├── scripts/                    # gate_proof.py, preflight.py, tf_validate.py, check_*.py
 ├── docs/
 │   ├── adr/                    # architecture decision records
-│   ├── SCENARIO.md  REGULATORY.md  DECISIONS.md  PORTFOLIO-CONTEXT.md  DAY-ONE.md
 └── .github/workflows/          # ci.yml (every PR) + gated deploy.yml / destroy.yml
 ```
 

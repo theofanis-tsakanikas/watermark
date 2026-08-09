@@ -205,6 +205,13 @@ resource "aws_kinesisanalyticsv2_application" "watermark" {
           WATERMARK_OUTPUT_BUCKET              = data.aws_s3_bucket.lakehouse.id
           WATERMARK_CHECKPOINT_INTERVAL_MILLIS = "60000"
           WATERMARK_MAX_PARALLELISM            = tostring(var.max_parallelism)
+          # Declared, not discovered. A partition the watermark generator has never heard of
+          # cannot hold it back, so a substation that is down at start-up would be silently
+          # excluded and every window would close without it.
+          WATERMARK_PARTITIONS = join(",", var.substations)
+          # Never defaulted: TRIM_HORIZON and LATEST produce completely different first hours,
+          # and the difference is invisible in a dashboard.
+          WATERMARK_INITIAL_POSITION = var.initial_stream_position
         }
       }
     }

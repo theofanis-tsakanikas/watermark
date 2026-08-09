@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from watermark.core.normalise import DEFAULT_POLICY as NORMALISATION_POLICY
 from watermark.core.normalise import NormalisationPolicy, normalise_meter_reading
 from watermark.core.quarantine import Quarantined
-from watermark.core.records import MeterReading, Source
+from watermark.core.records import BATCH_GRAIN, MeterReading, Source
 from watermark.core.time import Duration, Instant
 from watermark.core.watermarks import DEFAULT_POLICY as WATERMARK_POLICY
 from watermark.core.watermarks import (
@@ -167,7 +167,9 @@ def run(
     # as it arrived, so shuffling the input genuinely varies what the core is asked.
     buckets: dict[int, list[Arrival]] = {}
     for arrival in arrivals:
-        buckets.setdefault(arrival.ingest_time.epoch_millis // 1000, []).append(arrival)
+        buckets.setdefault(arrival.ingest_time.epoch_millis // BATCH_GRAIN.millis, []).append(
+            arrival
+        )
 
     for second in sorted(buckets):
         group = buckets[second]
@@ -196,7 +198,7 @@ def run(
         state, view = observe(
             state,
             [(arrival.partition, reading.event_time) for arrival, reading in accepted],
-            Instant(second * 1000),
+            Instant(second * BATCH_GRAIN.millis),
             settings.watermark,
         )
         view = held_back_by(view, previous_view)
@@ -225,7 +227,7 @@ def run(
 
         ticks.append(
             Tick(
-                at=Instant(second * 1000),
+                at=Instant(second * BATCH_GRAIN.millis),
                 status=view.status,
                 watermark=view.watermark,
                 holding_back=view.holding_back,

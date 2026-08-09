@@ -36,6 +36,15 @@ METER_INTERVAL = Duration.of_minutes(15)
 #: The settlement grain. Hourly totals per meter and per balancing group.
 SETTLEMENT_GRAIN = Duration.of_hours(1)
 
+#: How often the pipeline stops accumulating and asks whether anything may close.
+#:
+#: A semantic decision, not an implementation detail, which is why it lives here rather than in
+#: the adapter. It bounds how late a decision can be for a reason unrelated to data: a window
+#: whose watermark passed halfway through a batch waits until the batch ends. One second is the
+#: grain the deployed job checkpoints at, so the two cannot disagree about how much work a
+#: restart repeats.
+BATCH_GRAIN = Duration.of_seconds(1)
+
 
 class Source(Enum):
     """How a reading reached us.

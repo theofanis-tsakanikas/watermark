@@ -83,6 +83,11 @@ days.
 |---|---|
 | `TF_STATE_BUCKET` | the `state_bucket` output from bootstrap |
 | `BUDGET_ALERT_EMAIL` | where the budget alarm goes; the subscription confirmation is item 5 |
+| `WATERMARK_SUBSTATIONS` | a JSON list, e.g. `["SUB-01","SUB-02","SUB-03","SUB-04"]` |
+
+`WATERMARK_SUBSTATIONS` has no default on purpose. It is what the watermark generator declares,
+and a substation missing from it is one that can never hold a window open — so every window
+closes without it, silently. Declared and silent is a fact; unknown is an assumption.
 
 Variables rather than secrets, for the same reason as the role ARN: neither is a credential,
 and hiding a bucket name from the workflow log removes the one thing that makes a backend

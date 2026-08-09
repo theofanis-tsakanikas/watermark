@@ -221,6 +221,10 @@ jobs:
         # CKV_AWS_358 cannot parse GitHub's immutable subject and reads only the first value of
         # the list. This reads all of them and refuses any wildcard.
         run: python scripts/check_oidc_subjects.py
+      - name: every required Terraform variable is supplied by the deploy workflow
+        # A missing TF_VAR does not fail at plan time in automation; it fails inside the apply
+        # loop, four minutes in, with an earlier layer already created.
+        run: python scripts/check_deploy_inputs.py
       - name: the application package builds
         # Not a formality. archive_file needs a directory to zip, and a packaging step that has
         # only ever run on a laptop fails inside a deploy — which is the expensive place.

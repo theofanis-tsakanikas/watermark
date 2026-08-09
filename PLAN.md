@@ -172,7 +172,7 @@ is demonstrated end to end in the offline harness.
       2026-08-09: a live capture costs real money and adds nothing to any of the seven claims,
       every one of which is provable offline by construction. The replacement deliverable is
       `make preflight` green, `terraform validate` against real provider schemas, and checkov
-      at zero findings — the same posture as `../attestor`: **ready to deploy, not deployed.**
+      at zero findings — **ready to deploy, not deployed.**
       Consequences that are easy to get wrong: no screenshot, no wall-clock time and no euro
       figure may be published as if it were measured, and the €100 target is a design
       constraint rather than a result.
@@ -184,7 +184,6 @@ README's scoreboard is reproducible by a stranger with no AWS account.
 
 ## After Phase 4 — not part of building the system
 
-Handled separately, per `docs/PORTFOLIO-CONTEXT.md`: the site card, the CV entries, the
 video walkthrough, the long-form article, and the second worked example of the Readiness
 Framework. Do not start these before Phase 4 is done — a system shaped to look good in a
 portfolio card is a worse system.

@@ -44,3 +44,10 @@ infra/streaming/.package/
 infra/*/.build/
 pipelines/dbt/target/
 pipelines/dbt/dbt_packages/
+infra/streaming/lib/
+
+# Internal portfolio strategy — CV files, LinkedIn assets, an assessment of the other
+# projects and what to retire. Useful to the author, and not something a public repository
+# should carry: it is about a career, not about this system. Kept on disk, out of the history
+# from the commit that removed it.
+docs/PORTFOLIO-CONTEXT.md

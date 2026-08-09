@@ -17,7 +17,7 @@ import os
 from dataclasses import dataclass
 
 from watermark.core.normalise import DEFAULT_POLICY as NORMALISATION
-from watermark.core.records import METER_INTERVAL, SETTLEMENT_GRAIN
+from watermark.core.records import BATCH_GRAIN, METER_INTERVAL, SETTLEMENT_GRAIN
 from watermark.core.watermarks import DEFAULT_POLICY as WATERMARK
 from watermark.core.windows import DEFAULT_ALLOWED_LATENESS
 
@@ -26,6 +26,7 @@ from watermark.core.windows import DEFAULT_ALLOWED_LATENESS
 #: that adding a threshold means adding it to the core first.
 SEMANTICS = {
     "window_length": METER_INTERVAL,
+    "batch_grain": BATCH_GRAIN,
     "settlement_grain": SETTLEMENT_GRAIN,
     "out_of_orderness": WATERMARK.out_of_orderness,
     "idle_after": WATERMARK.idle_after,
@@ -44,6 +45,18 @@ class Placement:
     telemetry_stream: str
     output_bucket: str
     checkpoint_interval_millis: int
+    #: The ceiling for rescaling while retaining state. Set explicitly in the first version of
+    #: the application, because changing it later means the job can no longer restart from an
+    #: existing snapshot — see docs/AWS-CONSTRAINTS.md.
+    max_parallelism: int
+    #: Which substations the watermark generator declares. Declared rather than discovered: a
+    #: partition it has never heard of cannot hold the watermark back, so a substation that is
+    #: down at start-up would be silently excluded and every window would close without it.
+    partitions: tuple[str, ...]
+    #: Where a fresh application starts reading. `TRIM_HORIZON` for a replay, `LATEST` for a
+    #: live start; never defaulted, because the two produce completely different first hours
+    #: and the difference is invisible in a dashboard.
+    initial_position: str
 
     @staticmethod
     def from_environment() -> Placement:
@@ -58,6 +71,9 @@ class Placement:
             telemetry_stream=_required("WATERMARK_TELEMETRY_STREAM"),
             output_bucket=_required("WATERMARK_OUTPUT_BUCKET"),
             checkpoint_interval_millis=int(_required("WATERMARK_CHECKPOINT_INTERVAL_MILLIS")),
+            max_parallelism=int(_required("WATERMARK_MAX_PARALLELISM")),
+            partitions=tuple(_required("WATERMARK_PARTITIONS").split(",")),
+            initial_position=_required("WATERMARK_INITIAL_POSITION"),
         )
 
 

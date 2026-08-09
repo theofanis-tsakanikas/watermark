@@ -16,10 +16,14 @@ import logging
 from typing import TYPE_CHECKING
 
 from streaming.config import SEMANTICS, Placement
+from streaming.operators import (
+    MeterWindowOperator,
+    build_process_function,
+    build_watermark_generator,
+)
 from watermark.core.normalise import DEFAULT_POLICY as NORMALISATION_POLICY
 from watermark.core.watermarks import DEFAULT_POLICY as WATERMARK_POLICY
-from watermark.core.watermarks import WatermarkState
-from watermark.core.windows import WindowManager, WindowPolicy
+from watermark.core.windows import WindowPolicy
 from watermark.runner import Arrival, run
 
 if TYPE_CHECKING:  # pragma: no cover — import-time only where PyFlink exists
@@ -37,73 +41,43 @@ def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement
     of line somebody adds on a Tuesday because a reading was being dropped, and after it the
     core and the deployed job disagree about what late means with only the job being right.
     """
-    from pyflink.common import WatermarkStrategy  # noqa: PLC0415 — PyFlink is optional
+    from pyflink.common.typeinfo import Types  # noqa: PLC0415 — PyFlink is optional
     from pyflink.datastream.connectors.kinesis import (  # noqa: PLC0415
         FlinkKinesisConsumer,
     )
     from pyflink.datastream.formats.json import JsonRowDeserializationSchema  # noqa: PLC0415
 
     environment.enable_checkpointing(placement.checkpoint_interval_millis)
+    # Set explicitly, in the first version of the application. It is the one setting that
+    # cannot be corrected later: changing it means the job can no longer restart from an
+    # existing snapshot. See docs/AWS-CONSTRAINTS.md.
+    environment.set_max_parallelism(placement.max_parallelism)
+
+    operator = MeterWindowOperator(
+        normalisation=NORMALISATION_POLICY,
+        watermark=WATERMARK_POLICY,
+        window=WindowPolicy(length=SEMANTICS["window_length"]),
+        partitions=placement.partitions,
+    )
 
     consumer = FlinkKinesisConsumer(
         placement.meter_stream,
-        JsonRowDeserializationSchema.builder().build(),
-        {"aws.region": placement.region, "flink.stream.initpos": "LATEST"},
+        JsonRowDeserializationSchema.builder()
+        .type_info(Types.ROW([Types.STRING(), Types.STRING(), Types.STRING()]))
+        .build(),
+        {"aws.region": placement.region, "flink.stream.initpos": placement.initial_position},
     )
-
-    # `for_generator`, never `for_bounded_out_of_orderness`. The convenience constructor bakes
-    # the out-of-orderness bound into the framework, where no offline test can see it; the
-    # generator delegates to `watermark.core.watermarks` and keeps the decision in one place.
-    strategy = WatermarkStrategy.for_generator(_CoreWatermarkGenerator())
 
     (
         environment.add_source(consumer)
-        .assign_timestamps_and_watermarks(strategy)
-        .key_by(lambda record: record.partition)
-        .process(_MeterStreamFunction())
+        # `for_generator`, never `for_bounded_out_of_orderness`. The convenience constructor
+        # holds the bound inside Flink, where no offline test can read it; the generator asks
+        # the operator, whose watermark *is* the core's.
+        .assign_timestamps_and_watermarks(build_watermark_generator(operator))
+        .key_by(lambda record: record[1])
+        .process(build_process_function(operator))
         .name("watermark-meter-windows")
     )
-
-
-class _CoreWatermarkGenerator:
-    """Flink's watermark hook, delegating every judgement to the core.
-
-    Deliberately holds no threshold of its own. Flink asks "what is the watermark now?"; the
-    core answers from the event times it has been shown, and this class is the translation
-    between the two vocabularies.
-    """
-
-    def __init__(self) -> None:
-        self._state = WatermarkState.declare(())
-        self._policy = WATERMARK_POLICY
-
-    def on_event(self, event: object, timestamp: int, output: object) -> None:  # pragma: no cover
-        raise NotImplementedError(
-            "wired in the equivalence tier, where a MiniCluster can actually call it"
-        )
-
-    def on_periodic_emit(self, output: object) -> None:  # pragma: no cover
-        raise NotImplementedError(
-            "wired in the equivalence tier, where a MiniCluster can actually call it"
-        )
-
-
-class _MeterStreamFunction:
-    """Keyed processing: normalise, quarantine, advance, admit, close — in that order.
-
-    The order is the contract. Normalisation and the skew quarantine run *before* anything
-    reaches the watermark, so a device reporting from the future cannot advance it. Publication
-    runs last and only through `WindowManager.close`, which is the one place claim 1 is decided.
-    """
-
-    def __init__(self) -> None:
-        self._manager = WindowManager(WindowPolicy(length=SEMANTICS["window_length"]))
-        self._normalisation = NORMALISATION_POLICY
-
-    def process_element(self, value: object, context: object) -> None:  # pragma: no cover
-        raise NotImplementedError(
-            "wired in the equivalence tier, where a MiniCluster can actually call it"
-        )
 
 
 def replay(arrivals: list[Arrival], partitions: tuple[str, ...]) -> object:

@@ -4,7 +4,7 @@
 
 ## Context
 
-Every gate in the sibling project [Attestor](../../../attestor/) defaults to refusal. A figure
+Every gate in a sibling project of mine — a regulated report factory — defaults to refusal. A figure
 that cannot be supported is not published; a report with an unresolved blocker does not
 render. That is the correct default there, and it is correct for a reason worth naming: an
 unpublished report has no physical consequence. The deadline is inconvenient, the auditor is
@@ -115,5 +115,5 @@ honest about being cautious.
 - Doctrine rules 1 and 2 in [CLAUDE.md](../../CLAUDE.md)
 - Claim 1 (`evals/watermark/`) and claim 4 (`evals/freshness/`) — the two harnesses that make
   a fallback fire rather than merely exist
-- [Attestor ADR-0001](../../../attestor/docs/adr/0001-fail-closed-with-a-recorded-key.md) —
-  the same question answered the other way, for a system whose refusals cost nothing physical
+- The same question answered the other way, in a report factory whose refusals cost nothing
+  physical: there, the safe state genuinely is no output

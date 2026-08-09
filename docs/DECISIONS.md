@@ -112,8 +112,6 @@ would have to do. Writing it down was always the deliverable; doing it was not.
 
 - The video walkthrough — Phase 4. (Live capture and screenshots are not deferred; see 15.
   They are out of scope.)
-- The site and CV integration — see `docs/PORTFOLIO-CONTEXT.md`; it is real work and it is
-  not part of building the system.
 - The second worked example (the Readiness Framework scored against Watermark) — after the
   system exists, never as a design target. A build shaped to score well on its author's own
   framework proves nothing about either.

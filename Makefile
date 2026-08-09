@@ -114,7 +114,7 @@ flink-versions: ## The equivalence tier and the deployment run the same Flink
 	$(PY) scripts/check_flink_versions_agree.py
 
 .PHONY: package
-package: ## Vendor the package into infra/streaming/.package so terraform can zip it
+package: connector ## Vendor the package into infra/streaming/.package so terraform can zip it
 	rm -rf infra/streaming/.package
 	mkdir -p infra/streaming/.package
 	$(PIP) install --quiet --target infra/streaming/.package --no-compile --no-deps .
@@ -165,6 +165,9 @@ annex-iv: ## Regenerate the Annex IV technical documentation from the contracts
 
 .PHONY: connector
 connector: ## Fetch the Kinesis connector JAR the Flink job cannot start without
+	@test -f infra/streaming/lib/flink-sql-connector-kinesis.jar && { \
+		echo "  connector already present"; exit 0; \
+	} || true
 	@mkdir -p infra/streaming/lib
 	@echo "Fetching the Flink Kinesis connector for the runtime in infra/streaming/variables.tf."
 	@echo "Not vendored: a 20 MB binary in a repository whose claim is that everything in it is"

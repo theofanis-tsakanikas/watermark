@@ -1,0 +1,66 @@
+# The storyboard for this project's promotional output. Rendered by promo-kit:
+#
+#   promokit validate .    check every claim in here against this repository
+#   promokit stills .      write the PNGs, from the same renders the video uses
+#   promokit video .       both canvases, composed from the same masters
+#
+# This project has no `clip` scene and never will: nothing here needs a console navigated
+# by a human. Every beat below is a gate this repository already runs, recorded by the tool
+# with no human in the loop — which is the point it is being used to prove.
+
+version: 1
+title: Watermark
+subtitle: no decision on a window that has not closed
+
+outputs:
+  - youtube
+  - linkedin
+
+defaults:
+  duration: 4.0
+  fit: contain
+  transition: fade
+  transition_duration: 0.4
+
+scenes:
+  - id: title
+    type: card
+    eyebrow: real-time decisions
+    headline: Every wrong decision in a streaming system
+    sub: is a decision taken on data that had not arrived yet.
+    duration: 4.0
+    still: promo/out/stills/title.png
+
+  # The thesis, as a gate. `assert:` pins the sentence the check really prints, so the
+  # caption above it cannot outlive the rule underneath it.
+  - id: core-pure
+    type: terminal
+    command: make core-pure
+    assert: the stream core imports no framework and reads no ambient state
+    caption: The core knows nothing about the framework it runs in
+    columns: 100
+    still: promo/out/stills/core-pure.png
+
+  - id: adapter-thin
+    type: terminal
+    command: make adapter-thin
+    assert: the streaming adapter carries no semantic literal
+    caption: And the adapter carries no meaning of its own
+    columns: 100
+
+  - id: parity
+    type: terminal
+    command: make parity-independent
+    assert: the two feature mechanisms share the contract and nothing else
+    caption: Two paths to one feature, sharing only the contract
+    columns: 100
+    still: promo/out/stills/parity.png
+
+  - id: end
+    type: card
+    headline: A watermark is a claim about what the system has seen
+    duration: 3.5
+    still: promo/out/stills/end.png
+    per_output:
+      linkedin:
+        duration: 4.0

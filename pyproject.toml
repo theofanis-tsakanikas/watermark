@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "watermark"
+version = "0.1.0"
+description = "Real-time decision platform for an electricity distribution network — no decision on a window that has not closed"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Theofanis Tsakanikas" }]
+keywords = [
+    "responsible-ai",
+    "stream-processing",
+    "flink",
+    "watermarks",
+    "feature-store",
+    "eu-ai-act",
+    "gdpr",
+]
+
+# Empty, today, and that is a statement rather than an accident: nothing in this repository
+# yet needs anything but the standard library, and `src/watermark/core/` — where claims 1–4
+# are proved — is never allowed to need more. The contract layer will add `pydantic` and
+# `pyyaml` in phase 1 and the CLI will add `typer`; each arrives in the commit that imports
+# it. `tests/test_dependencies.py` fails on a dependency nothing imports, in either direction.
+dependencies = []
+
+[project.optional-dependencies]
+# Cloud clients are NOT a hard dependency. The whole suite, every eval and every gate run
+# without them; this extra exists only to talk to a live estate.
+cloud = [
+    "boto3>=1.40",
+]
+# Tier two of ADR-0003: the core↔Flink equivalence test on a local MiniCluster. Never a hard
+# dependency — `make test`, every claim gate and `make preflight --fast` must keep running on
+# a machine with no JVM. The version floor tracks the deployed Managed Flink runtime, and
+# `scripts/check_flink_versions_agree.py` will compare the two once `infra/streaming/` exists;
+# an equivalence test against a different Flink than the one running proves equivalence with
+# something nobody uses.
+flink = [
+    "apache-flink>=2.2",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "ruff>=0.7",
+    # checkov is deliberately absent from this environment: it pins boto3 exactly, and a
+    # scanner is a tool while boto3 is the application. `make iac-scan` builds it its own
+    # venv on demand; CI installs it separately. The scan itself gates every push either way.
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/watermark"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "PL", "S"]
+ignore = [
+    "PLR0913", # a resolver legitimately takes many explicit inputs
+    "S101",    # assert is how tests assert
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "S105", "S106"]
+"evals/**" = ["PLR2004"]
+# These scripts shell out to `terraform`, `make` and `git` by name. A hardcoded absolute path
+# would be wrong on every machine but the one that wrote it, and the commands are fixed
+# literals with no user input anywhere near them.
+"scripts/preflight.py" = ["S607"]
+"scripts/tf_validate.py" = ["S607"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "gate: exercises a CI-enforced acceptance gate",
+    "eval: scores a labelled scenario (credential-free)",
+    "slow: takes more than a second",
+]
+
+[tool.coverage.run]
+source = ["src/watermark"]
+branch = true

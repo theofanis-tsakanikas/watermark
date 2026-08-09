@@ -43,23 +43,58 @@ variable "github_repo" {
   default     = "watermark"
 }
 
-variable "deploy_environments" {
-  description = <<-EOT
-    GitHub environments allowed to assume the deploy role.
+# The ids behind those two names.
+#
+# A GitHub account name can be released and re-registered by somebody else; a numeric id cannot.
+# GitHub's subject claim can carry either form, and which one an account sends is not decided by
+# this file — so the trust accepts both, and both are equally specific. Read them once with:
+#
+#   gh api users/<owner> --jq .id
+#   gh api repos/<owner>/<repo> --jq .id
 
-    Every trusted subject names this repository AND one environment, with no wildcard. A
-    subject of `repo:owner/repo:*` trusts every branch and every pull request in the
-    repository, including one opened by a stranger, which is the difference between OIDC and
-    a long-lived key written down in public.
-  EOT
-  type        = list(string)
-  default     = ["deploy", "destroy"]
+variable "github_owner_id" {
+  description = "Immutable numeric id of the owner. The name form of the subject is the one that can be taken over; this one cannot."
+  type        = string
 
   validation {
-    condition     = length(var.deploy_environments) > 0 && alltrue([for e in var.deploy_environments : can(regex("^[a-z][a-z0-9-]*$", e))])
-    error_message = "Name at least one environment, in lower case, with no wildcard characters."
+    condition     = can(regex("^[0-9]+$", var.github_owner_id))
+    error_message = "github_owner_id is the numeric id from `gh api users/<owner> --jq .id`, not the name."
   }
 }
+
+variable "github_repository_id" {
+  description = "Immutable numeric id of the repository."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.github_repository_id))
+    error_message = "github_repository_id is the numeric id from `gh api repos/<owner>/<repo> --jq .id`, not the name."
+  }
+}
+
+variable "monthly_budget_eur" {
+  description = <<-EOT
+    The threshold at which the budget action detaches the deploy role's permissions.
+
+    100 because `CLAUDE.md` says a full live capture with teardown must come in under it, and a
+    design that pushes past it is wrong before the budget is. The action does not warn — it
+    removes the ability to create more.
+
+    It lives in this layer rather than in `foundation` because a guard created by the same apply
+    that creates the spending is a guard that does not exist while the spending starts. Bootstrap
+    is applied before anything can be deployed, which is exactly when a ceiling is worth having.
+  EOT
+  type        = number
+  default     = 100
+}
+
+# `deploy_environments` used to be a variable here, defaulting to ["deploy", "destroy"].
+#
+# It is now written into `local.trusted_subjects` in oidc.tf instead. The values have to equal
+# the `environment:` lines in `deploy.yml` and `destroy.yml` exactly — a variable is a knob that
+# silently breaks federation when turned, and the resulting `AssumeRoleWithWebIdentity` denial
+# is the same message for a wrong repository, a wrong audience and a missing provider. A setting
+# whose only correct value is the one already written elsewhere is not a setting.
 
 variable "create_oidc_provider" {
   description = <<-EOT

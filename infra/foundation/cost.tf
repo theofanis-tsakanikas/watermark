@@ -1,8 +1,15 @@
 # Two mechanisms, and they fail in opposite directions on purpose.
 #
-# **The budget action** is the ceiling: at the threshold it detaches the deploy role's
-# permissions, so nothing more can be created. It does not warn. A warning at 80% of a €100
-# budget is an email somebody reads on Monday.
+# **The budget action** is the ceiling: at the threshold it attaches a deny to the deploy role,
+# so nothing more can be created. It does not warn. A warning at 80% of a €100 budget is an
+# email somebody reads on Monday.
+#
+# It is **not in this file**, and that is the point. It lives in `infra/bootstrap/cost.tf`,
+# applied before any layer can be deployed. A ceiling created by the same apply that creates the
+# spending does not exist while the spending starts, and a foundation apply that fails halfway
+# leaves resources standing with nothing watching them. This file used to hold the budget and
+# not the action — a warning email dressed as a control, with the comment above describing
+# something no resource in the repository built.
 #
 # **The reaper** is the floor: it destroys anything whose `watermark:expires-at` has passed,
 # whether or not it is costing much. The expensive resources in this system — Managed Flink
@@ -10,35 +17,6 @@
 # they exist, and nothing about a forgotten one looks wrong.
 #
 # Neither has ever fired, because nothing has ever been applied.
-
-resource "aws_budgets_budget" "monthly" {
-  name         = "${var.project}-monthly"
-  budget_type  = "COST"
-  limit_amount = tostring(var.monthly_budget_eur)
-  limit_unit   = "EUR"
-  time_unit    = "MONTHLY"
-
-  cost_filter {
-    name   = "TagKeyValue"
-    values = ["user:watermark:project$${var.project}"]
-  }
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 60
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.budget_alert_email]
-  }
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "FORECASTED"
-    subscriber_email_addresses = [var.budget_alert_email]
-  }
-}
 
 # ── The reaper ───────────────────────────────────────────────────────────────
 

@@ -34,19 +34,12 @@ resource "aws_ssm_parameter" "published" {
   value       = each.value
 }
 
-# The one published value that is personal data.
+# `budget_alert_email` is deliberately *not* published.
 #
-# Everything above is a name this layer chose. An address belongs to a person, and this project
-# fails closed on personal data rather than reasoning about who can already read the account.
+# It was, briefly, as a SecureString — because the budget lived in `foundation` and every deploy
+# needed it. The budget now lives in this layer, so the address is consumed by the same apply
+# that takes it in and never leaves this state file. An address belongs to a person rather than
+# to the account, and the safest place for personal data is the one where it does not have to
+# travel at all.
 #
-# Encrypted with this layer's own key rather than the AWS-managed SSM one. Same layer, same
-# lifecycle, same blast radius — and the deploy role's grant to decrypt it already exists as
-# `UseTheStateKey`, so the alternative was a second grant on a key nobody here controls, to
-# save a euro a month on a key that is already being paid for.
-resource "aws_ssm_parameter" "budget_alert_email" {
-  name        = "/${var.project}/bootstrap/budget_alert_email"
-  description = "Destination for the foundation layer's budget alarm."
-  type        = "SecureString"
-  key_id      = aws_kms_key.state.arn
-  value       = var.budget_alert_email
-}
+# It stays out of `terraform.tfvars` for the same reason. Pass it on the command line.

@@ -68,16 +68,20 @@ plants exactly that paste to prove the refusal happens.
 **Variables, not secrets.** Neither is a credential, and hiding an account id from the workflow
 log removes the one thing that makes a denial diagnosable.
 
-## 5 · Confirm the budget alarm's email subscription
+## 5 · Nothing. The budget needs no confirmation.
 
-An AWS Budget action and its SNS topic are Terraform. The **confirmation of an email
-subscription is a link in an inbox** and has no API by design.
+This item used to say the budget's email subscription had to be confirmed from an inbox. It
+does not, and the item described two things that were not true.
 
-Until it is confirmed the topic has no confirmed endpoint, the budget action still disables the
-deploy role at its threshold, and nobody is told that it did. Confirm it before the first
-deploy, not after the first surprise.
+**There is no SNS topic in the budget path.** AWS Budgets delivers to
+`subscriber_email_addresses` directly, and a direct budget subscriber is not confirmed the way
+an SNS subscription is. The SNS topic in `infra/foundation` is the reaper's dead-letter queue,
+which is a different mechanism with no email subscriber at all.
 
-*Genuinely no API.*
+**And the sentence assumed a control that did not exist.** It said "the budget action still
+disables the deploy role at its threshold" — there was no budget action anywhere in the
+repository. There is one now, in `infra/bootstrap/cost.tf`, applied before any layer can spend
+anything. Passing `budget_alert_email` on the bootstrap command line is the whole of the work.
 
 ## 6 · Service quota increases, if the capture needs them
 

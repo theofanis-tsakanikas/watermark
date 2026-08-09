@@ -26,22 +26,11 @@ variable "expires_at" {
   }
 }
 
-variable "monthly_budget_eur" {
-  type        = number
-  default     = 100
-  description = <<-EOT
-    The threshold at which the budget action disables the deploy role.
-
-    100 because `CLAUDE.md` says a full live capture with teardown must come in under it, and
-    a design that pushes past it is wrong before the budget is. The action does not warn — it
-    removes the ability to create more.
-  EOT
-}
-
-variable "budget_alert_email" {
-  type        = string
-  description = "Where the budget alarm goes. The subscription confirmation is manual; see docs/DAY-ONE.md."
-}
+# `monthly_budget_eur` and `budget_alert_email` used to be here. Both moved to
+# `infra/bootstrap`, with the budget and the action they belong to — see the comment at the top
+# of `cost.tf`. Removing them from this layer is what makes the move real: a variable left
+# behind is one a later apply can set, and two budgets counting the same tag would each disable
+# the deploy role on their own schedule.
 
 variable "vpc_cidr" {
   type    = string

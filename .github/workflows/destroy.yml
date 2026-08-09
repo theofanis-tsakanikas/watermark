@@ -75,14 +75,9 @@ jobs:
       - name: resolve what bootstrap published
         run: |
           set -euo pipefail
-          read_param() {
-            aws ssm get-parameter --name "/watermark/bootstrap/$1" \
-              --with-decryption --query 'Parameter.Value' --output text
-          }
-          {
-            echo "TF_STATE_BUCKET=$(read_param state_bucket)"
-            echo "BUDGET_ALERT_EMAIL=$(read_param budget_alert_email)"
-          } >> "$GITHUB_ENV"
+          aws ssm get-parameter --name "/watermark/bootstrap/state_bucket" \
+            --query 'Parameter.Value' --output text \
+            | sed 's/^/TF_STATE_BUCKET=/' >> "$GITHUB_ENV"
 
       - name: the substations, from the generator that declares them
         # A destroy does not care what the value is, only that the configuration evaluates. It
@@ -104,7 +99,6 @@ jobs:
           # teardown prompt for input in a workflow that has no terminal.
           TF_VAR_expires_at: "2000-01-01T00:00:00Z"
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-          TF_VAR_budget_alert_email: ${{ env.BUDGET_ALERT_EMAIL }}
           TF_VAR_github_owner: ${{ github.repository_owner }}
           # Same reason as `expires_at` above: `substations` has no default, and a destroy that
           # cannot evaluate the streaming configuration cannot tear it down either.

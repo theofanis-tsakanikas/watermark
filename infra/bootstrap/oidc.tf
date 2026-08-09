@@ -24,9 +24,26 @@ locals {
   # list rather than reached with a wildcard: `repo:owner/repo:*` trusts every branch and
   # every pull request, including one a stranger opens, and it reads as a small convenience
   # right up until it is the whole of the breach.
+  #
+  # Two forms of the same claim, because the account decides which it sends and not this file.
+  # A federation that works only against the format in use on the day it was written is a
+  # federation that breaks on a Tuesday. Accepting the pair widens nothing — both name one
+  # repository and one environment — and the id form is the one that cannot be taken over,
+  # because a released account name can be re-registered by somebody else and an id cannot.
+  #
+  # `deploy` and `destroy` are written here rather than taken from a variable. They have to
+  # equal the `environment:` lines in `deploy.yml` and `destroy.yml` exactly, so a knob is one
+  # that silently breaks federation when turned — and the failure is an
+  # `AssumeRoleWithWebIdentity` denial that names nothing.
+  #
+  # Four lines where two comprehensions would do. The loop put the `repo:` prefix behind two
+  # more locals, and the subject a trust policy grants is the last string in this repository
+  # that should have to be assembled in someone's head to be read.
   trusted_subjects = [
-    for environment in var.deploy_environments :
-    "repo:${var.github_owner}/${var.github_repo}:environment:${environment}"
+    "repo:${var.github_owner}/${var.github_repo}:environment:deploy",
+    "repo:${var.github_owner}/${var.github_repo}:environment:destroy",
+    "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repository_id}:environment:deploy",
+    "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repository_id}:environment:destroy",
   ]
 }
 
@@ -119,9 +136,6 @@ data "aws_iam_policy_document" "state_access" {
     resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${var.project}/bootstrap/*"]
   }
 
-  # The budget address is a SecureString encrypted with this layer's own key, so decrypting it
-  # needs no grant beyond `UseTheStateKey` above. That is the reason for using that key rather
-  # than the AWS-managed SSM one: one key, one grant, one thing to reason about.
 }
 
 resource "aws_iam_role_policy" "state_access" {

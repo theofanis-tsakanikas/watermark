@@ -16,7 +16,7 @@ RUFF := $(if $(wildcard $(VENV)/bin/ruff),$(VENV)/bin/ruff,ruff)
 CHECKOV_VENV := .venv-checkov
 CHECKOV := $(if $(wildcard $(CHECKOV_VENV)/bin/checkov),$(CHECKOV_VENV)/bin/checkov,checkov)
 
-LINT_PATHS := src tests scripts data evals streaming
+LINT_PATHS := src tests tests_flink scripts data evals streaming
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Everything above the "cloud" section runs with NO AWS account and NO
@@ -47,15 +47,6 @@ test: ## Full test suite — offline, no credentials, no JVM, under a second
 # suite that quietly skips is a suite reporting green for one thing less than it says.
 .PHONY: test-flink
 test-flink: ## Core↔Flink equivalence on a local MiniCluster — slow, needs a JVM
-	@if [ ! -d tests_flink ]; then \
-		if [ -n "$$WATERMARK_REQUIRE_FLINK" ]; then \
-			echo "tests_flink/ is missing and WATERMARK_REQUIRE_FLINK is set: the tier that would"; \
-			echo "prove Flink agrees with the core is not running, so nothing here proves it."; \
-			exit 1; \
-		fi; \
-		echo "  tests_flink/ arrives with streaming/ in phase 1"; \
-		exit 0; \
-	fi; \
 	$(PY) -m pytest tests_flink
 
 .PHONY: lint

@@ -84,3 +84,25 @@ A new entry needs three things: **what** was done, **why it has no API**, and **
 detects that it has not been done**. The third is the one that matters. An undone manual step
 that fails loudly is an inconvenience; one that fails silently is an estate that does not
 behave the way this repository says it does.
+
+---
+
+## 7 · Two more repository variables, once the layers exist
+
+| Variable | Value |
+|---|---|
+| `TF_STATE_BUCKET` | the `state_bucket` output from bootstrap |
+| `BUDGET_ALERT_EMAIL` | where the budget alarm goes; the subscription confirmation is item 5 |
+
+Variables rather than secrets, for the same reason as the role ARN: neither is a credential,
+and hiding a bucket name from the workflow log removes the one thing that makes a backend
+misconfiguration diagnosable.
+
+## 8 · A `capture` environment, if the estate is ever driven
+
+`capture.yml` starts the three resources that bill while idle. It uses the `deploy` environment
+today, which means its reviewers are the deploy reviewers. If the two audiences ever differ —
+somebody who may drive a scenario but not create infrastructure — that is a third environment
+and a third OIDC subject in `infra/bootstrap/oidc.tf`, not a widened trust on the existing one.
+
+*Recorded now because the temptation at that moment is to add a wildcard.*

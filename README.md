@@ -12,7 +12,7 @@ Store · Lake Formation · Step Functions · Terraform*
 
 ---
 
-> **Status: phase 1 of four — the stream is correct. Ready to deploy, never deployed.** The scoreboard
+> **Status: phase 1 complete, and the estate is deploy-ready. Never deployed.** The scoreboard
 > below lists what is provable today, which is not yet much; it grows one row per claim, and a
 > row appears only when the command that produces it exists.
 >
@@ -77,14 +77,25 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 |---|---|
 | **claim 1** · no decision from an unclosed window | **7/7** labelled situations — a silent substation, a stalled stream, a device three hours fast, a partition down at start-up, and the healthy day that must *not* trip any of them |
 | **claim 2** · replay is identical | **5/5** — the same day shuffled under five seeds and delivered twice over produces the same 3,584 published values, the same 283 restatements and the same lineage ids |
-| `make gate-proof` | **9 refused, 0 accepted, 0 stale** |
+| `make gate-proof` | **10 refused, 0 accepted, 0 stale** |
 | `make core-pure` | the stream core imports **no framework and no cloud SDK**, and reads no clock, no environment and no file |
+| `make adapter-thin` | the PyFlink adapter carries **no semantic literal** — every duration is a name resolved from the core (ADR-0003) |
 | `make contracts-validate` | **6 entity contracts** load and cross-check; **4** hold personal data and every one declares its purpose |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined, net restatement **+2,261 Wh** |
-| `make test` | **151 passing**, offline, credential-free, under a second |
-| `terraform validate` | **1/1 layer** against real provider schemas |
-| `checkov` | **0 findings**, 9 deliberate exceptions each carrying a written reason |
-| `make preflight` | **12 passed, 0 failed, 0 skipped** |
+| `make test` | **176 passing**, offline, credential-free, no JVM, under a second |
+| `terraform validate` | **6/6 layers** against real provider schemas |
+| `checkov` | **0 findings**, 36 deliberate exceptions each carrying a written reason beside the resource |
+| `make preflight` | **18 passed, 0 failed, 0 skipped** |
+| core↔Flink equivalence | **not yet observed green anywhere** — see below |
+
+**One row is deliberately absent from the scoreboard.** ADR-0003's tier two runs the real
+PyFlink job on a MiniCluster and asserts it produces the same bytes as the pure core. It cannot
+be executed on the machine this was written on — `apache-flink` requires `apache-beam`, which
+has no wheel for Python 3.12 on arm64 macOS and fails to build from source, recorded with its
+date in [docs/AWS-CONSTRAINTS.md](docs/AWS-CONSTRAINTS.md). The tier exists, it runs as its own
+CI job on Linux with `WATERMARK_REQUIRE_FLINK=1` so a missing runtime is a failure rather than a
+skip, and it stays off this table until somebody has watched it pass. A check nobody has seen
+go green is indistinguishable from one that cannot.
 
 The `gate-proof` row is the one worth reading first. A suite tells you the code does what it
 does; `gate-proof` copies the repository, plants a real violation, and requires the *named*
@@ -125,7 +136,9 @@ make install       # venv + editable install
 make test          # full suite, offline, no JVM, under a second
 make claims        # every claim gate that exists today
 make gate-proof    # break each gate on purpose; each must be refused, for the right reason
-make preflight     # correctness, consistency, deployability — in one command
+make wiring        # the offline stand-ins for a plan nobody can run without credentials
+make tf-validate   # every layer against real provider schemas, no backend, no credentials
+make preflight     # all 18: correctness, consistency, deployability
 ```
 
 Requires Python 3.12+. No AWS account, no credentials, no network.
@@ -153,8 +166,27 @@ splitting them, and for why a skipped tier must fail rather than pass in CI, is
 | [`evals/`](evals/) | The claim harnesses — labelled situations, scored, credential-free |
 | [`recordings/`](recordings/) | The golden day. `make seed-check` proves the generator still reproduces it |
 
-Planned and not yet present: `streaming/`, `queries/`, `pipelines/`. Their shape is fixed in [CLAUDE.md](CLAUDE.md) and the order they arrive in is
+| [`streaming/`](streaming/) | The PyFlink adapter. It moves records and decides nothing — no semantic literal, enforced |
+| [`queries/`](queries/) | SQL for settlement and reconciliation. Parameters bound, never interpolated |
+| [`pipelines/dbt/`](pipelines/dbt/) | dbt-athena over the gold layer, with the two tests that matter more than the models |
+| [`.github/workflows/`](.github/workflows/) | CI on every push; `deploy`, `destroy` and `capture` gated behind an environment and never run | Their shape is fixed in [CLAUDE.md](CLAUDE.md) and the order they arrive in is
 [PLAN.md](PLAN.md).
+
+## Deploying it, and why nothing has been
+
+Everything needed is here: six Terraform layers, a dbt project, an application package, and
+three gated workflows. `deploy.yml` re-runs the whole of CI against the exact ref being
+deployed — not "CI passed on main last night" — assumes a role through OIDC with no secret
+anywhere, applies the layers in dependency order, and prints each plan before applying it.
+`destroy.yml` takes it down in reverse order and deliberately does *not* require CI to pass,
+because the moment somebody most needs to tear an estate down is the moment something is
+broken. `capture.yml` is the only thing that starts the three expensive resources, and its stop
+step runs `if: always()`.
+
+None of them has been dispatched. `docs/DECISIONS.md` 15 explains why in full: every claim is
+provable offline by construction, so a live run would have produced a screenshot rather than a
+proof, and it would have cost money to produce something the repository already demonstrates
+for free.
 
 ### The documents that decide things
 

@@ -50,8 +50,8 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install -e ".[dev]"
-      - run: ruff check src tests scripts data evals streaming
-      - run: ruff format --check src tests scripts data evals streaming
+      - run: ruff check src tests tests_flink scripts data evals streaming
+      - run: ruff format --check src tests tests_flink scripts data evals streaming
       # Tier one of ADR-0003: pure, no JVM, under a second. Everything except the core↔Flink
       # equivalence is proved here.
       - run: pytest -q
@@ -116,14 +116,37 @@ jobs:
       # it for the right reason. A gate that has never been shown to fail is a comment.
       - run: python scripts/gate_proof.py
 
-  # An `equivalence` job — tier two of ADR-0003, the real PyFlink job on a local MiniCluster
-  # asserting byte-identical output to the pure core — arrives in phase 1 with `streaming/` and
-  # `tests_flink/`. It is deliberately absent rather than present and vacuous: a job whose only
-  # possible outcome is green is a green tick over work that has not happened, and it is worse
-  # than no job because it looks like coverage.
-  #
-  # It will run with `WATERMARK_REQUIRE_FLINK=1`, which turns a missing JVM from a skip into a
-  # failure. Locally the tier skips with a printed reason; in CI it must execute.
+  equivalence:
+    name: core equals Flink
+    runs-on: ubuntu-latest
+    # `continue-on-error` and the honest reason for it: `apache-flink` will not install on the
+    # machine this repository was written on (macOS/arm64, Python 3.12 — apache-beam has no
+    # wheel and fails to build), so this job has never been observed green anywhere. Marking it
+    # required before anybody has seen it pass would block every pull request on a job whose
+    # failures nobody can reproduce locally.
+    #
+    # It is **not** silently skipped: WATERMARK_REQUIRE_FLINK below makes a missing runtime a
+    # hard failure inside the job, so the result is always either a real pass or a real failure
+    # — visible in the checks list, and excluded from the README scoreboard until it is green.
+    # The moment it is, this flag comes off and the row appears.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: pip install -e ".[dev,flink]"
+      - name: core equals Flink
+        # Tier two of ADR-0003. The pure core reimplements event-time semantics, so claim 1 is
+        # a statement about a model until the real job runs on a MiniCluster over the same
+        # fixtures and produces the same bytes.
+        env:
+          WATERMARK_REQUIRE_FLINK: "1"
+        run: make test-flink
 
   infrastructure:
     name: terraform and checkov

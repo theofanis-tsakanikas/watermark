@@ -67,7 +67,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["PLR2004", "S105", "S106"]
+# S311: `random.shuffle` is how the replay tests shuffle. Claim 2 asserts that the same events
+# in a different order produce the same bytes, so a *seeded, reproducible, non-cryptographic*
+# generator is exactly the right tool — and the seed is what makes a failure reproducible.
+"tests/**" = ["PLR2004", "S105", "S106", "S311"]
 "evals/**" = ["PLR2004"]
 # These scripts shell out to `terraform`, `make` and `git` by name. A hardcoded absolute path
 # would be wrong on every machine but the one that wrote it, and the commands are fixed

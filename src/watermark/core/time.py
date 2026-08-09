@@ -129,7 +129,29 @@ class Duration:
         return self.millis > 0
 
     def __str__(self) -> str:
-        return f"{self.millis}ms"
+        """A duration a person can read, with nothing rounded away.
+
+        `916200000ms` is technically complete and practically useless: it appears in quarantine
+        reasons and restatement causes, which are read by somebody deciding whether a reading
+        is three days late or ten, and nobody converts milliseconds in their head at the moment
+        they need to. Every non-zero unit is shown and none is dropped, so the rendering stays
+        exact — `10d 14h 30m` is the same number, not an approximation of it.
+        """
+        if self.millis == 0:
+            return "0ms"
+        sign, remaining = ("-", -self.millis) if self.millis < 0 else ("", self.millis)
+        parts = []
+        for unit, size in (
+            ("d", _MILLIS_PER_DAY),
+            ("h", _MILLIS_PER_HOUR),
+            ("m", _MILLIS_PER_MINUTE),
+            ("s", _MILLIS_PER_SECOND),
+            ("ms", 1),
+        ):
+            count, remaining = divmod(remaining, size)
+            if count:
+                parts.append(f"{count}{unit}")
+        return sign + " ".join(parts)
 
 
 @dataclass(frozen=True, order=True, slots=True)

@@ -124,6 +124,13 @@ CHECKS: list[Check] = [
     ),
     Check(
         "correctness",
+        "claim 5 · promotion",
+        [PYTHON, "-m", "evals.promotion"],
+        "Performance, bias, a model card and a named approver — and the shipped model is "
+        "refused, for the label-coverage finding in docs/BIAS-FINDING.md.",
+    ),
+    Check(
+        "correctness",
         "claim 7 · oversight",
         [PYTHON, "-m", "evals.oversight"],
         "The automated path is structurally incapable of a consequential decision about a "

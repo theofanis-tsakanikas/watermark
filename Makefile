@@ -73,7 +73,7 @@ fmt: ## Apply ruff formatting
 #   claim 7  no automatic consequential decision on a person — phase 3
 
 .PHONY: claims
-claims: core-pure adapter-thin parity-independent flink-versions contracts-validate seed-check claim-1 claim-2 claim-3 claim-4 claim-7 ## Every claim gate that exists today
+claims: core-pure adapter-thin parity-independent flink-versions contracts-validate seed-check claim-1 claim-2 claim-3 claim-4 claim-5 claim-7 ## Every claim gate that exists today
 
 .PHONY: core-pure
 core-pure: ## The stream core imports no framework and no cloud SDK
@@ -122,6 +122,10 @@ claim-3: ## CLAIM 3 — train/serve parity, between two mechanisms
 .PHONY: claim-4
 claim-4: ## CLAIM 4 — no decision on a stale feature
 	$(PY) -m evals.freshness
+
+.PHONY: claim-5
+claim-5: ## CLAIM 5 — no model reaches an endpoint ungated
+	$(PY) -m evals.promotion
 
 .PHONY: claim-7
 claim-7: ## CLAIM 7 — no automatic consequential decision about a person

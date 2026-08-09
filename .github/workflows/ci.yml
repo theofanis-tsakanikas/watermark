@@ -89,6 +89,11 @@ jobs:
       - name: "claim 4 — no decision on a stale feature"
         run: python -m evals.freshness
 
+      - name: "claim 5 — no model reaches an endpoint ungated"
+        # The shipped model is *refused* by this gate, for the label-coverage finding in
+        # docs/BIAS-FINDING.md. That is the result, and the harness asserts the refusal.
+        run: python -m evals.promotion
+
       - name: "claim 7 — no automatic consequential decision about a person"
         run: python -m evals.oversight
 
@@ -114,8 +119,8 @@ jobs:
         # the deployed job disagree about what late means with only the job being right.
         run: python scripts/check_adapter_is_thin.py
 
-      # Claim 5 arrives with phase 3 and claim 6 with phase 4. A step here for a claim that
-      # is not yet provable would be a green tick over work that has not happened.
+      # Claim 6 arrives with phase 4. A step here for a claim that is not yet provable
+      # would be a green tick over work that has not happened.
 
   gate-proof:
     name: attack our own gates

@@ -174,6 +174,12 @@ data "aws_iam_policy_document" "deploy_layers" {
       "kms:CreateKey", "kms:CreateAlias", "kms:DeleteAlias", "kms:TagResource",
       "kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:EnableKeyRotation",
       "kms:DisableKeyRotation", "kms:Describe*", "kms:List*", "kms:Get*",
+      # The data plane, not just the control plane. Creating a Lambda with `kms_key_arn` makes
+      # the *caller* encrypt the environment variables, so a role that can create a key and not
+      # use one fails with "Lambda was unable to encrypt your environment variables" — which
+      # names KMS but not the missing action. The same applies to any resource this layer
+      # creates that is encrypted at rest with a key it also created.
+      "kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:ReEncrypt*",
       "s3:CreateBucket", "s3:DeleteBucket", "s3:Put*", "s3:Get*", "s3:List*",
       "budgets:*", "sns:*", "logs:*", "lambda:*", "events:*",
       "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:PassRole",

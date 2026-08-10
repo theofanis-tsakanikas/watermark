@@ -65,6 +65,16 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `data.publish` imports `watermark.core` to normalise what it sends. The workflow drove
+      # a checkout and never installed it, so the scenario step died on
+      # `No module named 'watermark'` — after the pipeline had succeeded and the endpoint was
+      # standing, which is the expensive place to discover a missing pip install.
+      - run: pip install -e ".[cloud]"
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           # Composed from the account id and the name bootstrap chose. See deploy.yml.

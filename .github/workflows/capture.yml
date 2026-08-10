@@ -138,9 +138,20 @@ jobs:
           fi
 
       - name: drive the scenario
+        # `--live`. Without it `data.publish` prints the plan and touches nothing, which is the
+        # right default for a script that can spend money and the wrong one for the workflow
+        # whose entire purpose is to spend it. The first capture that reached this step ran dry,
+        # printed a plan, exited zero, and the run was reported a success with no record ever
+        # reaching Kinesis — the exact shape of "generated but unrun" this project refuses.
+        #
+        # So the count is asserted afterwards rather than trusted. A publisher that sends
+        # nothing and a stream that receives nothing look identical from here.
         run: |
+          set -euo pipefail
           echo "Publishing the generated day to IoT Core for ${{ inputs.minutes }} minutes."
-          python -m data.publish --minutes "${{ inputs.minutes }}"
+          python -m data.publish --minutes "${{ inputs.minutes }}" --live | tee /tmp/publish.log
+          grep -qE 'published [0-9,]+ deliveries' /tmp/publish.log || {
+            echo "::error::the publisher reported no deliveries"; exit 1; }
 
       - name: capture the evidence
         run: |

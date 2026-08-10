@@ -201,6 +201,12 @@ data "aws_iam_policy_document" "deploy_layers" {
       # without them a teardown leaves grants behind on a key it is trying to delete.
       "kms:CreateGrant", "kms:RetireGrant", "kms:ListGrants", "kms:RevokeGrant",
       "s3:CreateBucket", "s3:DeleteBucket", "s3:Put*", "s3:Get*", "s3:List*",
+      # Deletes, including versioned ones. The application archive is content-addressed, so a
+      # new build is a new key and Terraform removes the old — and in a versioned bucket that
+      # is `DeleteObjectVersion`, which `s3:Delete*` covers and the previous list did not
+      # contain at all. It surfaced as "deleting at least one object version failed" on the
+      # first redeploy of an already-deployed layer.
+      "s3:Delete*",
       "budgets:*", "sns:*", "logs:*", "lambda:*", "events:*",
       "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:PassRole",
       "iam:*RolePolicy", "iam:ListRolePolicies", "iam:TagRole",

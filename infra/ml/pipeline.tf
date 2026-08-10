@@ -246,8 +246,10 @@ resource "aws_sagemaker_pipeline" "training" {
             ChannelName = "train"
             DataSource = {
               S3DataSource = {
-                S3DataType             = "S3Prefix"
-                S3Uri                  = "${local.pipeline_root}/dataset"
+                S3DataType = "S3Prefix"
+                # The label-first, headerless copy `snapshot` writes beside the dataset. The
+                # built-in algorithm reads column 0 as the label and a header row as data.
+                S3Uri                  = "${local.pipeline_root}/dataset/train"
                 S3DataDistributionType = "FullyReplicated"
               }
             }

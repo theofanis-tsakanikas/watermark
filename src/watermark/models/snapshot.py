@@ -126,6 +126,20 @@ def main(argv: list[str] | None = None) -> int:
         "utf-8",
     )
 
+    # And the same rows again, in the shape XGBoost's CSV reader insists on: **label first, no
+    # header**. It is not configurable — the built-in algorithm reads column 0 as the label and
+    # treats a header row as data, which produces a model fitted on the string "confirmed".
+    #
+    # Two files rather than one reshaped file, because `examine` reads by column name and a
+    # headerless CSV would make it index by position. One format for the algorithm, one for the
+    # analysis, both written from the same rows in the same pass so they cannot disagree.
+    train = arguments.output / "train"
+    train.mkdir(exist_ok=True)
+    with (train / "train.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        for row in sorted(rows, key=lambda item: str(item["entity_id"])):
+            writer.writerow([row["confirmed"], row["score"], row["deprivation_decile"]])
+
     manifest = {
         "snapshot": arguments.snapshot,
         "as_of": arguments.as_of,

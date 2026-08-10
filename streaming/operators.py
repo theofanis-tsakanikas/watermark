@@ -16,6 +16,7 @@ a credential-free, JVM-free install.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -157,6 +158,12 @@ def build_process_function(operator: MeterWindowOperator):
             # shape and the code drift silently, and the drift would put the source string in
             # the partition field — where it would key every record onto one shard.
             raw, partition, source = value
+
+            # Base64, because the IoT rule wraps the device payload with `encode(*, 'base64')`:
+            # arbitrary device JSON nested inside another JSON document would need escaping, and
+            # base64 survives both hops unchanged. Decoding is transport, not interpretation —
+            # what the bytes *mean* is `normalise`'s question, in the core.
+            raw = base64.b64decode(raw).decode("utf-8")
 
             # **Processing time, not `ctx.timestamp()`.** With no watermark strategy attached
             # there is no timestamp assigner, so `ctx.timestamp()` is `None` — and `None //

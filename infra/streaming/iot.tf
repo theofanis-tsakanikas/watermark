@@ -59,7 +59,20 @@ resource "aws_iot_topic_rule" "meter_readings" {
   name        = replace("${var.project}_meter_readings", "-", "_")
   description = "Forward device readings to the meter stream, keyed by the topic's thing name"
   enabled     = true
-  sql         = "SELECT * FROM '${var.project}/meter/+/reading'"
+  # The envelope, shaped here rather than guessed downstream.
+  #
+  # `SELECT *` forwarded the device payload unchanged, and the Flink job deserialises a row of
+  # three named fields — so every field came back null and the operator refused the record with
+  # `ValueError: None is not a valid Source`. The row is an integration contract between this
+  # rule and `streaming/job.py`, and a contract stated in one place only is one the other side
+  # has to infer.
+  #
+  # `encode(*, 'base64')` because the payload is arbitrary device JSON and nesting it inside
+  # another JSON document would mean escaping it; base64 travels through both intact, and
+  # `normalise` in the core is what reads it. `topic(3)` is the thing name from
+  # `<project>/meter/<thing>/reading` — the device's own, which the IoT policy already forces it
+  # to publish under, so it cannot claim to be another meter.
+  sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'iot' AS source FROM '${var.project}/meter/+/reading'"
   sql_version = "2016-03-23"
 
   kinesis {

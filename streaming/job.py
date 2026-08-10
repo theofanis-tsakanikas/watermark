@@ -80,8 +80,16 @@ def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement
 
     consumer = FlinkKinesisConsumer(
         placement.meter_stream,
+        # Named, not positional. An unnamed `Types.ROW` makes the deserialiser look for `f0`,
+        # `f1` and `f2`; the IoT rule emits `raw`, `partition` and `source`, so every field came
+        # back null and the operator refused each record with "None is not a valid Source".
         JsonRowDeserializationSchema.builder()
-        .type_info(Types.ROW([Types.STRING(), Types.STRING(), Types.STRING()]))
+        .type_info(
+            Types.ROW_NAMED(
+                ["raw", "partition", "source"],
+                [Types.STRING(), Types.STRING(), Types.STRING()],
+            )
+        )
         .build(),
         {"aws.region": placement.region, "flink.stream.initpos": placement.initial_position},
     )

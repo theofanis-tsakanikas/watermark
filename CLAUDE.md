@@ -4,7 +4,7 @@
 window that has not closed.**
 
 AWS-native: IoT Core · Kinesis · Managed Service for Apache Flink · Iceberg on S3 ·
-SageMaker (Feature Store · Pipelines · Model Registry · Clarify · Model Monitor) ·
+SageMaker (Feature Store · Pipelines · Model Registry · Clarify · Model Monitor · endpoint) ·
 Lake Formation · Step Functions · Terraform
 
 > **Watermark** — the Flink term, and the thesis. A watermark is the system's claim about
@@ -186,7 +186,7 @@ watermark/
 │   ├── foundation/             # VPC, KMS (incl. per-subject key hierarchy), S3, budget guard, TTL reaper
 │   ├── streaming/              # IoT Core, Kinesis, Managed Flink, Glue Schema Registry
 │   ├── lakehouse/              # Iceberg tables, Glue Catalog, Athena, Glue Data Quality
-│   ├── ml/                     # SageMaker: Feature Store, Pipelines, Registry, endpoints, Model Monitor
+│   ├── ml/                     # SageMaker: Feature Store, Pipelines, Registry, Clarify, Model Monitor, endpoint
 │   └── governance/             # Lake Formation tags and grants, Step Functions, observability
 ├── pipelines/                  # backfill, restatement, erasure orchestration, dbt-athena models
 ├── scripts/                    # gate_proof.py, preflight.py, tf_validate.py, check_*.py

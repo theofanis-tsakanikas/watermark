@@ -16,6 +16,7 @@ from data.labels import labels
 from evals.scoring import Case, first_problem, require
 from watermark.core.time import Instant
 from watermark.models.bias import Subject, measure_proxy_discrimination
+from watermark.models.clarify import measure_as_clarify_would, sensitivity
 from watermark.models.promotion import (
     Approval,
     PromotionGate,
@@ -265,12 +266,72 @@ def the_parity_door_has_no_key() -> str:
     )
 
 
+def _subjects(run, population, *, on_ground_truth: bool = False):
+    return [
+        Subject(
+            item.meter_id,
+            item.deprivation_decile,
+            item.score >= run.model.threshold,
+            item.truly_tampering if on_ground_truth else item.confirmed,
+            item.truly_tampering,
+        )
+        for item in population
+    ]
+
+
+def clarify_cannot_see_the_finding() -> str:
+    """The standard bias report does not move when the defect is removed.
+
+    The guess, before it was measured, was that Clarify would *pass* the model this project
+    refuses. It does not — its disparate impact is outside conventional bounds for both models.
+    The measured result is more useful and worse for Clarify: fixing the defect moves our
+    precision gap by 777 per mille and Clarify's disparate impact by four.
+
+    Both halves are asserted. An analysis that does not respond to the defect cannot gate on
+    it, and one that refuses the *corrected* model would, if wired into the gate, refuse
+    everything — which is how a control gets switched off.
+    """
+    broken_run, population = _run()
+    fixed_run, _ = _run(on_ground_truth=True)
+
+    broken = _subjects(broken_run, population)
+    fixed = _subjects(fixed_run, population, on_ground_truth=True)
+
+    result = sensitivity(
+        broken=measure_as_clarify_would(broken),
+        broken_ours=measure_proxy_discrimination(broken),
+        fixed=measure_as_clarify_would(fixed),
+        fixed_ours=measure_proxy_discrimination(fixed),
+    )
+
+    if not result.clarify_is_insensitive:
+        return (
+            "Clarify now moves with the defect "
+            f"({result.clarify_movement}/1000 against our {result.our_movement}/1000). "
+            "The disagreement was the evidence; if it has gone, ADR-0006 needs rewriting "
+            "rather than this assertion relaxing."
+        )
+    if not result.clarify_would_block_the_fixed_model:
+        return (
+            f"Clarify now passes the corrected model (DI {result.clarify_fixed}/1000). "
+            "Half of ADR-0006's argument — that gating on it would refuse a model this "
+            "project considers correct — no longer holds."
+        )
+    return ""
+
+
 CASES: tuple[Case, ...] = (
     Case(
         "training_is_reproducible",
         "The same pinned snapshot yields the same metrics and the same artefact digest. A "
         "metric that moves is one no threshold can be set against.",
         training_is_reproducible,
+    ),
+    Case(
+        "clarify_cannot_see_the_finding",
+        "SageMaker Clarify refuses both the broken model and the corrected one, and its "
+        "number moves by 4/1000 while the defect moves by 777/1000. It runs; it does not vote.",
+        clarify_cannot_see_the_finding,
     ),
     Case(
         "the_shipped_model_is_refused_for_the_finding",

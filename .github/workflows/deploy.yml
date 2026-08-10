@@ -215,6 +215,28 @@ jobs:
           echo "SUBSTATIONS=$SUBSTATIONS" >> "$GITHUB_ENV"
           echo "substations from data/cast.py: $SUBSTATIONS"
 
+      - name: stop the Flink application if it is running
+        # Managed Flink takes a snapshot before an update, and refuses when the application is
+        # unhealthy: "Failed to take snapshot ... The application is currently experiencing
+        # downtime." A job in a crash loop is therefore a job that cannot be *fixed* by a
+        # deploy — the update that carries the fix is the one it blocks.
+        #
+        # So it is stopped first, with `--force`, which skips the snapshot. Nothing is lost that
+        # matters: this estate is stood up and torn down in bounded blocks and holds no state
+        # worth restoring across a code change. `capture.yml` starts it again.
+        run: |
+          set -euo pipefail
+          status=$(aws kinesisanalyticsv2 describe-application --application-name watermark \
+            --query 'ApplicationDetail.ApplicationStatus' --output text 2>/dev/null || echo "ABSENT")
+          echo "flink application: $status"
+          case "$status" in
+            RUNNING|STARTING|UPDATING)
+              aws kinesisanalyticsv2 stop-application --application-name watermark --force
+              aws kinesisanalyticsv2 wait application-ready --application-name watermark 2>/dev/null || sleep 30
+              echo "stopped"
+              ;;
+          esac
+
       - name: apply the layers, in dependency order
         env:
           TF_VAR_expires_at: ${{ inputs.expires_at }}

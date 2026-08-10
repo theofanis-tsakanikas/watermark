@@ -132,6 +132,19 @@ def main() -> None:  # pragma: no cover — the deployed entry point, never run 
     logging.basicConfig(level=logging.INFO)
     placement = Placement.from_environment()
     environment = StreamExecutionEnvironment.get_execution_environment()
+
+    # The path repair at the top of this file fixes *this* process. It does not fix the task
+    # managers, which run separate Python workers that never execute this file — they unpickle
+    # the process function, and cloudpickle stores it as a reference to `streaming.operators`.
+    # Without the package on their path the unpickle raises `ModuleNotFoundError: No module
+    # named 'streaming'` inside Beam's worker, where PyFlink reports it as a bundle failure and
+    # the job restarts every few seconds with the cause three stack traces deep.
+    #
+    # `add_python_file` is the documented mechanism: it ships the directory to every worker and
+    # puts it on their PYTHONPATH. The whole archive root, so `watermark` and `contracts` travel
+    # with it — the operator imports the core, and a worker that can build the function and not
+    # run it is no better off.
+    environment.add_python_file(_ROOT)
     build_pipeline(environment, placement)
     environment.execute("watermark")
 

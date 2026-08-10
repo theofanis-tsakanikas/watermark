@@ -162,6 +162,29 @@ resource "aws_iam_role_policy" "training" {
 # error names ec2 while everything about the configuration looks like SageMaker. This is the
 # documented set for VPC-attached training and processing jobs; the Describe calls have no
 # resource form, which is why they sit on `*`.
+resource "aws_iam_role_policy" "training_kms" {
+  #checkov:skip=CKV_AWS_111:Scoped to one key ARN, which is the constraint available here.
+  name = "use-the-data-key"
+  role = aws_iam_role.training.id
+
+  # A processing job encrypts its own volume and its own outputs with this key, using the
+  # execution role. `Decrypt` alone was granted, which is enough to read the inputs and not
+  # enough to start — "Access denied to KMS Key", naming the key rather than the direction.
+  # `CreateGrant` is how the job hands the key to the instance it runs on.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "UseTheDataKey"
+      Effect = "Allow"
+      Action = [
+        "kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*",
+        "kms:GenerateDataKey*", "kms:DescribeKey", "kms:CreateGrant",
+      ]
+      Resource = data.aws_kms_key.data.arn
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "training_vpc" {
   #checkov:skip=CKV_AWS_289:`CreateNetworkInterfacePermission` is read as permissions management. It grants an ENI to a SageMaker-owned account so the job can use it, which is what a VPC-attached job is; the action has no resource form and AWS requires "*".
   #checkov:skip=CKV_AWS_290:ec2:Describe* and CreateNetworkInterface have no resource form; AWS requires "*". The interface is created into subnets this project owns, and the role is assumable only by SageMaker.

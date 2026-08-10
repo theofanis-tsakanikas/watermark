@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from data.cast import DAY_START, SUBSTATIONS
 from data.generate import generate
+from watermark.core.records import Source
 from watermark.core.time import Duration
 
 
@@ -93,8 +94,14 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
         if behind > 0:
             time.sleep(behind)
 
+        # Routed by what the delivery *is*. The head-end's late file is a correction, not a
+        # slow reading, and the two arrive on different topics so the rules can label them
+        # differently — `stream` and `batch`. Publishing both to `/reading` made every
+        # correction claim to be live, so the core refused all 288 as past their window and no
+        # restatement was ever produced.
+        leaf = "reading" if delivery.source is Source.STREAM else "backfill"
         client.publish(
-            topic=f"{topic_prefix}/meter/{_meter_of(delivery.raw)}/reading",
+            topic=f"{topic_prefix}/meter/{_meter_of(delivery.raw)}/{leaf}",
             qos=1,
             payload=delivery.raw.encode("utf-8"),
         )

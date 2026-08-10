@@ -40,6 +40,10 @@ data "aws_iam_policy_document" "device" {
     actions = ["iot:Publish"]
     resources = [
       "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.project}/meter/$${iot:Connection.Thing.ThingName}/reading",
+      # And its own backfill topic. Still its own: the head-end corrects readings *for* a meter,
+      # and a publisher that could write to another meter's backfill could restate somebody
+      # else's consumption.
+      "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.project}/meter/$${iot:Connection.Thing.ThingName}/backfill",
     ]
   }
 }
@@ -78,6 +82,61 @@ resource "aws_iot_topic_rule" "meter_readings" {
   # `<project>/meter/<thing>/reading` — the device's own, which the IoT policy already forces it
   # to publish under, so it cannot claim to be another meter.
   sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'stream' AS source FROM '${var.project}/meter/+/reading'"
+  sql_version = "2016-03-23"
+
+  kinesis {
+    role_arn      = aws_iam_role.iot_to_kinesis.arn
+    stream_name   = aws_kinesis_stream.meter_readings.name
+    partition_key = "$${topic(3)}"
+  }
+
+  # Where a record goes when the rule itself fails — a throttled stream, a permissions change.
+  # Without it the reading is dropped and the only trace is a CloudWatch metric nobody has
+  # alarmed on, which in a settlement pipeline is silent lost revenue.
+  error_action {
+    s3 {
+      role_arn    = aws_iam_role.iot_to_kinesis.arn
+      bucket_name = data.aws_s3_bucket.lakehouse.id
+      key         = "quarantine/iot-rule-errors/$${timestamp()}"
+    }
+  }
+}
+
+# The second arrival path, and the reason there are two.
+#
+# The head-end's three-day-late file is not a device reading that happened to be slow — it is a
+# **correction**, and `watermark.core.records.Source` distinguishes the two because everything
+# downstream depends on it: a late `stream` record is refused as past its window, while a
+# `batch` record restates a total that was already published and keeps the prior value, the
+# reason and the delta (doctrine 4).
+#
+# One topic and one rule cannot express that. The first live run published all 4,312 deliveries
+# — 4,024 stream and **288 batch** — to `/reading`, so every correction arrived claiming to be
+# a live reading, was refused as too late, and not one restatement was ever produced. The edge
+# case that carries doctrine 4 could not reach the system at all.
+resource "aws_iot_topic_rule" "meter_backfill" {
+  name        = replace("${var.project}_meter_backfill", "-", "_")
+  description = "Forward the head-end's late file to the meter stream, labelled as the batch it is"
+  enabled     = true
+  # The envelope, shaped here rather than guessed downstream.
+  #
+  # `SELECT *` forwarded the device payload unchanged, and the Flink job deserialises a row of
+  # three named fields — so every field came back null and the operator refused the record with
+  # `ValueError: None is not a valid Source`. The row is an integration contract between this
+  # rule and `streaming/job.py`, and a contract stated in one place only is one the other side
+  # has to infer.
+  #
+  # `'stream'`, not `'iot'`: the value is a `watermark.core.records.Source`, whose members are
+  # `stream` and `batch` — the distinction the core cares about is live arrival versus the
+  # three-day-late head-end file, not which AWS service carried it. The first live run raised
+  # `ValueError: 'iot' is not a valid Source` inside the core, which was right to refuse it.
+  #
+  # `encode(*, 'base64')` because the payload is arbitrary device JSON and nesting it inside
+  # another JSON document would mean escaping it; base64 travels through both intact, and
+  # `normalise` in the core is what reads it. `topic(3)` is the thing name from
+  # `<project>/meter/<thing>/reading` — the device's own, which the IoT policy already forces it
+  # to publish under, so it cannot claim to be another meter.
+  sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'batch' AS source FROM '${var.project}/meter/+/backfill'"
   sql_version = "2016-03-23"
 
   kinesis {

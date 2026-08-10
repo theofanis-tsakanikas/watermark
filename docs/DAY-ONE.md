@@ -30,19 +30,48 @@ laptop is a layer that will drift.
 
 ## 3 · GitHub environments `deploy` and `destroy`
 
-The deploy role trusts exactly two subjects:
+The deploy role trusts exactly four subjects — two environments, in each of the two forms
+GitHub's claim can take:
 
 ```
 repo:<owner>/watermark:environment:deploy
 repo:<owner>/watermark:environment:destroy
+repo:<owner>@<owner-id>/watermark@<repo-id>:environment:deploy
+repo:<owner>@<owner-id>/watermark@<repo-id>:environment:destroy
 ```
 
-Both environments must exist in the repository settings, each with **required reviewers**. The
-environment is the whole of the authorisation: without it the OIDC subject never matches and
-the workflow cannot assume the role — which is the intended failure, not a misconfiguration.
+Both environments must exist. The environment is the whole of the authorisation: without it the
+OIDC subject never matches and the workflow cannot assume the role — which is the intended
+failure, not a misconfiguration.
 
 *Has an API (`gh api`), and is recorded here because forgetting it produces an
 `AssumeRoleWithWebIdentity` denial that reads like a broken trust policy.*
+
+### There is no required reviewer, and this is what that costs
+
+The design calls for one on each environment. **This repository does not have one**, and the
+reason is not an oversight: GitHub refuses the protection rule on a private repository under
+this billing plan. The API is explicit —
+
+```
+422  Failed to create the environment protection rule.
+     Please ensure the billing plan supports the required reviewers protection rule.
+```
+
+— and then **creates the environment anyway, with no rules on it**. That is the failure worth
+writing down: the request fails, the environment appears, the OIDC subject starts matching, and
+the human gate is gone while every page still looks configured. It was found by trying it, not
+by reading about it.
+
+So, plainly: **doctrine rule 5, "nothing approves itself", does not currently hold for a
+deploy.** Whoever dispatches the workflow is the only human in the path, and they approve their
+own dispatch. What still stands between a dispatch and an apply is the confirmation word, the
+seven-day expiry bound, a full CI run against that exact ref, and the printed plan.
+
+Two things restore it, and both are decisions rather than work: making the repository public,
+where environment protection rules are free, or a paid plan. The intention is the first, once
+the estate has been proved private. Until then this paragraph is the control — the honest kind,
+which is a limitation somebody wrote down rather than a rule nobody checked.
 
 ## 4 · Two repository variables — and only ever two
 
@@ -67,6 +96,30 @@ plants exactly that paste to prove the refusal happens.
 
 **Variables, not secrets.** Neither is a credential, and hiding an account id from the workflow
 log removes the one thing that makes a denial diagnosable.
+
+## 4b · Activate the cost allocation tag — the one step that must wait
+
+`infra/bootstrap` declares `aws_ce_cost_allocation_tag.project`, and on a fresh account the
+apply **fails on it**:
+
+```
+ValidationException: Failed to update Cost Allocation Tag: Tag keys not found: watermark:project
+```
+
+That is not a misconfiguration. AWS only lists a tag key as activatable once it has seen it on a
+**billed** resource, which lags the resource's creation by up to 24 hours. Apply bootstrap
+again the next day and the resource is created.
+
+**Until it is, the budget's cost filter matches nothing and the ceiling cannot fire.** A budget
+reporting zero looks exactly like a project that is not spending, which is why this is written
+here rather than left to be noticed. Check it with:
+
+```
+aws ce list-cost-allocation-tags --tag-keys "watermark:project"
+```
+
+*Has an API, and Terraform owns it. It is here because it is the one step that cannot succeed
+on the first apply.*
 
 ## 5 · Nothing. The budget needs no confirmation.
 

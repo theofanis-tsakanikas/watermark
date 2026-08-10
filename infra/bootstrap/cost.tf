@@ -13,15 +13,28 @@
 resource "aws_budgets_budget" "estate" {
   name         = "${var.project}-estate"
   budget_type  = "COST"
-  limit_amount = tostring(var.monthly_budget_eur)
-  limit_unit   = "EUR"
-  time_unit    = "MONTHLY"
+  limit_amount = tostring(var.monthly_budget_usd)
+
+  # USD, and not by preference: the API refuses every other unit for this account.
+  # `EUR` passes `terraform validate` and fails the apply. See the variable's description.
+  limit_unit = "USD"
+  time_unit  = "MONTHLY"
 
   # Only what this project tagged. The account holds other work, and a ceiling that counts
   # somebody else's spend disables this project's deploy role for a bill it did not run up.
+  #
+  # `format`, and not a template string. AWS wants `user:<tag key>$<tag value>`, and the `$`
+  # separator collides with Terraform's interpolation: written as
+  # `"user:watermark:project$${var.project}"` the `$${` is read as the escape for a literal
+  # `${`, so the filter becomes the eleven characters `${var.project}` and matches no resource
+  # that has ever existed. The budget then counts zero for ever and the ceiling never fires —
+  # a cost guard that is present, green, and incapable of doing anything.
+  #
+  # This layer had that bug, inherited from `foundation`, until an apply against the real
+  # account showed the stored value back.
   cost_filter {
     name   = "TagKeyValue"
-    values = ["user:watermark:project$${var.project}"]
+    values = [format("user:watermark:project$%s", var.project)]
   }
 
   # Directly to an address, with no SNS topic in between. An SNS email subscription has to be
@@ -146,4 +159,20 @@ resource "aws_budgets_budget_action" "ceiling" {
     address           = var.budget_alert_email
     subscription_type = "EMAIL"
   }
+}
+
+# Activating the tag, which is the step that makes the filter above mean anything.
+#
+# A cost allocation tag key is inert until it is switched on in Billing: until then the filter
+# matches nothing, the budget reports zero, and the ceiling is a resource that exists and cannot
+# fire. The console is the usual place this is done, which is why it is usually forgotten and
+# never noticed — a budget at zero looks exactly like a project that is not spending.
+#
+# AWS only lists a key here once it has seen it on a billed resource, which can take up to 24
+# hours after the first tagged thing is created. So a bootstrap applied into a fresh account may
+# fail on this one resource, and the fix is to apply again the next day rather than to reach for
+# the console.
+resource "aws_ce_cost_allocation_tag" "project" {
+  tag_key = "watermark:project"
+  status  = "Active"
 }

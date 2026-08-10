@@ -26,7 +26,8 @@ variable "expires_at" {
   }
 }
 
-# `monthly_budget_eur` and `budget_alert_email` used to be here. Both moved to
+# `monthly_budget_eur` and `budget_alert_email` used to be here (the first is now
+# `monthly_budget_usd`, because AWS Budgets refuses any other unit). Both moved to
 # `infra/bootstrap`, with the budget and the action they belong to — see the comment at the top
 # of `cost.tf`. Removing them from this layer is what makes the move real: a variable left
 # behind is one a later apply can set, and two budgets counting the same tag would each disable

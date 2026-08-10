@@ -72,20 +72,27 @@ variable "github_repository_id" {
   }
 }
 
-variable "monthly_budget_eur" {
+variable "monthly_budget_usd" {
   description = <<-EOT
     The threshold at which the budget action detaches the deploy role's permissions.
 
-    100 because `CLAUDE.md` says a full live capture with teardown must come in under it, and a
-    design that pushes past it is wrong before the budget is. The action does not warn — it
-    removes the ability to create more.
+    **In USD, because AWS Budgets refuses anything else.** `limit_unit = "EUR"` is accepted by
+    the provider schema and rejected by the API at apply time — `EUR is not in the supported
+    unit set: [USD]` — which is the class of error `terraform validate` cannot see and only a
+    plan or an apply against the real account will surface.
 
-    It lives in this layer rather than in `foundation` because a guard created by the same apply
-    that creates the spending is a guard that does not exist while the spending starts. Bootstrap
-    is applied before anything can be deployed, which is exactly when a ceiling is worth having.
+    `CLAUDE.md` states the design target as **under €100**, and that stays the design target: it
+    decides what may be built. This is the enforcement, and it is denominated in the currency
+    the account is billed in.
+
+    110 rather than a converted figure. A ceiling is only wrong in one direction — too tight and
+    it detaches the deploy role over a bill that was within budget, in the middle of a capture,
+    which is the expensive kind of false positive. 110 USD is above €100 at any rate this
+    decade, and no exchange rate is recorded here because a rate written down is a rate that
+    goes stale silently.
   EOT
   type        = number
-  default     = 100
+  default     = 110
 }
 
 # `deploy_environments` used to be a variable here, defaulting to ["deploy", "destroy"].

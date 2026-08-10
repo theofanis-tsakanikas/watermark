@@ -123,6 +123,11 @@ data "aws_iam_policy_document" "training" {
       data.aws_s3_bucket.lakehouse.arn,
       "${data.aws_s3_bucket.lakehouse.arn}/feature-store/*",
       "${data.aws_s3_bucket.lakehouse.arn}/models/*",
+      # Everything the pipeline reads and writes: its own code archive, the dataset the
+      # snapshot step pins, the fitted model, and the analysis and baseline `examine` emits.
+      # The prefix was added when the pipeline was, and this grant was not — so the first step
+      # could reach S3 and not read the wheel that contains the module it was told to run.
+      "${data.aws_s3_bucket.lakehouse.arn}/pipelines/*",
     ]
   }
 

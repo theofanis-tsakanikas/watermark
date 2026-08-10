@@ -287,6 +287,25 @@ resource "aws_iam_role_policy" "pipeline" {
         ]
       },
       {
+        # CreateModelPackage validates the artefact by reading it, as the *pipeline* role —
+        # which until now held SageMaker actions and PassRole and nothing else. The failure is
+        # "Access denied for bucket ... model.tar.gz", which reads like a missing object.
+        Sid    = "ReadTheArtefactItIsRegistering"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:ListBucket"]
+        Resource = [
+          data.aws_s3_bucket.lakehouse.arn,
+          "${data.aws_s3_bucket.lakehouse.arn}/pipelines/*",
+        ]
+      },
+      {
+        # And the key it is encrypted with, for the same read.
+        Sid      = "DecryptTheArtefact"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource = data.aws_kms_key.data.arn
+      },
+      {
         Sid      = "HandTheTrainingRoleToTheJob"
         Effect   = "Allow"
         Action   = "iam:PassRole"

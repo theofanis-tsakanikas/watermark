@@ -204,6 +204,11 @@ data "aws_iam_policy_document" "deploy_layers" {
       "kinesis:*", "iot:*", "glue:*Registry*", "glue:*Schema*",
       "kinesisanalytics:*", "cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms",
       "cloudwatch:DescribeAlarms",
+      # Terraform reads tags back after creating an alarm, and CloudWatch keeps that behind its
+      # own action rather than folding it into Describe. Third instance of the same shape in
+      # this file: a create grant without the read grant that follows it, which fails *after*
+      # the resource exists and reads like a permissions problem with the thing just built.
+      "cloudwatch:ListTagsForResource", "cloudwatch:TagResource", "cloudwatch:UntagResource",
     ]
     resources = ["*"]
   }

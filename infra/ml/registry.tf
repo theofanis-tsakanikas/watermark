@@ -18,6 +18,36 @@ resource "aws_sagemaker_model_package_group" "meter_anomaly" {
   model_package_group_description = "Tampering and non-technical-loss scoring. Not Annex III; GDPR Art. 22 governs it, and the output is a ranked queue a human works — never an actuation."
 }
 
+# Doctrine 5, on the identities rather than on the group.
+#
+# It belonged in the group's resource policy and cannot live there: SageMaker accepts only
+# `Allow` in a model package group policy — "Only the Allow effect is supported, invalid effect
+# for statement id NothingApprovesItself". A control that cannot be expressed where you first
+# reach for it is not a control you drop; it is one you attach to the identity instead, which
+# is where an explicit deny cannot be out-voted by any later grant.
+#
+# `promotion.py` enforces the same rule offline and refuses `pipeline` and `watermark-training`
+# by name. This is the estate's half of that promise.
+resource "aws_iam_role_policy" "no_self_approval" {
+  for_each = {
+    pipeline = aws_iam_role.pipeline.id
+    training = aws_iam_role.training.id
+  }
+
+  name = "nothing-approves-itself"
+  role = each.value
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "NothingApprovesItself"
+      Effect   = "Deny"
+      Action   = ["sagemaker:UpdateModelPackage"]
+      Resource = "*"
+    }]
+  })
+}
+
 # The pipeline may register a model version. It may not approve one.
 #
 # One document per group, keyed by group. A resource policy attached to one group named *both*
@@ -41,21 +71,6 @@ data "aws_iam_policy_document" "registry_no_self_approval" {
     }
   }
 
-  # Doctrine 5, as the estate's half of what `promotion.py` enforces offline. The pipeline that
-  # produced the candidate cannot be the identity that approves it.
-  statement {
-    sid       = "NothingApprovesItself"
-    effect    = "Deny"
-    actions   = ["sagemaker:UpdateModelPackage"]
-    resources = [each.value]
-    principals {
-      type = "AWS"
-      identifiers = [
-        aws_iam_role.pipeline.arn,
-        aws_iam_role.training.arn,
-      ]
-    }
-  }
 }
 
 resource "aws_sagemaker_model_package_group_policy" "curtailment_forecast" {

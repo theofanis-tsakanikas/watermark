@@ -66,43 +66,41 @@ locals {
   # `pip install --no-deps` because the two modules that run here import nothing but the
   # standard library and this package. Pulling pydantic into a processing container would be
   # installing a dependency to satisfy an import that is not made.
-  install_then = "pip install --no-deps --quiet /opt/ml/processing/input/code/*.whl && "
+  # Unpack, install, then run. `pip install --no-deps` because the two modules that run here
+  # import nothing but the standard library and this package — pulling pydantic into a
+  # processing container would be installing a dependency to satisfy an import nobody makes.
+  unpack_then = join(" && ", [
+    "python3 -c \"import zipfile;zipfile.ZipFile('/opt/ml/processing/input/code/code.zip').extractall('/tmp/code')\"",
+    "pip install --no-deps --quiet /tmp/code/*.whl",
+    "",
+  ])
 
   # Small on purpose, and short-lived. Every step is a batch job over a synthetic day; the
   # instance exists for minutes and the pipeline is not left standing between runs.
   instance_type = "ml.m5.large"
 }
 
-# The wheel itself, uploaded by the same apply that defines the pipeline.
+# The code the processing steps run, as one zip.
 #
-# `fileset` rather than a fixed name: the version is in the filename, so hardcoding it here
-# would be a string that has to be edited in lockstep with `pyproject.toml` and will not be.
-# An empty set means `make package-ml` was not run, and the `for_each` produces nothing — which
-# would leave the code channel empty and every step failing on a missing wheel. `preflight`
-# checks for the wheel so that failure happens on a laptop rather than in a paid cluster.
-resource "aws_s3_object" "code" {
-  for_each = fileset("${path.module}/.package", "*.whl")
-
-  bucket = data.aws_s3_bucket.lakehouse.id
-  key    = "pipelines/${var.project}/code/${each.value}"
-  source = "${path.module}/.package/${each.value}"
-  etag   = filemd5("${path.module}/.package/${each.value}")
-
-  kms_key_id             = data.aws_kms_key.data.arn
-  server_side_encryption = "aws:kms"
+# `archive_file` is a **data source**, and that is the whole reason for it: data sources are
+# read at plan, while `filemd5` is a function evaluated during `terraform validate`. An earlier
+# version used `filemd5` on the wheel, which made this layer unvalidatable on a clean checkout —
+# and `count = 0` does not save you, because the expression is still evaluated. `infra/streaming`
+# had already solved this the right way and this file now does the same.
+#
+# One archive rather than two objects: the wheel and the population travel together, are
+# unpacked together, and cannot get out of step with each other.
+data "archive_file" "code" {
+  type        = "zip"
+  source_dir  = "${path.module}/.package"
+  output_path = "${path.module}/.build/code.zip"
 }
 
-# The population the snapshot step pins.
-#
-# Uploaded rather than imported. `snapshot.py` reads a path and does not know where the rows
-# came from — an earlier version imported the synthetic generator from `data/`, which is not in
-# the wheel, so the step would have died on `ImportError` inside a paid cluster. In a real
-# estate this object is replaced by an Athena query against Iceberg and the module is unchanged.
-resource "aws_s3_object" "population" {
+resource "aws_s3_object" "code" {
   bucket = data.aws_s3_bucket.lakehouse.id
-  key    = "pipelines/${var.project}/population/population.csv"
-  source = "${path.module}/.package/population.csv"
-  etag   = filemd5("${path.module}/.package/population.csv")
+  key    = "pipelines/${var.project}/code/code.zip"
+  source = data.archive_file.code.output_path
+  etag   = data.archive_file.code.output_md5
 
   kms_key_id             = data.aws_kms_key.data.arn
   server_side_encryption = "aws:kms"
@@ -151,7 +149,7 @@ resource "aws_sagemaker_pipeline" "training" {
             ImageUri            = local.clarify_image
             ContainerEntrypoint = ["bash", "-c"]
             ContainerArguments = [
-              "${local.install_then}python3 -m watermark.models.snapshot --snapshot \"$SNAPSHOT_ID\" --as-of \"$AS_OF\""
+              "${local.unpack_then}python3 -m watermark.models.snapshot --snapshot \"$SNAPSHOT_ID\" --as-of \"$AS_OF\" --source /tmp/code/population.csv"
             ]
           }
           Environment = {
@@ -165,15 +163,6 @@ resource "aws_sagemaker_pipeline" "training" {
               S3Input = {
                 S3Uri       = local.code_channel
                 LocalPath   = "/opt/ml/processing/input/code"
-                S3DataType  = "S3Prefix"
-                S3InputMode = "File"
-              }
-            },
-            {
-              InputName = "population"
-              S3Input = {
-                S3Uri       = "${local.pipeline_root}/population"
-                LocalPath   = "/opt/ml/processing/input/population"
                 S3DataType  = "S3Prefix"
                 S3InputMode = "File"
               }
@@ -315,7 +304,7 @@ resource "aws_sagemaker_pipeline" "training" {
             ImageUri            = local.clarify_image
             ContainerEntrypoint = ["bash", "-c"]
             ContainerArguments = [
-              "${local.install_then}python3 -m watermark.models.examine --threshold \"$THRESHOLD\""
+              "${local.unpack_then}python3 -m watermark.models.examine --threshold \"$THRESHOLD\""
             ]
           }
           # No default. `examine` refuses to run without it, because a threshold of zero flags
@@ -393,4 +382,14 @@ resource "aws_sagemaker_pipeline" "training" {
   })
 
   tags = { "watermark:expires-at" = var.expires_at }
+
+  # Evaluated at plan, not at validate. This is the loud half of the guard above: a deploy that
+  # reached AWS with an empty code channel would create a pipeline whose every step dies on a
+  # missing wheel, inside a cluster that is already being paid for.
+  lifecycle {
+    precondition {
+      condition     = data.archive_file.code.output_size > 1000
+      error_message = "run `make package-ml` before applying infra/ml: the code archive is empty or missing, so every step that runs our code would fail inside a paid cluster."
+    }
+  }
 }

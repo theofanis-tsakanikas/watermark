@@ -1,6 +1,19 @@
 # ADR-0006 — Clarify runs, and does not vote
 
-**Status:** accepted · **Date:** 2026-08-10 · **Serves:** claim 5
+**Status:** amended 2026-08-10 — *Clarify cannot run in this account* · **Serves:** claim 5
+
+> **Amendment.** The first pipeline execution against a real account answered:
+> *"SageMaker Clarify processing is in maintenance mode and is not available to new customers."*
+> The image cannot be pulled here, so the step is removed from `infra/ml/pipeline.tf`.
+>
+> The decision below still holds and its reasoning is unchanged — Clarify was never going to
+> vote, and the measurement that showed why is unaffected. What is lost is the rendered AWS
+> report; what remains is `watermark.models.clarify`, which computes the same post-training
+> metrics offline in integers from the same subjects, and `evals/promotion`, which proves the
+> finding in CI on every commit.
+>
+> That is a smaller claim, and it is the true one: **this project does not run Clarify.** It
+> reimplements the three metrics that mattered and shows what they cannot see.
 
 ## Context
 

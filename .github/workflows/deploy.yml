@@ -1,9 +1,9 @@
 # The only way anything reaches AWS. Manual dispatch, a required reviewer, and OIDC.
 #
-# **Nothing here has ever run.** `docs/DECISIONS.md` 15 puts the whole estate out of scope for
-# application: it is built, validated against real provider schemas, scanned clean, and left
-# unapplied. This file exists so that "ready to deploy" is a checkable statement rather than an
-# adjective — a reviewer can read what would happen, and it is the same thing that would happen.
+# `docs/DECISIONS.md` 15 said the estate would never be applied. That was a decision about
+# *timing*, and it has been taken back deliberately: the repository is deployed from here, and
+# the cost posture that used to be enforced by never running is now enforced by `expires_at`,
+# the reaper and a budget action that detaches this role's permissions at its ceiling.
 #
 # Four properties are worth reading for.
 #
@@ -115,10 +115,17 @@ jobs:
 
       - run: pip install -e ".[dev]"
 
-      - name: build the Flink application package
+      - name: build the application packages
         # Before the credentials, deliberately. A packaging failure should stop the deploy while
         # nothing has been created, not four minutes in with the foundation already up.
-        run: make package
+        #
+        # Two of them. `package` vendors the Flink job; `package-ml` builds the wheel every
+        # SageMaker processing step installs before running our code, plus the population the
+        # snapshot step pins. Without the second, `infra/ml` uploads an empty code channel and
+        # the pipeline fails inside a cluster that is already being paid for.
+        run: |
+          make package
+          make package-ml
 
       - name: show the identity this job will present
         # `Not authorized to perform sts:AssumeRoleWithWebIdentity` is the same message for a

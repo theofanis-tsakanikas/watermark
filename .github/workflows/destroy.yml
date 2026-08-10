@@ -71,6 +71,17 @@ jobs:
       # that matters most when something is already wrong.
       - run: pip install -e "."
 
+      # The same archives the deploy builds. `data "archive_file"` is read during a *destroy*
+      # too — Terraform evaluates the configuration before it can tear it down — so a teardown
+      # without them fails on "error creating archive: could not archive missing directory".
+      #
+      # A teardown that depends on a build is not ideal and it is the honest shape here: the
+      # archives are inputs to resources this layer owns, and pretending otherwise would mean a
+      # destroy that works only on a machine that happens to have built recently.
+      - run: |
+          make package
+          make package-ml
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.15.5

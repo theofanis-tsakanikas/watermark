@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -180,6 +181,15 @@ def _line(kind: str, result: object, view: object) -> str:
     )
 
 
+#: The evidence channel.
+#:
+#: `.print()` writes to the task manager's stdout, which Managed Flink does not forward to the
+#: application log — the job ran, read 51,744 records and produced not one visible line. A
+#: capture whose output cannot be read is a capture that proves nothing, so every outcome is
+#: also logged through the standard logger, which Managed Flink *does* collect.
+_EVIDENCE = logging.getLogger("watermark.evidence")
+
+
 def build_process_function(operator: MeterWindowOperator):
     """Wrap the operator in the PyFlink class Flink actually calls.
 
@@ -252,7 +262,7 @@ def build_process_function(operator: MeterWindowOperator):
             undecodable, self._undecodable = self._undecodable, []
 
             for partition, source in undecodable:
-                yield json.dumps(
+                quarantine_line = json.dumps(
                     {
                         "kind": "quarantine",
                         "reason": "undecodable_transport",
@@ -273,14 +283,17 @@ def build_process_function(operator: MeterWindowOperator):
             # The watermark status travels on every line. It is the evidence claim 1 is about:
             # a published window says which watermark let it out, so a reader can tell a closed
             # window from one that was let through.
-            for result in emission.published:
-                yield _line("published", result, view)
-            for result in emission.restated:
-                yield _line("restated", result, view)
-            for result in emission.confirmed:
-                yield _line("confirmed", result, view)
+            for kind, results in (
+                ("published", emission.published),
+                ("restated", emission.restated),
+                ("confirmed", emission.confirmed),
+            ):
+                for result in results:
+                    line = _line(kind, result, view)
+                    _EVIDENCE.info(line)
+                    yield line
             for quarantined in refused:
-                yield json.dumps(
+                quarantine_line = json.dumps(
                     {
                         "kind": "quarantine",
                         # `.value`, because `Reason` is an enum and `json.dumps` refuses it —
@@ -292,6 +305,8 @@ def build_process_function(operator: MeterWindowOperator):
                     },
                     default=str,
                 )
+                _EVIDENCE.info(quarantine_line)
+                yield quarantine_line
 
     return _MeterWindowFunction()
 

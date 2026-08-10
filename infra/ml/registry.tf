@@ -174,8 +174,21 @@ resource "aws_iam_role_policy" "pipeline" {
           "sagemaker:DescribeProcessingJob",
           "sagemaker:CreateModelPackage",
           "sagemaker:DescribeModelPackage",
+          "sagemaker:StopProcessingJob",
+          "sagemaker:StopTrainingJob",
+          # SageMaker tags every job it creates on the caller's behalf, so a role that can
+          # create a job and not tag it cannot create one at all. The first pipeline execution
+          # died here: "not authorized to perform: sagemaker:AddTags".
+          "sagemaker:AddTags",
+          "sagemaker:ListTags",
         ]
-        Resource = "arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*/${var.project}-*"
+        # Two patterns, because **SageMaker names these jobs, not us**. A pipeline step's job is
+        # `pipelines-<execution-id>-<StepName>-<suffix>`, so a scope of `watermark-*` matched
+        # nothing the pipeline ever creates — the grant would have been correct and inert.
+        Resource = [
+          "arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*/${var.project}-*",
+          "arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*/pipelines-*",
+        ]
       },
       {
         Sid      = "HandTheTrainingRoleToTheJob"

@@ -346,8 +346,13 @@ resource "aws_sagemaker_pipeline" "training" {
           ModelPackageGroupName = aws_sagemaker_model_package_group.meter_anomaly.model_package_group_name
           InferenceSpecification = {
             Containers = [{
-              Image        = local.training_image
-              ModelDataUrl = "${local.pipeline_root}/model"
+              Image = local.training_image
+              # The training step's own output property, not a path assembled here. XGBoost
+              # writes to `<output>/<job-name>/output/model.tar.gz` and the job name is chosen
+              # by SageMaker, so any path this file could compute would be a guess — and the
+              # guess pointed at the prefix, which CreateModelPackage rejects as "Access denied
+              # for bucket ... object key: pipelines/watermark/model".
+              ModelDataUrl = { Get = "Steps.Train.ModelArtifacts.S3ModelArtifacts" }
             }]
             SupportedContentTypes                   = ["text/csv"]
             SupportedResponseMIMETypes              = ["text/csv"]

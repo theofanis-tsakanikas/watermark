@@ -76,11 +76,29 @@ resource "aws_security_group" "endpoints" {
   }
 
   egress {
-    description = "HTTPS to the endpoints"
+    description = "HTTPS to the interface endpoints"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = [var.vpc_cidr]
+  }
+
+  # And to S3 and DynamoDB, which are *gateway* endpoints and are not inside the VPC.
+  #
+  # This is the difference the first real run found. An interface endpoint has a private
+  # address in the VPC, so `cidr_blocks = [vpc_cidr]` reaches it. A gateway endpoint does not:
+  # traffic leaves through the route table to the service's **public** address range, and a
+  # security group that only allows the VPC CIDR blocks it. The job could see every interface
+  # endpoint and not S3, and the error was "Unable to execute request to S3" — a network
+  # failure that reads like a permissions problem.
+  #
+  # A prefix list rather than a CIDR, because the addresses are AWS's to change.
+  egress {
+    description     = "HTTPS to the gateway endpoints, whose addresses are outside the VPC"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [aws_vpc_endpoint.gateway_s3.prefix_list_id, aws_vpc_endpoint.gateway_dynamodb.prefix_list_id]
   }
 }
 

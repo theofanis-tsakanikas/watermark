@@ -11,6 +11,18 @@ locals {
 }
 
 resource "aws_s3_bucket" "lakehouse" {
+  # Deletable with objects in it, and only in this layer.
+  #
+  # This estate is stood up and torn down in bounded blocks; everything in these buckets is
+  # derived — closed windows, model artefacts, pipeline inputs — and regenerable from the
+  # repository and a snapshot id. A teardown that stops at "BucketNotEmpty" is a teardown that
+  # leaves the whole estate standing and billing, which is the expensive failure.
+  #
+  # `infra/bootstrap`'s state bucket carries `prevent_destroy` instead, and deliberately: losing
+  # it does not lose data, it loses the *mapping*, and an apply against a lost mapping builds a
+  # second estate beside the first.
+  force_destroy = true
+
   bucket = local.lakehouse_bucket
 
   #checkov:skip=CKV_AWS_144:A single-Region estate that is never applied and, if it were, would exist for the length of one capture. Cross-region replication guards against a Regional loss whose recovery has never been exercised, which makes it a control in name only. Versioning, which every restatement exercises, stays.
@@ -75,6 +87,18 @@ resource "aws_s3_bucket_lifecycle_configuration" "lakehouse" {
 }
 
 resource "aws_s3_bucket" "access_logs" {
+  # Deletable with objects in it, and only in this layer.
+  #
+  # This estate is stood up and torn down in bounded blocks; everything in these buckets is
+  # derived — closed windows, model artefacts, pipeline inputs — and regenerable from the
+  # repository and a snapshot id. A teardown that stops at "BucketNotEmpty" is a teardown that
+  # leaves the whole estate standing and billing, which is the expensive failure.
+  #
+  # `infra/bootstrap`'s state bucket carries `prevent_destroy` instead, and deliberately: losing
+  # it does not lose data, it loses the *mapping*, and an apply against a lost mapping builds a
+  # second estate beside the first.
+  force_destroy = true
+
   bucket = "${var.project}-access-logs-${data.aws_caller_identity.current.account_id}"
 
   #checkov:skip=CKV_AWS_18:This IS the access-log bucket. A bucket logging to itself is a loop: each log write is an event that writes another log.

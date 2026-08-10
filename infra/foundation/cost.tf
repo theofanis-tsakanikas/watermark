@@ -70,6 +70,18 @@ data "aws_iam_policy_document" "reaper" {
     }
   }
 
+  # The dead-letter queue the function declares. Lambda validates this at *create* time — it
+  # checks the execution role can publish before it will accept the function — so a missing
+  # grant is not a runtime surprise but a create failure reading "The provided execution role
+  # does not have permissions to call Publish on SNS". The topic was wired as a DLQ and the
+  # role was never given the one action that makes a DLQ work.
+  statement {
+    sid       = "ReportItsOwnFailures"
+    effect    = "Allow"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.reaper_failures.arn]
+  }
+
   statement {
     sid       = "WriteItsOwnLogs"
     effect    = "Allow"

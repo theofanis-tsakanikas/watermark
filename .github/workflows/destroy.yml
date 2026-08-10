@@ -135,6 +135,42 @@ jobs:
             done
           done
 
+      - name: delete the experiment trial components the pipeline left behind
+        # SageMaker creates one of these for every processing and training job in a pipeline
+        # execution, implicitly. Terraform never sees them, so a `destroy` cannot remove them
+        # and they accumulate across captures — sixty-two after a day of iteration.
+        #
+        # They cost nothing, and that is exactly why they are worth deleting here rather than
+        # ignoring: the check that says "nothing of ours is left" is only useful if it can
+        # return zero. A permanent residue trains the reader to skip the one line that would
+        # have named a real leak.
+        #
+        # Named rather than tagged: the tag API lags deletions by up to two days, which makes it
+        # the wrong instrument for a teardown that wants to verify itself immediately.
+        run: |
+          set -euo pipefail
+          python3 - <<'CLEANUP'
+          import json, subprocess
+
+          listed = subprocess.run(
+              ["aws", "sagemaker", "list-trial-components", "--max-results", "100"],
+              capture_output=True, text=True, check=True,
+          )
+          names = [
+              c["TrialComponentName"]
+              for c in json.loads(listed.stdout).get("TrialComponentSummaries", [])
+              if c["TrialComponentName"].startswith("pipelines-")
+          ]
+          deleted = 0
+          for name in names:
+              result = subprocess.run(
+                  ["aws", "sagemaker", "delete-trial-component", "--trial-component-name", name],
+                  capture_output=True, text=True,
+              )
+              deleted += result.returncode == 0
+          print(f"trial components: deleted {deleted} of {len(names)}")
+          CLEANUP
+
       - name: destroy the layers, in reverse dependency order
         env:
           # Required by the variable, unused by a destroy. Supplied so that `terraform destroy`

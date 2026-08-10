@@ -108,8 +108,14 @@ resource "aws_iam_role" "feature_store" {
 
 data "aws_iam_policy_document" "feature_store" {
   statement {
-    effect  = "Allow"
-    actions = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
+    effect = "Allow"
+    # `GetBucketAcl` is not decoration. Feature Store validates the offline-store S3 URI at
+    # CreateFeatureGroup time by calling it, so without this the create fails with "Invalid
+    # S3Uri provided" — a message about the URI, caused by a missing permission on the bucket.
+    actions = [
+      "s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:ListBucket",
+      "s3:GetBucketLocation", "s3:GetBucketAcl",
+    ]
     resources = [
       data.aws_s3_bucket.lakehouse.arn,
       "${data.aws_s3_bucket.lakehouse.arn}/feature-store/*",

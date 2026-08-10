@@ -27,7 +27,10 @@ data "aws_iam_policy_document" "registry_no_self_approval" {
     resources = [
       aws_sagemaker_model_package_group.curtailment_forecast.arn,
       aws_sagemaker_model_package_group.meter_anomaly.arn,
-      "arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:model-package/${var.project}-*",
+      # `<group>/<version>`, not a bare prefix. A model package ARN's relative id always
+      # carries both parts, and SageMaker rejects the policy outright — "Invalid Policy: The
+      # relative-id" — for one that names only the group.
+      "arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:model-package/${var.project}-*/*",
     ]
     principals {
       type        = "AWS"

@@ -283,9 +283,14 @@ def build_process_function(operator: MeterWindowOperator):
                 yield json.dumps(
                     {
                         "kind": "quarantine",
-                        "reason": quarantined.reason,
+                        # `.value`, because `Reason` is an enum and `json.dumps` refuses it —
+                        # "Object of type Reason is not JSON serializable" crash-looped the job
+                        # one line short of working. `default=str` below is the belt to that
+                        # brace: a line of evidence must never be the thing that stops the run.
+                        "reason": quarantined.reason.value,
                         "detail": quarantined.detail,
-                    }
+                    },
+                    default=str,
                 )
 
     return _MeterWindowFunction()

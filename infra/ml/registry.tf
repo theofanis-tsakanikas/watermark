@@ -157,6 +157,38 @@ resource "aws_iam_role_policy" "training" {
   policy = data.aws_iam_policy_document.training.json
 }
 
+# A job that runs inside the VPC attaches its own network interface, using the *execution*
+# role's credentials — so a training role without EC2 networking cannot start at all, and the
+# error names ec2 while everything about the configuration looks like SageMaker. This is the
+# documented set for VPC-attached training and processing jobs; the Describe calls have no
+# resource form, which is why they sit on `*`.
+resource "aws_iam_role_policy" "training_vpc" {
+  #checkov:skip=CKV_AWS_290:ec2:Describe* and CreateNetworkInterface have no resource form; AWS requires "*". The interface is created into subnets this project owns, and the role is assumable only by SageMaker.
+  #checkov:skip=CKV_AWS_355:As above.
+  name = "attach-to-the-vpc"
+  role = aws_iam_role.training.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "AttachToTheVpc"
+      Effect = "Allow"
+      Action = [
+        "ec2:CreateNetworkInterface",
+        "ec2:CreateNetworkInterfacePermission",
+        "ec2:DeleteNetworkInterface",
+        "ec2:DeleteNetworkInterfacePermission",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeDhcpOptions",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+      ]
+      Resource = "*"
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "pipeline" {
   name = "orchestrate-training"
   role = aws_iam_role.pipeline.id

@@ -57,9 +57,20 @@ def normalise(envelope: Envelope, policy: NormalisationPolicy) -> MeterReading |
     a clock, and an adapter that read one would make the job's output depend on when it was
     replayed rather than on what it was replaying.
     """
-    return normalise_meter_reading(
-        envelope.raw, Instant(envelope.ingest_millis), Source(envelope.source), policy
-    )
+    # An unrecognised source is quarantined, not raised. `Source(...)` refuses anything outside
+    # the core's vocabulary — correctly — but a transport that labels a record wrongly is a bad
+    # record, and one bad record must not restart the job. The first live run raised
+    # `ValueError: 'iot' is not a valid Source` here and crash-looped the application.
+    try:
+        source = Source(envelope.source)
+    except ValueError:
+        return Quarantined(
+            reason="unknown_source",
+            detail=f"{envelope.source!r} is not a source this system knows",
+            payload=envelope.raw,
+        )
+
+    return normalise_meter_reading(envelope.raw, Instant(envelope.ingest_millis), source, policy)
 
 
 @dataclass

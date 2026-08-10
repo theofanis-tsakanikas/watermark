@@ -67,12 +67,17 @@ resource "aws_iot_topic_rule" "meter_readings" {
   # rule and `streaming/job.py`, and a contract stated in one place only is one the other side
   # has to infer.
   #
+  # `'stream'`, not `'iot'`: the value is a `watermark.core.records.Source`, whose members are
+  # `stream` and `batch` — the distinction the core cares about is live arrival versus the
+  # three-day-late head-end file, not which AWS service carried it. The first live run raised
+  # `ValueError: 'iot' is not a valid Source` inside the core, which was right to refuse it.
+  #
   # `encode(*, 'base64')` because the payload is arbitrary device JSON and nesting it inside
   # another JSON document would mean escaping it; base64 travels through both intact, and
   # `normalise` in the core is what reads it. `topic(3)` is the thing name from
   # `<project>/meter/<thing>/reading` — the device's own, which the IoT policy already forces it
   # to publish under, so it cannot claim to be another meter.
-  sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'iot' AS source FROM '${var.project}/meter/+/reading'"
+  sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'stream' AS source FROM '${var.project}/meter/+/reading'"
   sql_version = "2016-03-23"
 
   kinesis {

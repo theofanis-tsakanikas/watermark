@@ -224,6 +224,9 @@ data "aws_iam_policy_document" "deploy_layers" {
       # this file: a create grant without the read grant that follows it, which fails *after*
       # the resource exists and reads like a permissions problem with the thing just built.
       "cloudwatch:ListTagsForResource", "cloudwatch:TagResource", "cloudwatch:UntagResource",
+      # Reading metrics back is the capture's whole point: the evidence of a run is the metric
+      # series, not the fact that the workflow exited zero. Create-without-read, a fourth time.
+      "cloudwatch:GetMetricStatistics", "cloudwatch:GetMetricData", "cloudwatch:ListMetrics",
     ]
     resources = ["*"]
   }

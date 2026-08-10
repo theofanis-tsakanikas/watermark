@@ -10,10 +10,10 @@ resource "aws_glue_catalog_database" "bronze" {
   name        = "${var.project}_bronze"
   description = "Raw normalised records as they arrived, before any window closed"
 
-  target_database {
-    catalog_id    = data.aws_caller_identity.current.account_id
-    database_name = "${var.project}_bronze"
-  }
+  # No `target_database`. It used to point at this database's own name, which makes it a
+  # *resource link to itself* — a Lake Formation construct for sharing a database across
+  # accounts, not a way to describe one. Glue rejects it outright: "Description and resource
+  # link cannot exist together in a database!"
 }
 
 resource "aws_glue_catalog_database" "silver" {

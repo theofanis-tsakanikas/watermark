@@ -265,6 +265,11 @@ resource "aws_iam_role_policy" "pipeline" {
           "sagemaker:DescribeProcessingJob",
           "sagemaker:CreateModelPackage",
           "sagemaker:DescribeModelPackage",
+          # The Register step creates the group if it is absent, and asks for the permission
+          # whether or not it is — so a role that may only register into an existing group
+          # cannot register at all. `Describe` is the read that follows, as everywhere else.
+          "sagemaker:CreateModelPackageGroup",
+          "sagemaker:DescribeModelPackageGroup",
           "sagemaker:StopProcessingJob",
           "sagemaker:StopTrainingJob",
           # SageMaker tags every job it creates on the caller's behalf, so a role that can

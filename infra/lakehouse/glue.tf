@@ -410,9 +410,13 @@ resource "aws_glue_catalog_table" "training_snapshot" {
 resource "aws_s3_object" "maintenance_job" {
   for_each = toset(["compaction", "expire_snapshots", "delete_orphan_files"])
 
-  bucket     = data.aws_s3_bucket.lakehouse.id
-  key        = "jobs/${each.key}.py"
-  source     = "${path.module}/../../pipelines/jobs/${each.key}.py"
-  etag       = filemd5("${path.module}/../../pipelines/jobs/${each.key}.py")
-  kms_key_id = data.aws_kms_key.data.arn
+  bucket = data.aws_s3_bucket.lakehouse.id
+  key    = "jobs/${each.key}.py"
+  source = "${path.module}/../../pipelines/jobs/${each.key}.py"
+  # `source_hash`, not `etag`: with SSE-KMS the ETag is not the content MD5 and the provider
+  # refuses the pair. Same defect as `infra/streaming/flink.tf` had, found by reading rather
+  # than by a second failed apply. `filemd5` is safe here — these files are committed, not
+  # build output, so validate can always read them.
+  source_hash = filemd5("${path.module}/../../pipelines/jobs/${each.key}.py")
+  kms_key_id  = data.aws_kms_key.data.arn
 }

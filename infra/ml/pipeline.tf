@@ -100,7 +100,14 @@ resource "aws_s3_object" "code" {
   bucket = data.aws_s3_bucket.lakehouse.id
   key    = "pipelines/${var.project}/code/code.zip"
   source = data.archive_file.code.output_path
-  etag   = data.archive_file.code.output_md5
+
+  # `source_hash`, not `etag`. With SSE-KMS the object's ETag is not the MD5 of the content, so
+  # the provider refuses the pair outright — "Conflicting configuration arguments". `source_hash`
+  # is the attribute that exists for exactly this case: it tracks the content without claiming
+  # to be the server's ETag. Dropping the attribute entirely would have been the quiet mistake:
+  # Terraform would then compare only the file *path*, and a rebuilt archive at the same path
+  # would never be uploaded.
+  source_hash = data.archive_file.code.output_md5
 
   kms_key_id             = data.aws_kms_key.data.arn
   server_side_encryption = "aws:kms"

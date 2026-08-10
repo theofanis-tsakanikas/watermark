@@ -130,7 +130,8 @@ package-ml: ## Build the wheel the SageMaker processing steps install before run
 	w=csv.writer(open('infra/ml/.package/population.csv','w',newline='')); \
 	w.writerow(['entity_id','deprivation_decile','score','confirmed']); \
 	[w.writerow([i.meter_id,i.deprivation_decile,i.score,int(i.confirmed)]) for i in labels()]"
-	@echo "packaged $$(ls infra/ml/.package/*.whl) + population.csv"
+	cp pipelines/steps/*.sh infra/ml/.package/
+	@echo "packaged $$(ls infra/ml/.package/*.whl) + population.csv + step scripts"
 
 package: connector ## Vendor the package into infra/streaming/.package so terraform can zip it
 	rm -rf infra/streaming/.package

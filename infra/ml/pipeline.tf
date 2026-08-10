@@ -66,14 +66,6 @@ locals {
   # `pip install --no-deps` because the two modules that run here import nothing but the
   # standard library and this package. Pulling pydantic into a processing container would be
   # installing a dependency to satisfy an import that is not made.
-  # Unpack, install, then run. `pip install --no-deps` because the two modules that run here
-  # import nothing but the standard library and this package — pulling pydantic into a
-  # processing container would be installing a dependency to satisfy an import nobody makes.
-  unpack_then = join(" && ", [
-    "python3 -c \"import zipfile;zipfile.ZipFile('/opt/ml/processing/input/code/code.zip').extractall('/tmp/code')\"",
-    "pip install --no-deps --quiet /tmp/code/*.whl",
-    "",
-  ])
 
   # Small on purpose, and short-lived. Every step is a batch job over a synthetic day; the
   # instance exists for minutes and the pipeline is not left standing between runs.
@@ -154,10 +146,7 @@ resource "aws_sagemaker_pipeline" "training" {
           }
           AppSpecification = {
             ImageUri            = local.clarify_image
-            ContainerEntrypoint = ["bash", "-c"]
-            ContainerArguments = [
-              "${local.unpack_then}python3 -m watermark.models.snapshot --snapshot \"$SNAPSHOT_ID\" --as-of \"$AS_OF\" --source /tmp/code/population.csv"
-            ]
+            ContainerEntrypoint = ["bash", "/opt/ml/processing/input/code/snapshot.sh"]
           }
           Environment = {
             SNAPSHOT_ID = { Get = "Parameters.SnapshotId" }
@@ -309,10 +298,7 @@ resource "aws_sagemaker_pipeline" "training" {
           }
           AppSpecification = {
             ImageUri            = local.clarify_image
-            ContainerEntrypoint = ["bash", "-c"]
-            ContainerArguments = [
-              "${local.unpack_then}python3 -m watermark.models.examine --threshold \"$THRESHOLD\""
-            ]
+            ContainerEntrypoint = ["bash", "/opt/ml/processing/input/code/examine.sh"]
           }
           # No default. `examine` refuses to run without it, because a threshold of zero flags
           # every meter and produces an analysis that is internally consistent and about nothing.

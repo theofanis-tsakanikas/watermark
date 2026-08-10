@@ -19,30 +19,35 @@ resource "aws_sagemaker_model_package_group" "meter_anomaly" {
 }
 
 # The pipeline may register a model version. It may not approve one.
+#
+# One document per group, keyed by group. A resource policy attached to one group named *both*
+# group ARNs and a `model-package/watermark-*` wildcard, and SageMaker refused it: "Invalid
+# Policy: The relative-id". A resource-based policy governs the resource it is attached to, and
+# naming a sibling in it is not a wider grant — it is an invalid one.
 data "aws_iam_policy_document" "registry_no_self_approval" {
+  for_each = {
+    curtailment_forecast = aws_sagemaker_model_package_group.curtailment_forecast.arn
+    meter_anomaly        = aws_sagemaker_model_package_group.meter_anomaly.arn
+  }
+
   statement {
-    sid     = "TheGroupIsReadableAndWritable"
-    effect  = "Allow"
-    actions = ["sagemaker:CreateModelPackage", "sagemaker:DescribeModelPackage", "sagemaker:ListModelPackages"]
-    resources = [
-      aws_sagemaker_model_package_group.curtailment_forecast.arn,
-      aws_sagemaker_model_package_group.meter_anomaly.arn,
-      # `<group>/<version>`, not a bare prefix. A model package ARN's relative id always
-      # carries both parts, and SageMaker rejects the policy outright — "Invalid Policy: The
-      # relative-id" — for one that names only the group.
-      "arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:model-package/${var.project}-*/*",
-    ]
+    sid       = "TheGroupIsReadableAndWritable"
+    effect    = "Allow"
+    actions   = ["sagemaker:CreateModelPackage", "sagemaker:DescribeModelPackage", "sagemaker:ListModelPackages"]
+    resources = [each.value]
     principals {
       type        = "AWS"
       identifiers = [aws_iam_role.pipeline.arn]
     }
   }
 
+  # Doctrine 5, as the estate's half of what `promotion.py` enforces offline. The pipeline that
+  # produced the candidate cannot be the identity that approves it.
   statement {
     sid       = "NothingApprovesItself"
     effect    = "Deny"
     actions   = ["sagemaker:UpdateModelPackage"]
-    resources = ["arn:aws:sagemaker:${var.aws_region}:${data.aws_caller_identity.current.account_id}:model-package/${var.project}-*"]
+    resources = [each.value]
     principals {
       type = "AWS"
       identifiers = [
@@ -55,12 +60,12 @@ data "aws_iam_policy_document" "registry_no_self_approval" {
 
 resource "aws_sagemaker_model_package_group_policy" "curtailment_forecast" {
   model_package_group_name = aws_sagemaker_model_package_group.curtailment_forecast.model_package_group_name
-  resource_policy          = data.aws_iam_policy_document.registry_no_self_approval.json
+  resource_policy          = data.aws_iam_policy_document.registry_no_self_approval["curtailment_forecast"].json
 }
 
 resource "aws_sagemaker_model_package_group_policy" "meter_anomaly" {
   model_package_group_name = aws_sagemaker_model_package_group.meter_anomaly.model_package_group_name
-  resource_policy          = data.aws_iam_policy_document.registry_no_self_approval.json
+  resource_policy          = data.aws_iam_policy_document.registry_no_self_approval["meter_anomaly"].json
 }
 
 resource "aws_iam_role" "pipeline" {

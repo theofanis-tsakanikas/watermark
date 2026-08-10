@@ -27,25 +27,85 @@
 # pipeline role for `sagemaker:UpdateModelPackage`. A pipeline that could promote is a pipeline
 # whose approver is decoration.
 
-locals {
-  # One image for every step. Pinned by tag here and by digest in the pipeline's execution
-  # record: two runs of the same pipeline definition against a moved tag are two different
-  # experiments, and only the execution record can tell you which one you are looking at.
-  training_image = "683313688378.dkr.ecr.${var.aws_region}.amazonaws.com/sagemaker-xgboost:1.7-1"
+# Resolved, not transcribed — for the same reason as everything bootstrap publishes.
+#
+# The account that owns a SageMaker algorithm image is *different in every region*, and the
+# first version of this file hardcoded three of them from memory. That is a value which passes
+# `terraform validate` (it is a well-formed string), passes `plan` (nothing checks it), and
+# fails at the moment a training job tries to pull — after the cluster is running and paid for.
+# The provider knows the table; asking it is one line and cannot be wrong by a digit.
+data "aws_sagemaker_prebuilt_ecr_image" "xgboost" {
+  repository_name = "sagemaker-xgboost"
+  image_tag       = "1.7-1"
+}
 
-  # Clarify ships as its own image, per region. Named rather than looked up, because a data
-  # source that resolves to "whatever is current" reintroduces exactly the drift the digest in
-  # the execution record exists to pin down.
-  clarify_image = "048994720340.dkr.ecr.${var.aws_region}.amazonaws.com/sagemaker-clarify-processing:1.0"
+data "aws_sagemaker_prebuilt_ecr_image" "clarify" {
+  repository_name = "sagemaker-clarify-processing"
+  image_tag       = "1.0"
+}
+
+data "aws_sagemaker_prebuilt_ecr_image" "monitor" {
+  repository_name = "sagemaker-model-monitor-analyzer"
+  image_tag       = "latest"
+}
+
+locals {
+  training_image = data.aws_sagemaker_prebuilt_ecr_image.xgboost.registry_path
+  clarify_image  = data.aws_sagemaker_prebuilt_ecr_image.clarify.registry_path
 
   pipeline_root = "s3://${data.aws_s3_bucket.lakehouse.id}/pipelines/${var.project}"
 
-  # Model Monitor's own image, per region. Same reasoning as the two above: named, not resolved.
-  monitor_image = "048994720340.dkr.ecr.${var.aws_region}.amazonaws.com/sagemaker-model-monitor-analyzer:latest"
+  monitor_image = data.aws_sagemaker_prebuilt_ecr_image.monitor.registry_path
+
+  # Where `make package-ml` puts the wheel. The stock AWS images have never heard of this
+  # package, so every step that runs our code installs it first from this channel. A processing
+  # step whose entrypoint names a module the image does not contain is a step that fails after
+  # the cluster has been paid for — which is how the first draft of this file would have failed.
+  code_channel = "${local.pipeline_root}/code"
+
+  # `pip install --no-deps` because the two modules that run here import nothing but the
+  # standard library and this package. Pulling pydantic into a processing container would be
+  # installing a dependency to satisfy an import that is not made.
+  install_then = "pip install --no-deps --quiet /opt/ml/processing/input/code/*.whl && "
 
   # Small on purpose, and short-lived. Every step is a batch job over a synthetic day; the
   # instance exists for minutes and the pipeline is not left standing between runs.
   instance_type = "ml.m5.large"
+}
+
+# The wheel itself, uploaded by the same apply that defines the pipeline.
+#
+# `fileset` rather than a fixed name: the version is in the filename, so hardcoding it here
+# would be a string that has to be edited in lockstep with `pyproject.toml` and will not be.
+# An empty set means `make package-ml` was not run, and the `for_each` produces nothing — which
+# would leave the code channel empty and every step failing on a missing wheel. `preflight`
+# checks for the wheel so that failure happens on a laptop rather than in a paid cluster.
+resource "aws_s3_object" "code" {
+  for_each = fileset("${path.module}/.package", "*.whl")
+
+  bucket = data.aws_s3_bucket.lakehouse.id
+  key    = "pipelines/${var.project}/code/${each.value}"
+  source = "${path.module}/.package/${each.value}"
+  etag   = filemd5("${path.module}/.package/${each.value}")
+
+  kms_key_id             = data.aws_kms_key.data.arn
+  server_side_encryption = "aws:kms"
+}
+
+# The population the snapshot step pins.
+#
+# Uploaded rather than imported. `snapshot.py` reads a path and does not know where the rows
+# came from — an earlier version imported the synthetic generator from `data/`, which is not in
+# the wheel, so the step would have died on `ImportError` inside a paid cluster. In a real
+# estate this object is replaced by an Athena query against Iceberg and the module is unchanged.
+resource "aws_s3_object" "population" {
+  bucket = data.aws_s3_bucket.lakehouse.id
+  key    = "pipelines/${var.project}/population/population.csv"
+  source = "${path.module}/.package/population.csv"
+  etag   = filemd5("${path.module}/.package/population.csv")
+
+  kms_key_id             = data.aws_kms_key.data.arn
+  server_side_encryption = "aws:kms"
 }
 
 resource "aws_sagemaker_pipeline" "training" {
@@ -68,6 +128,8 @@ resource "aws_sagemaker_pipeline" "training" {
       { Name = "SnapshotId", Type = "String" },
       { Name = "AsOfInstant", Type = "String" },
       { Name = "InstanceType", Type = "String", DefaultValue = local.instance_type },
+      # The fitted threshold, from the training step. No default: see `examine`.
+      { Name = "Threshold", Type = "String" },
     ]
 
     Steps = [
@@ -86,14 +148,37 @@ resource "aws_sagemaker_pipeline" "training" {
             }
           }
           AppSpecification = {
-            ImageUri = local.clarify_image
-            ContainerEntrypoint = [
-              "python3", "-m", "watermark.models.snapshot",
-              "--snapshot", { Get = "Parameters.SnapshotId" },
-              "--as-of", { Get = "Parameters.AsOfInstant" },
+            ImageUri            = local.clarify_image
+            ContainerEntrypoint = ["bash", "-c"]
+            ContainerArguments = [
+              "${local.install_then}python3 -m watermark.models.snapshot --snapshot \"$SNAPSHOT_ID\" --as-of \"$AS_OF\""
             ]
           }
+          Environment = {
+            SNAPSHOT_ID = { Get = "Parameters.SnapshotId" }
+            AS_OF       = { Get = "Parameters.AsOfInstant" }
+          }
           RoleArn = aws_iam_role.training.arn
+          ProcessingInputs = [
+            {
+              InputName = "code"
+              S3Input = {
+                S3Uri       = local.code_channel
+                LocalPath   = "/opt/ml/processing/input/code"
+                S3DataType  = "S3Prefix"
+                S3InputMode = "File"
+              }
+            },
+            {
+              InputName = "population"
+              S3Input = {
+                S3Uri       = "${local.pipeline_root}/population"
+                LocalPath   = "/opt/ml/processing/input/population"
+                S3DataType  = "S3Prefix"
+                S3InputMode = "File"
+              }
+            },
+          ]
           ProcessingOutputConfig = {
             KmsKeyId = data.aws_kms_key.data.arn
             Outputs = [{
@@ -228,15 +313,46 @@ resource "aws_sagemaker_pipeline" "training" {
           }
           AppSpecification = {
             ImageUri            = local.clarify_image
-            ContainerEntrypoint = ["python3", "-m", "watermark.models.examine"]
+            ContainerEntrypoint = ["bash", "-c"]
+            ContainerArguments = [
+              "${local.install_then}python3 -m watermark.models.examine --threshold \"$THRESHOLD\""
+            ]
           }
-          RoleArn = aws_iam_role.training.arn
+          # No default. `examine` refuses to run without it, because a threshold of zero flags
+          # every meter and produces an analysis that is internally consistent and about nothing.
+          Environment = { THRESHOLD = { Get = "Parameters.Threshold" } }
+          RoleArn     = aws_iam_role.training.arn
+          ProcessingInputs = [
+            {
+              InputName = "code"
+              S3Input = {
+                S3Uri       = local.code_channel
+                LocalPath   = "/opt/ml/processing/input/code"
+                S3DataType  = "S3Prefix"
+                S3InputMode = "File"
+              }
+            },
+            {
+              InputName = "dataset"
+              S3Input = {
+                S3Uri       = "${local.pipeline_root}/dataset"
+                LocalPath   = "/opt/ml/processing/input/dataset"
+                S3DataType  = "S3Prefix"
+                S3InputMode = "File"
+              }
+            },
+          ]
           ProcessingOutputConfig = {
             KmsKeyId = data.aws_kms_key.data.arn
+            # One output covering the whole directory, because `examine` writes three things:
+            # the bias analysis, the model card, and the **monitoring baseline**. That last one
+            # is what `monitoring.tf` reads, and before this step existed it was produced by
+            # nothing — the schedule would have run, succeeded, and reported nothing wrong for
+            # ever, because there was nothing to be different from.
             Outputs = [{
-              OutputName = "model_card"
+              OutputName = "analysis"
               S3Output = {
-                S3Uri        = "${local.pipeline_root}/model-card"
+                S3Uri        = "${local.pipeline_root}/analysis"
                 LocalPath    = "/opt/ml/processing/output"
                 S3UploadMode = "EndOfJob"
               }

@@ -9,6 +9,7 @@ SHELL := /bin/bash
 # minutes into a deploy, on `No such file or directory`.
 VENV := .venv
 PY   := $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python3)
+PYTHON := $(if $(wildcard $(VENV)/bin/python),$(VENV)/bin/python,python3)
 PIP  := $(if $(wildcard $(VENV)/bin/pip),$(VENV)/bin/pip,python3 -m pip)
 RUFF := $(if $(wildcard $(VENV)/bin/ruff),$(VENV)/bin/ruff,ruff)
 # Its own environment: checkov pins boto3 exactly, and the application's floor is higher.
@@ -114,6 +115,23 @@ flink-versions: ## The equivalence tier and the deployment run the same Flink
 	$(PY) scripts/check_flink_versions_agree.py
 
 .PHONY: package
+package-ml: ## Build the wheel the SageMaker processing steps install before running our code
+	@# The stock AWS images have never heard of this package. Every pipeline step that runs
+	@# `watermark.models.*` installs this first from the pipeline's `code` channel; a step whose
+	@# entrypoint names a module the image does not contain fails after the cluster is paid for.
+	rm -rf infra/ml/.package
+	mkdir -p infra/ml/.package
+	$(PIP) wheel --quiet --no-deps --wheel-dir infra/ml/.package .
+	@test -n "$$(ls infra/ml/.package/*.whl 2>/dev/null)" || { \
+		echo "no wheel produced in infra/ml/.package"; exit 1; }
+	@# The rows the snapshot step pins, written out rather than imported: `data/` is not in
+	@# the wheel, and a step that imports it dies on ImportError inside a paid cluster.
+	$(PYTHON) -c "import csv,sys; sys.path.insert(0,'.'); from data.labels import labels; \
+	w=csv.writer(open('infra/ml/.package/population.csv','w',newline='')); \
+	w.writerow(['entity_id','deprivation_decile','score','confirmed']); \
+	[w.writerow([i.meter_id,i.deprivation_decile,i.score,int(i.confirmed)]) for i in labels()]"
+	@echo "packaged $$(ls infra/ml/.package/*.whl) + population.csv"
+
 package: connector ## Vendor the package into infra/streaming/.package so terraform can zip it
 	rm -rf infra/streaming/.package
 	mkdir -p infra/streaming/.package

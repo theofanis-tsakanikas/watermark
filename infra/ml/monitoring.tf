@@ -81,10 +81,10 @@ resource "aws_sagemaker_data_quality_job_definition" "anomaly" {
 
   data_quality_baseline_config {
     constraints_resource {
-      s3_uri = "${local.pipeline_root}/baseline/constraints.json"
+      s3_uri = "${local.pipeline_root}/analysis/baseline/constraints.json"
     }
     statistics_resource {
-      s3_uri = "${local.pipeline_root}/baseline/statistics.json"
+      s3_uri = "${local.pipeline_root}/analysis/baseline/statistics.json"
     }
   }
 

@@ -254,6 +254,25 @@ CHECKS: list[Check] = [
     ),
     Check(
         "deployability",
+        "ml package",
+        [
+            PYTHON,
+            "-c",
+            (
+                "import pathlib,sys;"
+                "w=list(pathlib.Path('infra/ml/.package').glob('*.whl')) "
+                "if pathlib.Path('infra/ml/.package').exists() else [];"
+                "print(f'ml-package: {w[0].name}') if w else "
+                "sys.exit('no wheel in infra/ml/.package — run `make package-ml`. "
+                "Without it the pipeline\\'s code channel is empty and every step that runs our "
+                "code fails after the cluster is paid for.')"
+            ),
+        ],
+        "The wheel the SageMaker processing steps install. An empty code channel fails inside "
+        "a running cluster; this fails on a laptop.",
+    ),
+    Check(
+        "deployability",
         "model pins",
         [PYTHON, "scripts/check_model_pins_agree.py"],
         "The local fit and the pipeline fit pin the same seed, threads and tree method. "

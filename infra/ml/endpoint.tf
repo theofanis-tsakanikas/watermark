@@ -20,8 +20,15 @@ resource "aws_sagemaker_endpoint_configuration" "anomaly" {
   kms_key_arn = data.aws_kms_key.data.arn
 
   production_variants {
-    variant_name           = "primary"
-    model_name             = var.promoted_model_name
+    variant_name = "primary"
+    # The model resource this layer creates, not the bare string. Written as
+    # `var.promoted_model_name` it named a SageMaker model that nothing here creates — and
+    # because Terraform saw no reference, it was free to build the endpoint configuration
+    # before the model existed. Two failures in one line: a dangling name and a race.
+    #
+    # `promoted_model_name` still decides *which artefact* is served; it is read in
+    # `monitoring.tf`, where the model is defined.
+    model_name             = aws_sagemaker_model.anomaly[0].name
     initial_instance_count = 1
     instance_type          = "ml.m5.large"
     initial_variant_weight = 1

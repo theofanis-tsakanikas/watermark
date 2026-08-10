@@ -185,48 +185,14 @@ def build_process_function(operator: MeterWindowOperator):
     return _MeterWindowFunction()
 
 
-def build_watermark_generator(operator: MeterWindowOperator):
-    """Flink's watermark hook, delegating every judgement to the core.
-
-    It holds no threshold. Flink asks "what is the watermark now?"; `watermark.core.watermarks`
-    answers from the event times it has been shown, and this is the translation between the two
-    vocabularies. `for_generator` rather than `for_bounded_out_of_orderness` for exactly this
-    reason — the convenience constructor would hold the bound inside Flink, where no offline
-    test can read it, and `check_adapter_is_thin.py` refuses it by name.
-    """
-    from pyflink.common.watermark_strategy import (  # noqa: PLC0415
-        TimestampAssigner,
-        WatermarkStrategy,
-    )
-
-    class _FromTheRecord(TimestampAssigner):
-        """Event time comes off the record, never off the machine."""
-
-        def extract_timestamp(self, value, record_timestamp):
-            return record_timestamp
-
-    class _FromTheCore:
-        """Emits whatever `watermark.core.watermarks` says the watermark is.
-
-        It asks the operator, which has already folded every *accepted* event time in — so
-        Flink's watermark and the core's are the same number by construction rather than by two
-        implementations happening to agree. The generator holds no bound, no idleness timer and
-        no threshold of its own; that is the whole reason it exists instead of a convenience
-        constructor.
-        """
-
-        def on_event(self, event, event_timestamp, output):
-            # Nothing. Advancing here would advance on a record the skew check has not seen,
-            # which is the ordering mistake that lets one device three hours fast close every
-            # window in the grid early.
-            return
-
-        def on_periodic_emit(self, output):
-            from pyflink.common.watermark_strategy import Watermark  # noqa: PLC0415
-
-            view = operator.current_view()
-            if view is None or view.watermark is None or not view.status.may_close_windows:
-                return
-            output.emit_watermark(Watermark(view.watermark.epoch_millis))
-
-    return WatermarkStrategy.for_generator(_FromTheCore()).with_timestamp_assigner(_FromTheRecord())
+# `build_watermark_generator` used to live here and is deliberately gone.
+#
+# It returned `WatermarkStrategy.for_generator(...)`, which does not exist: Flink's own
+# documentation states that *"the Python API for Apache Flink does not support custom watermark
+# generation."* There is no way to emit a watermark from Python at all.
+#
+# Removed rather than replaced with `for_bounded_out_of_orderness`, which would have worked and
+# would have moved the one decision this project exists to own — when a window may close —
+# inside a framework where no offline test can read it. `MeterWindowOperator` below computes
+# the watermark, the lateness and the closure from the core, and Flink carries the records.
+# See the comment in `job.py` where the strategy used to be attached.

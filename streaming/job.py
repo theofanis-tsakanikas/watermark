@@ -38,7 +38,6 @@ from streaming.config import SEMANTICS, Placement
 from streaming.operators import (
     MeterWindowOperator,
     build_process_function,
-    build_watermark_generator,
 )
 from watermark.core.normalise import DEFAULT_POLICY as NORMALISATION_POLICY
 from watermark.core.watermarks import DEFAULT_POLICY as WATERMARK_POLICY
@@ -87,12 +86,30 @@ def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement
         {"aws.region": placement.region, "flink.stream.initpos": placement.initial_position},
     )
 
+    # **No watermark strategy at all**, and this is the honest resolution of a collision.
+    #
+    # The intent was `for_generator` — never `for_bounded_out_of_orderness`, because the
+    # convenience constructor holds the bound inside Flink where no offline test can read it.
+    # The first live run answered:
+    #
+    #     AttributeError: type object 'WatermarkStrategy' has no attribute 'for_generator'
+    #
+    # and Flink's own documentation is unambiguous: *"Currently, the Python API for Apache Flink
+    # does not support custom watermark generation."* There is no way to emit a watermark from
+    # Python. The choice was Flink's generator or none.
+    #
+    # It is none, and that is the stronger answer rather than a concession. This project's whole
+    # claim is that **deterministic code owns whether a window is closed** — and Flink deciding
+    # it is no better than a PyFlink constructor deciding it. `MeterWindowOperator` already
+    # computes the watermark, the lateness and the closure from `src/watermark/core`; it needs
+    # Flink for transport, keying and state, not for event-time semantics.
+    #
+    # So the operator receives records with no watermark attached and does the whole of the
+    # work. Claim 1 stays provable offline because the thing being proved never moved into the
+    # framework — which is exactly what `scripts/check_adapter_is_thin.py` exists to enforce,
+    # and why it refuses both convenience constructors by name.
     (
         environment.add_source(consumer)
-        # `for_generator`, never `for_bounded_out_of_orderness`. The convenience constructor
-        # holds the bound inside Flink, where no offline test can read it; the generator asks
-        # the operator, whose watermark *is* the core's.
-        .assign_timestamps_and_watermarks(build_watermark_generator(operator))
         .key_by(lambda record: record[1])
         .process(build_process_function(operator))
         .name("watermark-meter-windows")

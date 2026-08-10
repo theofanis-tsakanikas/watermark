@@ -62,9 +62,12 @@ resource "aws_ecr_repository" "processing" {
     scan_on_push = true
   }
 
+  # AES256, not the state key. This image holds a public Python base layer and pip — no data,
+  # no credentials, nothing this project generated. Encrypting it with a customer key from
+  # *this* layer would make every role that pulls it need a grant on a key it has no other
+  # business with: a cross-layer dependency bought for no confidentiality at all.
   encryption_configuration {
-    encryption_type = "KMS"
-    kms_key         = aws_kms_key.state.arn
+    encryption_type = "AES256"
   }
 }
 

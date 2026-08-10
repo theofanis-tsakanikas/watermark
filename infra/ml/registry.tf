@@ -167,6 +167,36 @@ resource "aws_iam_role_policy" "training" {
 # error names ec2 while everything about the configuration looks like SageMaker. This is the
 # documented set for VPC-attached training and processing jobs; the Describe calls have no
 # resource form, which is why they sit on `*`.
+# Pull the processing image. SageMaker pulls it *as the execution role*, so the role needs
+# these three by name — and the error said which, which is rarer than it should be.
+resource "aws_iam_role_policy" "training_ecr" {
+  name = "pull-the-processing-image"
+  role = aws_iam_role.training.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "PullTheProcessingImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+        ]
+        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}/processing"
+      },
+      {
+        # No resource form: it returns a token, not access to anything.
+        Sid      = "LogInToTheRegistry"
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+    ]
+  })
+}
+
 resource "aws_iam_role_policy" "training_kms" {
   #checkov:skip=CKV_AWS_111:Scoped to one key ARN, which is the constraint available here.
   name = "use-the-data-key"

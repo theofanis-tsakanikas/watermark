@@ -116,6 +116,27 @@ resource "aws_s3_object" "code" {
   server_side_encryption = "aws:kms"
 }
 
+# The step scripts, beside the archive rather than inside it.
+#
+# The entrypoint is `bash /opt/ml/processing/input/code/snapshot.sh`, and the script cannot be
+# inside `code.zip` — nothing has unzipped it yet at the moment bash is asked to run it. The
+# first attempt put them in the archive and the step died with exit code 127, "command not
+# found", which names the shell rather than the missing file.
+#
+# `filemd5` is safe here where it was not for the wheel: these are committed files, so validate
+# can always read them.
+resource "aws_s3_object" "step_script" {
+  for_each = fileset("${path.module}/../../pipelines/steps", "*.sh")
+
+  bucket      = data.aws_s3_bucket.lakehouse.id
+  key         = "pipelines/${var.project}/code/${each.value}"
+  source      = "${path.module}/../../pipelines/steps/${each.value}"
+  source_hash = filemd5("${path.module}/../../pipelines/steps/${each.value}")
+
+  kms_key_id             = data.aws_kms_key.data.arn
+  server_side_encryption = "aws:kms"
+}
+
 resource "aws_sagemaker_pipeline" "training" {
   pipeline_name         = "${var.project}-anomaly-training"
   pipeline_display_name = "${var.project}-anomaly-training"
@@ -354,7 +375,7 @@ resource "aws_sagemaker_pipeline" "training" {
   # missing wheel, inside a cluster that is already being paid for.
   lifecycle {
     precondition {
-      condition     = data.archive_file.code.output_size > 1000
+      condition     = data.archive_file.code.output_size > 1000 && length(aws_s3_object.step_script) == 2
       error_message = "run `make package-ml` before applying infra/ml: the code archive is empty or missing, so every step that runs our code would fail inside a paid cluster."
     }
   }

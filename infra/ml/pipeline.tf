@@ -50,9 +50,10 @@ data "aws_sagemaker_prebuilt_ecr_image" "xgboost" {
 # post-training metrics offline, in integers, from the same subjects — and `evals/promotion`
 # proves the finding that made the comparison worth having. The report AWS would have rendered
 # is unavailable; the arithmetic it would have done is in the repository and runs in CI.
-data "aws_sagemaker_prebuilt_ecr_image" "processing" {
-  repository_name = "sagemaker-scikit-learn"
-  image_tag       = "1.2-1"
+# Ours, built by CI and tagged with the commit that built it. `infra/bootstrap` owns the
+# repository — a build-artefact registry outlives the estate it serves.
+data "aws_ecr_repository" "processing" {
+  name = "${var.project}/processing"
 }
 
 data "aws_sagemaker_prebuilt_ecr_image" "monitor" {
@@ -62,7 +63,7 @@ data "aws_sagemaker_prebuilt_ecr_image" "monitor" {
 
 locals {
   training_image   = data.aws_sagemaker_prebuilt_ecr_image.xgboost.registry_path
-  processing_image = data.aws_sagemaker_prebuilt_ecr_image.processing.registry_path
+  processing_image = "${data.aws_ecr_repository.processing.repository_url}:${var.processing_image_tag}"
 
   pipeline_root = "s3://${data.aws_s3_bucket.lakehouse.id}/pipelines/${var.project}"
 

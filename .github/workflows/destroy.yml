@@ -103,6 +103,9 @@ jobs:
           # Same reason as `expires_at` above: `substations` has no default, and a destroy that
           # cannot evaluate the streaming configuration cannot tear it down either.
           TF_VAR_substations: ${{ env.SUBSTATIONS }}
+          # Required by the variable, irrelevant to a destroy: the configuration has to evaluate
+          # before Terraform can tear it down. Same reason as `expires_at` above.
+          TF_VAR_processing_image_tag: "unused-by-a-destroy"
         run: |
           set -euo pipefail
           ORDER="governance ml lakehouse streaming foundation"

@@ -43,3 +43,46 @@ resource "aws_ssm_parameter" "published" {
 # travel at all.
 #
 # It stays out of `terraform.tfvars` for the same reason. Pass it on the command line.
+
+# The registry for images CI builds.
+#
+# In this layer, not in `ml`, for the same reason the state bucket is: **a build-artefact
+# registry outlives the estate it serves.** The estate is stood up and torn down in bounded
+# blocks; the images it pulls are not rebuilt each time, and a registry destroyed with the
+# estate would mean every capture starts with a container build.
+#
+# `IMMUTABLE`, so a tag always means the same bytes. A mutable tag is how two runs of the same
+# pipeline definition end up being two different experiments with one name — the same failure
+# the pipeline's execution record exists to make visible.
+resource "aws_ecr_repository" "processing" {
+  name                 = "${var.project}/processing"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  encryption_configuration {
+    encryption_type = "KMS"
+    kms_key         = aws_kms_key.state.arn
+  }
+}
+
+# Old images are the cheapest thing in this account to leave lying around and the easiest to
+# forget. Ten is more than enough to roll back through.
+resource "aws_ecr_lifecycle_policy" "processing" {
+  repository = aws_ecr_repository.processing.name
+
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Keep the ten most recent images"
+      selection = {
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 10
+      }
+      action = { type = "expire" }
+    }]
+  })
+}

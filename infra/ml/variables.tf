@@ -61,3 +61,16 @@ check "an_endpoint_needs_a_promoted_model" {
     error_message = "endpoint_enabled is true and promoted_model_name is empty. An endpoint serving a model that does not exist reports healthy and answers from nothing."
   }
 }
+
+variable "processing_image_tag" {
+  description = <<-EOT
+    The tag of the processing image CI just pushed, which is the git SHA of the commit that
+    built it.
+
+    No default, deliberately. A default would be a tag that drifts from the code in this
+    checkout, and the pipeline would run last week's container against this week's wheel — two
+    runs of one definition that are two different experiments. `deploy.yml` passes the SHA it
+    built, and the repository's tags are immutable so the pair cannot come apart later.
+  EOT
+  type        = string
+}

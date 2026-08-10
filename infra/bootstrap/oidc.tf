@@ -136,6 +136,21 @@ data "aws_iam_policy_document" "state_access" {
     resources = ["arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/${var.project}/bootstrap/*"]
   }
 
+  # Push the processing image, and nothing else in ECR. `GetAuthorizationToken` has no resource
+  # form — AWS requires "*" — which is why it is a statement of its own rather than folded in.
+  statement {
+    sid       = "PushTheProcessingImage"
+    effect    = "Allow"
+    actions   = ["ecr:*"]
+    resources = [aws_ecr_repository.processing.arn]
+  }
+
+  statement {
+    sid       = "LogInToTheRegistry"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "state_access" {

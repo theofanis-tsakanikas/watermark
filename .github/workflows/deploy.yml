@@ -158,6 +158,32 @@ jobs:
           # nobody needs.
           role-duration-seconds: 3600
 
+      - name: build and push the processing image
+        # Tagged with the commit that built it, and the repository is IMMUTABLE — so a tag
+        # always means the same bytes, and the pair of (image, wheel) that a pipeline execution
+        # used can be reconstructed from its own record.
+        #
+        # Skipped when the tag already exists. The image changes only when its Dockerfile does,
+        # which is rarely; rebuilding an identical image on every deploy would be a minute of
+        # runner time and a registry of near-identical layers, and `IMMUTABLE` refuses the push
+        # anyway.
+        run: |
+          set -euo pipefail
+          registry="${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com"
+          repository="watermark/processing"
+          tag="${{ github.sha }}"
+          echo "PROCESSING_IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+
+          if aws ecr describe-images --repository-name "$repository" --image-ids imageTag="$tag" >/dev/null 2>&1; then
+            echo "$repository:$tag already pushed"
+            exit 0
+          fi
+
+          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
+            | docker login --username AWS --password-stdin "$registry"
+          docker build -t "$registry/$repository:$tag" containers/processing
+          docker push "$registry/$repository:$tag"
+
       - name: resolve what bootstrap published
         # Everything below is a consequence of a name `infra/bootstrap` already chose, so it is
         # read from that layer rather than copied into repository configuration. A copied value
@@ -195,6 +221,7 @@ jobs:
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
           TF_VAR_github_owner: ${{ github.repository_owner }}
           TF_VAR_substations: ${{ env.SUBSTATIONS }}
+          TF_VAR_processing_image_tag: ${{ env.PROCESSING_IMAGE_TAG }}
         run: |
           set -euo pipefail
           ORDER="foundation streaming lakehouse ml governance"

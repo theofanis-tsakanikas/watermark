@@ -47,31 +47,30 @@ failure, not a misconfiguration.
 *Has an API (`gh api`), and is recorded here because forgetting it produces an
 `AssumeRoleWithWebIdentity` denial that reads like a broken trust policy.*
 
-### There is no required reviewer, and this is what that costs
+### The required reviewer, and how it came to exist
 
-The design calls for one on each environment. **This repository does not have one**, and the
-reason is not an oversight: GitHub refuses the protection rule on a private repository under
-this billing plan. The API is explicit —
+Both environments carry one. It was not always so, and the history is worth keeping because it
+is a lesson about where controls actually live.
+
+While the repository was **private under a free plan**, GitHub refused the protection rule:
 
 ```
 422  Failed to create the environment protection rule.
      Please ensure the billing plan supports the required reviewers protection rule.
 ```
 
-— and then **creates the environment anyway, with no rules on it**. That is the failure worth
-writing down: the request fails, the environment appears, the OIDC subject starts matching, and
-the human gate is gone while every page still looks configured. It was found by trying it, not
-by reading about it.
+— and then **created the environment anyway, with no rules on it**. That is the failure worth
+remembering: the request fails, the environment appears, the OIDC subject starts matching, and
+the human gate is gone while every page still looks configured. It was found by trying it. For
+as long as it lasted, this file said plainly that doctrine 5 did not hold for a deploy.
 
-So, plainly: **doctrine rule 5, "nothing approves itself", does not currently hold for a
-deploy.** Whoever dispatches the workflow is the only human in the path, and they approve their
-own dispatch. What still stands between a dispatch and an apply is the confirmation word, the
-seven-day expiry bound, a full CI run against that exact ref, and the printed plan.
+Publishing the repository fixed it, because environment protection rules are free on public
+repositories. **Doctrine 5 — nothing approves itself — now holds in the estate as well as in
+`promotion.py`.** A dispatch of `deploy` or `destroy` waits for a named human before the job
+that assumes the role will start.
 
-Two things restore it, and both are decisions rather than work: making the repository public,
-where environment protection rules are free, or a paid plan. The intention is the first, once
-the estate has been proved private. Until then this paragraph is the control — the honest kind,
-which is a limitation somebody wrote down rather than a rule nobody checked.
+What still stands in the path besides the reviewer: the confirmation word, the seven-day bound
+on `expires_at`, a full CI run against that exact ref, and the printed plan.
 
 ## 4 · Two repository variables — and only ever two
 

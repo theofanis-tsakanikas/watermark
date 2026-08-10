@@ -163,6 +163,7 @@ resource "aws_iam_role_policy" "training" {
 # documented set for VPC-attached training and processing jobs; the Describe calls have no
 # resource form, which is why they sit on `*`.
 resource "aws_iam_role_policy" "training_vpc" {
+  #checkov:skip=CKV_AWS_289:`CreateNetworkInterfacePermission` is read as permissions management. It grants an ENI to a SageMaker-owned account so the job can use it, which is what a VPC-attached job is; the action has no resource form and AWS requires "*".
   #checkov:skip=CKV_AWS_290:ec2:Describe* and CreateNetworkInterface have no resource form; AWS requires "*". The interface is created into subnets this project owns, and the role is assumable only by SageMaker.
   #checkov:skip=CKV_AWS_355:As above.
   name = "attach-to-the-vpc"

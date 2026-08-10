@@ -61,6 +61,16 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `data.cast` imports the core to describe the generated day, so the package has to be
+      # installed before the substations can be read. It was not, and the teardown died on
+      # `No module named 'watermark'` — the same omission capture.yml had, in the one workflow
+      # that matters most when something is already wrong.
+      - run: pip install -e "."
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.15.5

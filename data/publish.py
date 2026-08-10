@@ -16,7 +16,7 @@ import argparse
 import sys
 from dataclasses import dataclass
 
-from data.cast import DAY_START, SUBSTATIONS
+from data.cast import SUBSTATIONS
 from data.generate import generate
 from watermark.core.records import Source
 from watermark.core.time import Duration
@@ -46,8 +46,20 @@ class Plan:
 def plan(minutes: int) -> Plan:
     deliveries = generate()
     window = Duration.of_minutes(minutes)
-    day = Duration.of_days(1)
-    compression = max(1, day.millis // window.millis)
+
+    # The span the deliveries actually cover, not an assumed day.
+    #
+    # A day was the obvious number and it was wrong: the head-end's file is **three days late**,
+    # so the generated set spans four days, and compressing it as one put every one of its 288
+    # corrections at minute eighty of a twenty-minute window. The publisher stopped at twenty,
+    # the corrections were never sent, and **no restatement was ever produced in a live run** —
+    # the edge case carrying doctrine 4, silently absent because of an arithmetic assumption.
+    #
+    # `max(...) - min(...)` over the real ingest times cannot make that mistake again, and it is
+    # correct whatever the generator's shape becomes.
+    arrivals = [delivery.ingest_time.epoch_millis for delivery in deliveries]
+    span = max(max(arrivals) - min(arrivals), 1)
+    compression = max(1, span // window.millis)
 
     # The burst, not the average. Most meters upload within the first three minutes after each
     # interval boundary, so the peak is what the stream has to carry.
@@ -82,14 +94,20 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
 
     client = boto3.client("iot-data")
     described = plan(minutes)
+    deliveries = generate()
+
+    # Paced from the first arrival, not from midnight. `DAY_START` is a fixed instant and the
+    # generated set does not begin on it, so every offset carried a constant shift — enough to
+    # put the last corrections a fraction past the end of the window and drop them.
+    origin = min(delivery.ingest_time.epoch_millis for delivery in deliveries)
+
     started = time.monotonic()
     published = 0
 
-    for delivery in generate():
-        # Where this delivery sits in the day, compressed into the capture window. Sleeping
+    for delivery in deliveries:
+        # Where this delivery sits in the run, compressed into the capture window. Sleeping
         # until then is what reproduces the burst shape rather than the daily average.
-        offset = delivery.ingest_time.since(DAY_START)
-        due = offset.millis / 1000 / described.compression
+        due = (delivery.ingest_time.epoch_millis - origin) / 1000 / described.compression
         behind = due - (time.monotonic() - started)
         if behind > 0:
             time.sleep(behind)

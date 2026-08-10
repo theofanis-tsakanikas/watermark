@@ -55,6 +55,7 @@ resource "aws_ssm_parameter" "published" {
 # pipeline definition end up being two different experiments with one name — the same failure
 # the pipeline's execution record exists to make visible.
 resource "aws_ecr_repository" "processing" {
+  #checkov:skip=CKV_AWS_136:AES256 rather than a customer key, deliberately. This repository holds a public Python base layer and pip — no data, no credentials, nothing this project generated. A customer key would make every role that pulls the image need a grant on a key from another layer, which is a cross-layer dependency bought for no confidentiality. The reason is in the comment on `encryption_configuration` below.
   name                 = "${var.project}/processing"
   image_tag_mutability = "IMMUTABLE"
 

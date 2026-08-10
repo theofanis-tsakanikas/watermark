@@ -30,6 +30,11 @@ ENDPOINT_NAMES = {
     "sagemaker": "sagemaker.api",
     "states": "states",
     "cloudwatch": "monitoring",
+    # ECR is two endpoints and one IAM prefix. `ecr.api` serves the control plane — the
+    # authorisation token, the manifest — and `ecr.dkr` serves the layers themselves. A policy
+    # granting `ecr:` needs both, and naming only the first here would let a build reach the
+    # manifest and hang pulling the layer, which is the failure shape this check exists for.
+    "ecr": "ecr.api",
     "xray": "xray",
 }
 

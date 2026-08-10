@@ -121,14 +121,31 @@ resource "aws_s3_bucket_lifecycle_configuration" "access_logs" {
   }
 }
 
+# Keyed on a name this file already knows, not on an ARN the API has yet to return.
+#
+# `for_each = toset([aws_s3_bucket.lakehouse.arn, ...])` reads naturally and cannot plan: an
+# ARN is known only after apply, and Terraform has to know every `for_each` key before it can
+# draw the graph. Nothing offline catches this — `terraform validate` checks that attributes
+# exist, and the first plan against a real account is where it appears. It appeared on the
+# first one this project ever ran.
+#
+# The keys are the *logical* names; the ARN is reconstructed inside the body, where an
+# unknown value is fine.
+locals {
+  bucket_arns = {
+    lakehouse   = aws_s3_bucket.lakehouse.arn
+    access_logs = aws_s3_bucket.access_logs.arn
+  }
+}
+
 data "aws_iam_policy_document" "deny_plaintext" {
-  for_each = toset([aws_s3_bucket.lakehouse.arn, aws_s3_bucket.access_logs.arn])
+  for_each = toset(["lakehouse", "access_logs"])
 
   statement {
     sid       = "DenyUnencryptedTransport"
     effect    = "Deny"
     actions   = ["s3:*"]
-    resources = [each.key, "${each.key}/*"]
+    resources = [local.bucket_arns[each.key], "${local.bucket_arns[each.key]}/*"]
     principals {
       type        = "*"
       identifiers = ["*"]
@@ -143,10 +160,10 @@ data "aws_iam_policy_document" "deny_plaintext" {
 
 resource "aws_s3_bucket_policy" "lakehouse" {
   bucket = aws_s3_bucket.lakehouse.id
-  policy = data.aws_iam_policy_document.deny_plaintext[aws_s3_bucket.lakehouse.arn].json
+  policy = data.aws_iam_policy_document.deny_plaintext["lakehouse"].json
 }
 
 resource "aws_s3_bucket_policy" "access_logs" {
   bucket = aws_s3_bucket.access_logs.id
-  policy = data.aws_iam_policy_document.deny_plaintext[aws_s3_bucket.access_logs.arn].json
+  policy = data.aws_iam_policy_document.deny_plaintext["access_logs"].json
 }

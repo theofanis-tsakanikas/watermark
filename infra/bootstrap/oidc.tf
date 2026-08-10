@@ -180,6 +180,11 @@ data "aws_iam_policy_document" "deploy_layers" {
       # names KMS but not the missing action. The same applies to any resource this layer
       # creates that is encrypted at rest with a key it also created.
       "kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:ReEncrypt*",
+      # And grants. Lambda does not hold the caller's credentials at invoke time, so
+      # `CreateFunction` with a customer key issues a *grant* to the Lambda service on the
+      # caller's behalf. `RetireGrant` and `ListGrants` are the destroy and refresh halves —
+      # without them a teardown leaves grants behind on a key it is trying to delete.
+      "kms:CreateGrant", "kms:RetireGrant", "kms:ListGrants", "kms:RevokeGrant",
       "s3:CreateBucket", "s3:DeleteBucket", "s3:Put*", "s3:Get*", "s3:List*",
       "budgets:*", "sns:*", "logs:*", "lambda:*", "events:*",
       "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:PassRole",

@@ -13,6 +13,7 @@ job that can only ever run in one account.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 
@@ -77,11 +78,41 @@ class Placement:
         )
 
 
+#: Where Managed Flink writes the property groups from `infra/streaming/flink.tf`.
+#:
+#: **Not environment variables.** Terraform passes placement in a property group and the runtime
+#: renders it to this file; nothing exports it to the process environment. Reading only
+#: `os.environ` meant the job refused to start on a correctly configured application — and the
+#: refusal was this file's own, saying the value had not been set when it had been set
+#: perfectly well, one mechanism away.
+#:
+#: The environment is still read, and second: that is how a local run and `tests_flink` supply
+#: placement without inventing a properties file.
+APPLICATION_PROPERTIES = "/etc/flink/application_properties.json"
+
+#: The group `infra/streaming/flink.tf` writes placement into.
+PROPERTY_GROUP = "watermark"
+
+
+def _from_properties() -> dict[str, str]:
+    """Managed Flink's rendering of the property group, or nothing when running elsewhere."""
+    try:
+        with open(APPLICATION_PROPERTIES, encoding="utf-8") as handle:
+            groups = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    for group in groups:
+        if group.get("PropertyGroupId") == PROPERTY_GROUP:
+            return dict(group.get("PropertyMap", {}))
+    return {}
+
+
 def _required(name: str) -> str:
-    value = os.environ.get(name, "")
+    value = _from_properties().get(name, "") or os.environ.get(name, "")
     if not value:
         raise RuntimeError(
-            f"{name} is not set. Placement comes from Terraform and is never defaulted: a job "
-            "with a guessed stream name starts, reads nothing, and reports healthy."
+            f"{name} is in neither the `{PROPERTY_GROUP}` property group nor the environment. "
+            "Placement comes from Terraform and is never defaulted: a job with a guessed stream "
+            "name starts, reads nothing, and reports healthy."
         )
     return value

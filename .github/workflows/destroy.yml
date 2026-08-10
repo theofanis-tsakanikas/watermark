@@ -113,6 +113,28 @@ jobs:
           print("SUBSTATIONS=" + json.dumps(list(SUBSTATIONS)))
           ' >> "$GITHUB_ENV"
 
+      - name: empty the model registry
+        # A model package group cannot be deleted while it holds versions — the same rule as an
+        # S3 bucket with objects, and Terraform has no `force_delete` for it. Every capture
+        # registers a candidate, so a second teardown always meets this.
+        #
+        # Deleting the *versions* is the point rather than a workaround: they are the artefacts
+        # a promotion gate argued about, and a teardown that left them behind would leave the
+        # registry claiming a lineage whose training data and pipeline no longer exist.
+        #
+        # `|| true` on the group listing only: an account with no groups is a clean teardown,
+        # not an error.
+        run: |
+          set -euo pipefail
+          for group in watermark-meter-anomaly watermark-curtailment-forecast; do
+            versions=$(aws sagemaker list-model-packages --model-package-group-name "$group" \
+              --query 'ModelPackageSummaryList[].ModelPackageArn' --output text 2>/dev/null || true)
+            for arn in $versions; do
+              echo "deleting $arn"
+              aws sagemaker delete-model-package --model-package-name "$arn"
+            done
+          done
+
       - name: destroy the layers, in reverse dependency order
         env:
           # Required by the variable, unused by a destroy. Supplied so that `terraform destroy`

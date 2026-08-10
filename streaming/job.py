@@ -13,6 +13,25 @@ machine with no JVM (ADR-0003).
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path as _Path
+
+# Managed Flink runs this file *as a script*, so Python puts `streaming/` on `sys.path` and not
+# the directory above it — and every absolute import in this package fails with
+# `ModuleNotFoundError: No module named 'streaming'`. The application then retries, fails again,
+# and Managed Flink returns it to READY: the state a stopped application is in, so the console
+# and the API report exactly what a healthy stopped application reports.
+#
+# That is how a live estate can hold 4,312 records in Kinesis and a Flink application that has
+# never read one, with nothing anywhere saying so.
+#
+# Prepending rather than appending: the archive's own copy of `watermark` and `contracts` must
+# win over anything the runtime image happens to ship.
+_ROOT = str(_Path(__file__).resolve().parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+
 from typing import TYPE_CHECKING
 
 from streaming.config import SEMANTICS, Placement

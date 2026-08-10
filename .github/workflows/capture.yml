@@ -24,6 +24,11 @@ on:
         description: "The Iceberg snapshot the training pipeline pins. No default: a run against yesterday's snapshot is a model nobody can trace."
         required: true
         type: string
+      threshold:
+        description: "The score at or above which a meter is flagged. No default: zero flags every meter and produces an analysis that is internally consistent and about nothing."
+        required: true
+        type: string
+        default: "700"
       confirm:
         description: "Type `capture` to confirm. This starts billable compute."
         required: true
@@ -83,6 +88,7 @@ jobs:
             --pipeline-parameters \
               Name=SnapshotId,Value="${{ inputs.snapshot }}" \
               Name=AsOfInstant,Value="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              Name=Threshold,Value="${{ inputs.threshold }}" \
             --query PipelineExecutionArn --output text)
           echo "PIPELINE_EXECUTION=$execution" >> "$GITHUB_ENV"
           echo "waiting on $execution"
@@ -98,16 +104,28 @@ jobs:
             sleep 30
           done
 
-      - name: start the endpoint
+      - name: start the endpoint, if there is one
         # The one resource in this estate that bills by the minute for as long as it exists.
-        # It is created by `deploy.yml` only when `endpoint_enabled` is set, and this is the
-        # step that makes it serve. Everything after this point is inside the meter.
+        #
+        # **There is deliberately none on a first capture.** The endpoint serves a model a human
+        # approved, and on the first run through this workflow no model has been registered yet,
+        # let alone approved — so `deploy.yml` was applied with `endpoint_enabled = false` and
+        # this step has nothing to start. Failing here would be the workflow refusing to run the
+        # very pipeline that produces the first candidate.
+        #
+        # So: absent is a legitimate state and is reported, not an error. Present means someone
+        # made a deliberate second deploy after approving a model, and then it is waited for.
         run: |
           set -euo pipefail
-          aws sagemaker wait endpoint-in-service --endpoint-name watermark-anomaly
-          echo "ENDPOINT_STARTED=yes" >> "$GITHUB_ENV"
-          aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
-            --query '{status:EndpointStatus,config:EndpointConfigName}' --output json
+          if aws sagemaker describe-endpoint --endpoint-name watermark-anomaly >/dev/null 2>&1; then
+            aws sagemaker wait endpoint-in-service --endpoint-name watermark-anomaly
+            echo "ENDPOINT_STARTED=yes" >> "$GITHUB_ENV"
+            aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
+              --query '{status:EndpointStatus,config:EndpointConfigName}' --output json
+          else
+            echo "ENDPOINT_STARTED=no" >> "$GITHUB_ENV"
+            echo "::notice::no endpoint — this capture exercises the pipeline, not serving. Approve a model and redeploy with endpoint_enabled=true to capture inference."
+          fi
 
       - name: drive the scenario
         run: |
@@ -154,7 +172,9 @@ jobs:
         run: |
           # Order matters, and it is by cost per minute descending. The endpoint first: if this
           # step is itself interrupted, the most expensive thing is already gone.
-          aws sagemaker delete-endpoint --endpoint-name watermark-anomaly || true
+          if [ "${ENDPOINT_STARTED:-no}" = "yes" ]; then
+            aws sagemaker delete-endpoint --endpoint-name watermark-anomaly || true
+          fi
           aws sagemaker stop-pipeline-execution \
             --pipeline-execution-arn "${PIPELINE_EXECUTION:-none}" || true
           aws kinesisanalyticsv2 stop-application --application-name watermark --force || true

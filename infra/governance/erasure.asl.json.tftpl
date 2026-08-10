@@ -58,7 +58,7 @@
               "Type": "Task",
               "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
               "Parameters": {
-                "QueryString.$": "States.Format('DELETE FROM ${project}_silver.meter_interval WHERE meter_id IN (SELECT meter_id FROM ${project}_gold.meter_assignment_scd2 WHERE customer_id = ''{}'')', $.subject_id)",
+                "QueryString.$": "States.Format('DELETE FROM ${project}_silver.meter_interval WHERE meter_id IN (SELECT meter_id FROM ${project}_gold.meter_assignment_scd2 WHERE customer_id = \\'{}\\')', $.subject_id)",
                 "WorkGroup": "${project}"
               },
               "ResultPath": "$.delete",
@@ -126,7 +126,7 @@
               "Type": "Task",
               "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
               "Parameters": {
-                "QueryString.$": "States.Format('DELETE FROM ${project}_gold.training_snapshot WHERE customer_id = ''{}''', $.subject_id)",
+                "QueryString.$": "States.Format('DELETE FROM ${project}_gold.training_snapshot WHERE customer_id = \\'{}\\'', $.subject_id)",
                 "WorkGroup": "${project}"
               },
               "ResultSelector": { "leg": "training_sets", "confirmed": true },

@@ -151,6 +151,9 @@ def build_process_function(operator: MeterWindowOperator):
 
         def __init__(self) -> None:
             self._buffer: list[Envelope] = []
+            #: Rows the transport could not decode at all. Held rather than dropped: a record
+            #: that vanishes silently is the one nobody can account for afterwards.
+            self._undecodable: list[tuple[str | None, str | None]] = []
 
         def process_element(self, value, ctx):
             # Destructured by name rather than indexed. `value[2]` is a tuple position, and the
@@ -159,11 +162,22 @@ def build_process_function(operator: MeterWindowOperator):
             # the partition field — where it would key every record onto one shard.
             raw, partition, source = value
 
-            # Base64, because the IoT rule wraps the device payload with `encode(*, 'base64')`:
-            # arbitrary device JSON nested inside another JSON document would need escaping, and
-            # base64 survives both hops unchanged. Decoding is transport, not interpretation —
-            # what the bytes *mean* is `normalise`'s question, in the core.
-            raw = base64.b64decode(raw).decode("utf-8")
+            # **A record this adapter cannot read is data, not an exception.**
+            #
+            # `raw` arrives base64 from the IoT rule's `encode(*, 'base64')`, and it can be
+            # absent: a stream retains records for a day, so a rule whose shape changed leaves
+            # the older shape sitting in front of the job. `b64decode(None)` raised, the Python
+            # worker died, and the job restarted into the same record — a crash loop caused by
+            # one malformed message, which is the failure a quarantine exists to prevent.
+            #
+            # So it is quarantined here and the batch continues. Decoding is transport; what the
+            # bytes *mean* is still `normalise`'s question, in the core, and a record that never
+            # reaches the core cannot be quarantined by it.
+            try:
+                raw = base64.b64decode(raw).decode("utf-8")
+            except (TypeError, ValueError, UnicodeDecodeError):
+                self._undecodable.append((partition, source))
+                return
 
             # **Processing time, not `ctx.timestamp()`.** With no watermark strategy attached
             # there is no timestamp assigner, so `ctx.timestamp()` is `None` — and `None //
@@ -191,6 +205,11 @@ def build_process_function(operator: MeterWindowOperator):
 
         def on_timer(self, timestamp, ctx):
             batch, self._buffer = self._buffer, []
+            undecodable, self._undecodable = self._undecodable, []
+
+            for partition, source in undecodable:
+                yield ("quarantine", f"undecodable_transport|{partition}|{source}")
+
             if not batch:
                 return
             emission, refused, _ = operator.process(batch, Instant(timestamp))

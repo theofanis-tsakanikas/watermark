@@ -59,6 +59,13 @@ resource "aws_ecr_repository" "processing" {
   name                 = "${var.project}/processing"
   image_tag_mutability = "IMMUTABLE"
 
+  # Deletable with images in it. Normally the wrong default — it turns `terraform destroy` into
+  # a way to lose artefacts nobody can rebuild. Here every image is reproducible from
+  # `containers/processing/Dockerfile` and a commit SHA, so the thing being protected is a
+  # cache, and refusing to delete it only means a repository that cannot be changed once it
+  # holds anything.
+  force_delete = true
+
   image_scanning_configuration {
     scan_on_push = true
   }

@@ -21,7 +21,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from watermark.core.normalise import NormalisationPolicy, normalise_meter_reading
+from watermark.core.normalise import NormalisationPolicy, Reason, normalise_meter_reading
 from watermark.core.quarantine import Quarantined
 from watermark.core.records import BATCH_GRAIN, MeterReading, Source
 from watermark.core.time import Instant
@@ -65,9 +65,16 @@ def normalise(envelope: Envelope, policy: NormalisationPolicy) -> MeterReading |
     try:
         source = Source(envelope.source)
     except ValueError:
+        # `Reason.UNKNOWN_PAYLOAD_SHAPE`, not a new code and not a bare string. The core's
+        # docstring is explicit that `reason` is what gets counted and `detail` is what gets
+        # read, "so that nobody is ever tempted to encode the specifics into a new reason code"
+        # — and a string here raised `AttributeError` where the core sorts refusals by
+        # `reason.value`, which crash-looped the job. A transport that cannot say what a record
+        # is has not recognised its shape.
         return Quarantined(
-            reason="unknown_source",
-            detail=f"{envelope.source!r} is not a source this system knows",
+            reason=Reason.UNKNOWN_PAYLOAD_SHAPE,
+            detail=f"transport labelled the source {envelope.source!r}, which is not one of "
+            f"{[member.value for member in Source]}",
             payload=envelope.raw,
         )
 

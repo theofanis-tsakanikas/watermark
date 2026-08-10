@@ -146,7 +146,16 @@ resource "aws_vpc_endpoint" "interface" {
 
 # ── Flow logs ────────────────────────────────────────────────────────────────
 
+# `depends_on` the key *policy*, not just the key.
+#
+# A log group referencing `aws_kms_key.logs.arn` depends on the key, and Terraform is then free
+# to create it before `aws_kms_key_policy.logs` is attached. Until that policy exists the key
+# carries the default root-only policy, CloudWatch Logs cannot use it, and the API answers
+# "The specified KMS key does not exist or is not allowed to be used" — which reads like a
+# missing key rather than a race. The first apply this project ever ran hit it.
 resource "aws_cloudwatch_log_group" "flow_logs" {
+  depends_on = [aws_kms_key_policy.logs]
+
   name              = "/aws/vpc/${var.project}"
   retention_in_days = var.log_retention_days
   kms_key_id        = aws_kms_key.logs.arn

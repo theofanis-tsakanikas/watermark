@@ -84,7 +84,11 @@ resource "aws_iam_role_policy" "reaper" {
   policy = data.aws_iam_policy_document.reaper.json
 }
 
+# Same race as `flow_logs` in network.tf: a reference to the key is not a reference to the key
+# *policy*, and until the policy is attached the logs service cannot use it.
 resource "aws_cloudwatch_log_group" "reaper" {
+  depends_on = [aws_kms_key_policy.logs]
+
   name              = "/aws/lambda/${var.project}-reaper"
   retention_in_days = var.log_retention_days
   kms_key_id        = aws_kms_key.logs.arn
@@ -132,6 +136,8 @@ resource "aws_lambda_function" "reaper" {
 }
 
 resource "aws_sns_topic" "reaper_failures" {
+  depends_on = [aws_kms_key_policy.logs]
+
   name              = "${var.project}-reaper-failures"
   kms_master_key_id = aws_kms_key.logs.arn
 }

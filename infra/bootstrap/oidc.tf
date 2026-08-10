@@ -178,6 +178,10 @@ data "aws_iam_policy_document" "deploy_layers" {
       "budgets:*", "sns:*", "logs:*", "lambda:*", "events:*",
       "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:PassRole",
       "iam:*RolePolicy", "iam:ListRolePolicies", "iam:TagRole",
+      # Terraform reads a role back after creating it, and `iam:*RolePolicy` does not match
+      # `ListAttachedRolePolicies` — the glob ends in the singular. The first apply that
+      # reached AWS died on exactly this, after creating the role it then could not read.
+      "iam:ListAttachedRolePolicies", "iam:ListRoleTags", "iam:ListInstanceProfilesForRole",
     ]
     resources = ["*"]
   }

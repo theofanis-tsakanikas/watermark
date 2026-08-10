@@ -157,20 +157,30 @@ def build_process_function(operator: MeterWindowOperator):
             # shape and the code drift silently, and the drift would put the source string in
             # the partition field — where it would key every record onto one shard.
             raw, partition, source = value
+
+            # **Processing time, not `ctx.timestamp()`.** With no watermark strategy attached
+            # there is no timestamp assigner, so `ctx.timestamp()` is `None` — and `None //
+            # grain` killed the Python worker with no traceback anywhere, leaving a job that
+            # restarted every ten seconds while the source kept polling happily.
+            #
+            # It is also the right value rather than a substitute for one. `ingest_millis` is
+            # *when the record arrived*, which at the edge of a stream is processing time; the
+            # event time lives inside `raw` and the core reads it there. Taking arrival from a
+            # clock the framework owns and event time from the payload is the same separation
+            # the whole project rests on.
+            now = ctx.timer_service().current_processing_time()
             self._buffer.append(
-                Envelope(
-                    raw=raw,
-                    ingest_millis=ctx.timestamp(),
-                    partition=partition,
-                    source=source,
-                )
+                Envelope(raw=raw, ingest_millis=now, partition=partition, source=source)
             )
-            # The next batch boundary. The grain is `BATCH_GRAIN`, from the core, not a literal
-            # here: it bounds how late a decision can be for a reason unrelated to data, which
-            # makes it a semantic decision — and the offline runner batches on the same name, so
-            # the two cannot disagree about how much work a restart repeats.
+
+            # A **processing-time** timer for the same reason. An event-time timer fires when a
+            # watermark passes it, and this job emits no watermarks — so every timer registered
+            # here would have waited for ever. The batch boundary is a transport concern: it
+            # bounds how long a record sits in a buffer, and nothing about it is a claim on
+            # event time. The grain is `BATCH_GRAIN` from the core rather than a literal, so the
+            # offline runner and this one cannot disagree about how much work a restart repeats.
             grain = BATCH_GRAIN.millis
-            ctx.timer_service().register_event_time_timer((ctx.timestamp() // grain + 1) * grain)
+            ctx.timer_service().register_processing_time_timer((now // grain + 1) * grain)
 
         def on_timer(self, timestamp, ctx):
             batch, self._buffer = self._buffer, []

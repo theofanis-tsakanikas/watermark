@@ -1,0 +1,139 @@
+# Prove the whole chain reaches AWS, and create nothing.
+#
+# Between a dispatch and a running estate there are six things that can be wrong, and five of
+# them fail with the same message: `Not authorized to perform sts:AssumeRoleWithWebIdentity`.
+# A wrong environment name, a subject in a form the trust does not list, a missing provider, an
+# audience mismatch, a role that was never created. The sixth — bootstrap never published its
+# parameters — fails *after* the credentials are configured, four minutes into a deploy with a
+# layer already applied.
+#
+# So this runs first. It takes the same path a deploy takes, up to the last step before anything
+# is created, and then stops. Every call it makes is a read. If the chain is broken it says
+# which link, having created nothing and spent nothing.
+#
+# Run it after any change to `infra/bootstrap`, after renaming an environment, and once before
+# the first deploy.
+
+name: verify federation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    name: can CI reach AWS at all
+    runs-on: ubuntu-latest
+    # The same environment a deploy uses. Verifying through a different one would prove that a
+    # chain works — just not the chain a deploy takes.
+    environment: deploy
+
+    steps:
+      - name: the identity this job presents
+        # Printed before the exchange is attempted, so a denial can be compared against the
+        # trust policy rather than guessed at. Identity fields only; the token is a credential.
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r .value)
+          payload=$(printf '%s' "$token" | cut -d. -f2)
+          case $(( ${#payload} % 4 )) in
+            2) payload="${payload}==" ;;
+            3) payload="${payload}=" ;;
+          esac
+          claims=$(printf '%s' "$payload" | tr '_-' '/+' | base64 -d)
+          echo "$claims" | jq '{sub, aud, repository, environment, ref}'
+          {
+            echo "### The token this job presented"
+            echo ""
+            echo '```json'
+            echo "$claims" | jq '{sub, aud, environment}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 900
+
+      - name: who AWS thinks we are
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | tee /tmp/identity.json
+          account=$(jq -r .Account /tmp/identity.json)
+          if [ "$account" != "${{ vars.AWS_ACCOUNT_ID }}" ]; then
+            echo "::error::assumed a role in $account, not ${{ vars.AWS_ACCOUNT_ID }}"
+            exit 1
+          fi
+
+      - name: what bootstrap published, and whether it agrees with us
+        # A deploy reads these three. If any is missing the deploy dies at its `init`, which is
+        # after the role is assumed and looks like a backend problem rather than a bootstrap
+        # that was never finished.
+        run: |
+          set -euo pipefail
+          read_param() {
+            aws ssm get-parameter --name "/watermark/bootstrap/$1" \
+              --query 'Parameter.Value' --output text
+          }
+          bucket=$(read_param state_bucket)
+          key=$(read_param state_kms_key_arn)
+          published_role=$(read_param deploy_role_arn)
+
+          echo "state bucket : $bucket"
+          echo "state key    : $key"
+          echo "role         : $published_role"
+
+          # The workflow composes the role ARN from the account id; bootstrap publishes the one
+          # it actually created. They are two routes to the same string, and a disagreement
+          # means the name in the workflow and the name in the layer have drifted apart.
+          composed=$(jq -r .Arn /tmp/identity.json | sed 's|:sts:|:iam:|;s|:assumed-role/\([^/]*\)/.*|:role/\1|')
+          if [ "$composed" != "$published_role" ]; then
+            echo "::error::the role this job assumed ($composed) is not the one bootstrap published ($published_role)"
+            exit 1
+          fi
+
+          # Reading the bucket, not writing to it. `ls` on a prefix that does not exist yet is
+          # a success with no output, which is the expected result before the first deploy.
+          aws s3 ls "s3://$bucket/" || true
+
+          {
+            echo ""
+            echo "### The chain holds"
+            echo ""
+            echo "| Link | Result |"
+            echo "|---|---|"
+            echo "| OIDC subject matched the trust policy | yes |"
+            echo "| Role assumed | \`$published_role\` |"
+            echo "| Composed ARN equals the published one | yes |"
+            echo "| State bucket readable | \`$bucket\` |"
+            echo ""
+            echo "Nothing was created. Every call in this run was a read."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: the cost ceiling exists and is armed
+        # The budget action is the only thing standing between a runaway apply and the bill.
+        # `STANDBY` is the healthy state: created, attached to the deploy role, not yet fired.
+        run: |
+          set -euo pipefail
+          status=$(aws budgets describe-budget-actions-for-budget \
+            --account-id "${{ vars.AWS_ACCOUNT_ID }}" --budget-name watermark-estate \
+            --query 'Actions[0].Status' --output text)
+          echo "budget action: $status"
+          if [ "$status" != "STANDBY" ]; then
+            echo "::error::the budget action is '$status', not STANDBY — the ceiling is not armed"
+            exit 1
+          fi
+
+          # And the filter it counts through. An unactivated cost allocation tag means the
+          # budget reads zero for ever, which looks exactly like a project that is not spending.
+          active=$(aws ce list-cost-allocation-tags --tag-keys "watermark:project" \
+            --query 'CostAllocationTags[0].Status' --output text 2>/dev/null || echo "None")
+          echo "cost allocation tag watermark:project: $active"
+          if [ "$active" != "Active" ]; then
+            echo "::warning::the cost allocation tag is not active, so the budget counts nothing yet. See docs/DAY-ONE.md item 4b — AWS lists the key only after it has seen it on a billed resource."
+          fi

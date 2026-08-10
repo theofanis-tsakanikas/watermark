@@ -254,6 +254,13 @@ CHECKS: list[Check] = [
     ),
     Check(
         "deployability",
+        "model pins",
+        [PYTHON, "scripts/check_model_pins_agree.py"],
+        "The local fit and the pipeline fit pin the same seed, threads and tree method. "
+        "ADR-0005's practical tier is void the moment the two disagree about what the seed is.",
+    ),
+    Check(
+        "deployability",
         "terraform fmt",
         ["terraform", "fmt", "-check", "-recursive", "infra"],
         "Formatting drift makes a real diff unreadable.",

@@ -51,6 +51,14 @@ flink = [
     # equivalence tier cannot install is a tier that never runs.
     "apache-flink>=1.20",
 ]
+# Tier two of ADR-0005: the gradient-boosted forecaster, in the *practical* reproducibility
+# tier. Never a hard dependency — `make test`, every claim gate and every eval must keep running
+# on a laptop with nothing but the standard library, pydantic and pyyaml. CI installs it and
+# `tests/test_gradient_tier.py` fails rather than skips there, because a tier that silently does
+# not run is a promise nobody is checking.
+ml = [
+    "xgboost>=2.1",
+]
 dev = [
     "pytest>=8.3",
     "pytest-cov>=5.0",

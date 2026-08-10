@@ -49,12 +49,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,ml]"
       - run: ruff check src tests tests_flink scripts data evals streaming
       - run: ruff format --check src tests tests_flink scripts data evals streaming
       # Tier one of ADR-0003: pure, no JVM, under a second. Everything except the core↔Flink
       # equivalence is proved here.
+      #
+      # `WATERMARK_REQUIRE_ML` turns ADR-0005's practical tier from skippable into required.
+      # Locally, without the `ml` extra, `tests/test_gradient_tier.py` skips and says so; here
+      # the extra is installed, so a skip would mean the tier stopped being checked and nobody
+      # was told — the same shape as a gate that has quietly stopped checking.
       - run: pytest -q
+        env:
+          WATERMARK_REQUIRE_ML: "1"
 
   claims:
     name: the claim gates

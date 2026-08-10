@@ -20,6 +20,10 @@ on:
         required: true
         type: number
         default: 30
+      snapshot:
+        description: "The Iceberg snapshot the training pipeline pins. No default: a run against yesterday's snapshot is a model nobody can trace."
+        required: true
+        type: string
       confirm:
         description: "Type `capture` to confirm. This starts billable compute."
         required: true
@@ -68,6 +72,43 @@ jobs:
             --application-name watermark \
             --run-configuration '{"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'
 
+      - name: run the training pipeline and wait for it
+        # Before the endpoint, deliberately. The endpoint serves a model a *human* approved, so
+        # the pipeline that produces the candidate has to have finished — and a pipeline that
+        # fails should fail while nothing is serving and nothing is billing by the minute.
+        run: |
+          set -euo pipefail
+          execution=$(aws sagemaker start-pipeline-execution \
+            --pipeline-name watermark-anomaly-training \
+            --pipeline-parameters \
+              Name=SnapshotId,Value="${{ inputs.snapshot }}" \
+              Name=AsOfInstant,Value="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --query PipelineExecutionArn --output text)
+          echo "PIPELINE_EXECUTION=$execution" >> "$GITHUB_ENV"
+          echo "waiting on $execution"
+          for _ in $(seq 1 60); do
+            status=$(aws sagemaker describe-pipeline-execution \
+              --pipeline-execution-arn "$execution" \
+              --query PipelineExecutionStatus --output text)
+            echo "  $status"
+            case "$status" in
+              Succeeded) break ;;
+              Failed|Stopped) echo "::error::pipeline $status"; exit 1 ;;
+            esac
+            sleep 30
+          done
+
+      - name: start the endpoint
+        # The one resource in this estate that bills by the minute for as long as it exists.
+        # It is created by `deploy.yml` only when `endpoint_enabled` is set, and this is the
+        # step that makes it serve. Everything after this point is inside the meter.
+        run: |
+          set -euo pipefail
+          aws sagemaker wait endpoint-in-service --endpoint-name watermark-anomaly
+          echo "ENDPOINT_STARTED=yes" >> "$GITHUB_ENV"
+          aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
+            --query '{status:EndpointStatus,config:EndpointConfigName}' --output json
+
       - name: drive the scenario
         run: |
           echo "Publishing the generated day to IoT Core for ${{ inputs.minutes }} minutes."
@@ -85,6 +126,20 @@ jobs:
             --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --period 60 --statistics Maximum > out/capture/uptime.json
 
+          # The ML half of the evidence. The Clarify report is the artefact an auditor asks
+          # for; the monitoring execution is the only proof the schedule ever fired, and a
+          # monitoring configuration nobody has seen execute is one nobody knows is wrong.
+          aws sagemaker describe-pipeline-execution \
+            --pipeline-execution-arn "$PIPELINE_EXECUTION" > out/capture/pipeline.json || true
+          aws sagemaker list-pipeline-execution-steps \
+            --pipeline-execution-arn "$PIPELINE_EXECUTION" > out/capture/pipeline-steps.json || true
+          aws sagemaker list-monitoring-executions \
+            --monitoring-schedule-name watermark-anomaly-data-quality \
+            > out/capture/monitoring.json || true
+          aws sagemaker list-model-packages \
+            --model-package-group-name watermark-meter-anomaly \
+            > out/capture/model-packages.json || true
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -97,6 +152,28 @@ jobs:
         # rule out, and a stop step that only runs on success does not prevent it.
         if: always()
         run: |
+          # Order matters, and it is by cost per minute descending. The endpoint first: if this
+          # step is itself interrupted, the most expensive thing is already gone.
+          aws sagemaker delete-endpoint --endpoint-name watermark-anomaly || true
+          aws sagemaker stop-pipeline-execution \
+            --pipeline-execution-arn "${PIPELINE_EXECUTION:-none}" || true
           aws kinesisanalyticsv2 stop-application --application-name watermark --force || true
-          echo "### Stopped" >> "$GITHUB_STEP_SUMMARY"
-          echo "The reaper will remove whatever remains at its expiry, hourly." >> "$GITHUB_STEP_SUMMARY"
+
+          # Report what is actually gone rather than what was asked for. `|| true` above keeps
+          # one failure from skipping the rest, and the cost of that is that a failed delete is
+          # silent — so it is checked here instead.
+          remaining=$(aws sagemaker list-endpoints \
+            --name-contains watermark-anomaly --query 'Endpoints[].EndpointName' --output text)
+          {
+            echo "### Stopped"
+            echo ""
+            if [ -n "$remaining" ]; then
+              echo ":warning: **an endpoint is still there**: \`$remaining\`. It bills by the"
+              echo "minute. The reaper removes it at its expiry, hourly — but do not wait."
+            else
+              echo "The endpoint is deleted. The Flink application is stopped."
+            fi
+            echo ""
+            echo "The reaper will remove whatever remains at its expiry, hourly."
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ -z "$remaining" ]

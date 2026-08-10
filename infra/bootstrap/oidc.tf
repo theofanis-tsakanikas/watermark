@@ -267,3 +267,26 @@ resource "aws_iam_role_policy" "deploy_layers" {
   role   = aws_iam_role.deploy.id
   policy = data.aws_iam_policy_document.deploy_layers.json
 }
+
+# Lake Formation has its own permission model on top of IAM, and `lakeformation:*` in an IAM
+# policy does not reach it. Creating an LF-Tag needs the caller to be a registered **data lake
+# administrator**, which is a Lake Formation setting rather than a grant — so the governance
+# apply failed with "Insufficient Lake Formation permission(s): Required Create LF Tag on
+# Catalog" while holding every IAM action it could possibly need.
+#
+# Registering the role is a chicken-and-egg: only an existing administrator may name another.
+# That makes it bootstrap's job, which is the same argument as the deploy role itself — this
+# layer exists to give CI the standing it cannot give itself.
+#
+# `#checkov:skip` is not needed: this resource has no scanner rule. The risk it carries is real
+# and bounded the same way everything else here is — the role can only be assumed from one
+# repository and one environment.
+resource "aws_lakeformation_data_lake_settings" "administrators" {
+  admins = [
+    aws_iam_role.deploy.arn,
+    # The identity that applies this layer keeps its own administrator standing. Omitting it
+    # locks the human out of Lake Formation the moment this applies, leaving a console nobody
+    # can fix the estate from.
+    data.aws_caller_identity.current.arn,
+  ]
+}

@@ -73,12 +73,31 @@ data "aws_iam_policy_document" "registry_no_self_approval" {
 
 }
 
+# IAM propagates, and SageMaker validates the principal before it has.
+#
+# The resource policy names `watermark-pipeline`, created moments earlier in the same apply, and
+# SageMaker answered "Invalid Policy: Invalid Principal in Policy" on a fresh estate — the role
+# existed and the service could not see it yet. `depends_on` does not help: Terraform had
+# already ordered them correctly, and the gap is on AWS's side.
+#
+# Twenty seconds is the documented shape of the fix rather than a guess at a duration. It costs
+# twenty seconds on a deploy that takes minutes, and it is the difference between an apply that
+# works on a redeploy and one that works the first time somebody stands the estate up.
+resource "time_sleep" "iam_propagation" {
+  depends_on      = [aws_iam_role.pipeline, aws_iam_role.training]
+  create_duration = "20s"
+}
+
 resource "aws_sagemaker_model_package_group_policy" "curtailment_forecast" {
+  depends_on = [time_sleep.iam_propagation]
+
   model_package_group_name = aws_sagemaker_model_package_group.curtailment_forecast.model_package_group_name
   resource_policy          = data.aws_iam_policy_document.registry_no_self_approval["curtailment_forecast"].json
 }
 
 resource "aws_sagemaker_model_package_group_policy" "meter_anomaly" {
+  depends_on = [time_sleep.iam_propagation]
+
   model_package_group_name = aws_sagemaker_model_package_group.meter_anomaly.model_package_group_name
   resource_policy          = data.aws_iam_policy_document.registry_no_self_approval["meter_anomaly"].json
 }

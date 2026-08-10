@@ -17,6 +17,7 @@ a credential-free, JVM-free install.
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -147,6 +148,31 @@ class MeterWindowOperator:
         return self._previous
 
 
+def _line(kind: str, result: object, view: object) -> str:
+    """One JSON line per outcome, carrying what a reader needs to judge it.
+
+    Emitted rather than returned as an object because the sink is a log: a capture's evidence
+    has to be readable by a person and greppable by a script, and neither is true of a pickled
+    dataclass in a discarded stream.
+    """
+    return json.dumps(
+        {
+            "kind": kind,
+            "meter": getattr(result, "meter_id", None),
+            "interval_start": getattr(
+                getattr(result, "interval_start", None), "epoch_millis", None
+            ),
+            "energy_wh": str(getattr(result, "energy_wh", "")),
+            "revision": getattr(result, "revision", None),
+            "supersedes": getattr(result, "supersedes", None),
+            "restatement_cause": getattr(result, "restatement_cause", None),
+            "watermark_status": getattr(getattr(view, "status", None), "value", None),
+            "idle_partitions": list(getattr(view, "idle_partitions", ()) or ()),
+        },
+        default=str,
+    )
+
+
 def build_process_function(operator: MeterWindowOperator):
     """Wrap the operator in the PyFlink class Flink actually calls.
 
@@ -219,15 +245,41 @@ def build_process_function(operator: MeterWindowOperator):
             undecodable, self._undecodable = self._undecodable, []
 
             for partition, source in undecodable:
-                yield ("quarantine", f"undecodable_transport|{partition}|{source}")
+                yield json.dumps(
+                    {
+                        "kind": "quarantine",
+                        "reason": "undecodable_transport",
+                        "partition": partition,
+                        "source": source,
+                    }
+                )
 
             if not batch:
                 return
-            emission, refused, _ = operator.process(batch, Instant(timestamp))
-            for result in (*emission.published, *emission.restated, *emission.confirmed):
-                yield ("result", result)
+            emission, refused, view = operator.process(batch, Instant(timestamp))
+
+            # JSON strings, not tuples of dataclasses. `.process()` defaults to pickling its
+            # output, which means every worker must be able to import the core's classes to
+            # *serialise* a result — a second reason to fail that has nothing to do with the
+            # computation. A string has none of that, and it is what a sink can show a human.
+            #
+            # The watermark status travels on every line. It is the evidence claim 1 is about:
+            # a published window says which watermark let it out, so a reader can tell a closed
+            # window from one that was let through.
+            for result in emission.published:
+                yield _line("published", result, view)
+            for result in emission.restated:
+                yield _line("restated", result, view)
+            for result in emission.confirmed:
+                yield _line("confirmed", result, view)
             for quarantined in refused:
-                yield ("quarantine", quarantined)
+                yield json.dumps(
+                    {
+                        "kind": "quarantine",
+                        "reason": quarantined.reason,
+                        "detail": quarantined.detail,
+                    }
+                )
 
     return _MeterWindowFunction()
 

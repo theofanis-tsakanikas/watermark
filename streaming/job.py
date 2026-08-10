@@ -119,8 +119,13 @@ def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement
     (
         environment.add_source(consumer)
         .key_by(lambda record: record[1])
-        .process(build_process_function(operator))
+        .process(build_process_function(operator), output_type=Types.STRING())
         .name("watermark-meter-windows")
+        # A sink, because a job without one is a job whose output has nowhere to go — and
+        # because the evidence a capture exists to produce has to be *readable*. Every closed
+        # window, every restatement and every quarantine lands in the application log with the
+        # watermark status that allowed it, which is claim 1 in a form a person can check.
+        .print()
     )
 
 

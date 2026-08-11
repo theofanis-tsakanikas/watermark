@@ -210,11 +210,20 @@ data "aws_iam_policy_document" "maintenance" {
   }
 
   statement {
-    sid    = "ReadAndUpdateTheCatalog"
+    # `CreateTable` is here because of ADR-0008: the job creates the Iceberg table it writes,
+    # since Terraform cannot. Without it the `CREATE TABLE IF NOT EXISTS` fails with
+    # `AccessDeniedException` inside a Glue cluster that is already being paid for — the same
+    # shape of failure as the missing `GetSecurityConfiguration` below, which is how this list
+    # got its last entry.
+    #
+    # It is scoped to `${var.project}_*` like everything else here: the job may create tables in
+    # this estate's databases and nowhere else.
+    sid    = "ReadCreateAndUpdateTheCatalog"
     effect = "Allow"
     actions = [
       "glue:GetDatabase",
       "glue:GetDatabases",
+      "glue:CreateTable",
       "glue:GetTable",
       "glue:GetTables",
       "glue:UpdateTable",

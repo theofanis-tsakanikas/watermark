@@ -1,9 +1,10 @@
 """The recovery drill: kill the job mid-window, restore, and prove no double counting.
 
-`PLAN.md` asks for it *"tested rather than written"*, and the honest reading of that in a
-repository that never deploys is: test the property the drill exists to establish, offline,
-against the same core the deployed job runs — and be explicit about the half a MiniCluster
-would add.
+`PLAN.md` asks for it *"tested rather than written"*, and this tests the half that does not
+need a cluster: the property the drill exists to establish, offline, against the same core the
+deployed job runs — and it is explicit about the half a MiniCluster would add. The estate has
+since been deployed, but a savepoint restore was never induced there either, so the gap below
+is unchanged by that.
 
 **What this establishes.** That replaying the records a restored job would re-read produces the
 same published totals, with no interval counted twice. That property lives in the core: it is

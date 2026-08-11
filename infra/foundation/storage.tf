@@ -25,7 +25,7 @@ resource "aws_s3_bucket" "lakehouse" {
 
   bucket = local.lakehouse_bucket
 
-  #checkov:skip=CKV_AWS_144:A single-Region estate that is never applied and, if it were, would exist for the length of one capture. Cross-region replication guards against a Regional loss whose recovery has never been exercised, which makes it a control in name only. Versioning, which every restatement exercises, stays.
+  #checkov:skip=CKV_AWS_144:A single-Region estate that exists for the length of one capture and is then destroyed. Cross-region replication guards against a Regional loss whose recovery has never been exercised, which makes it a control in name only. Versioning, which every restatement exercises, stays.
   #checkov:skip=CKV2_AWS_62:Nothing consumes object events. A notification configuration with no consumer cannot fail, and therefore proves nothing.
 }
 

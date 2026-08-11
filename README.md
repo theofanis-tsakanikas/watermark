@@ -199,10 +199,12 @@ splitting them, and for why a skipped tier must fail rather than pass in CI, is
 | [`streaming/`](streaming/) | The PyFlink adapter. It moves records and decides nothing — no semantic literal, enforced |
 | [`queries/`](queries/) | SQL for settlement and reconciliation. Parameters bound, never interpolated |
 | [`pipelines/dbt/`](pipelines/dbt/) | dbt-athena over the gold layer, with the two tests that matter more than the models |
-| [`.github/workflows/`](.github/workflows/) | CI on every push; `deploy`, `destroy` and `capture` gated behind an environment and never run | Their shape is fixed in [CLAUDE.md](CLAUDE.md) and the order they arrive in is
+| [`.github/workflows/`](.github/workflows/) | CI on every push; `deploy`, `destroy` and `capture` behind a `deploy` environment with a required reviewer — the only way anything reaches AWS |
+
+Their shape is fixed in [CLAUDE.md](CLAUDE.md) and the order they arrive in is
 [PLAN.md](PLAN.md).
 
-## Deploying it, and why nothing has been
+## Deploying it, and how it has been
 
 Everything needed is here: six Terraform layers, a dbt project, an application package, and
 three gated workflows. `deploy.yml` re-runs the whole of CI against the exact ref being
@@ -213,10 +215,19 @@ because the moment somebody most needs to tear an estate down is the moment some
 broken. `capture.yml` is the only thing that starts the three expensive resources, and its stop
 step runs `if: always()`.
 
-None of them has been dispatched. `docs/DECISIONS.md` 15 explains why in full: every claim is
-provable offline by construction, so a live run would have produced a screenshot rather than a
-proof, and it would have cost money to produce something the repository already demonstrates
-for free.
+**All three have been dispatched.** `infra/bootstrap/` was applied from a laptop on 2026-08-10
+— the one layer whose own design always said so — and every other layer went up through
+`deploy.yml`, was driven by `capture.yml`, and came down through `destroy.yml`. Nothing in this
+repository has ever been applied from a console or from a laptop shell.
+
+`docs/DECISIONS.md` 15 argued that it never would be, because every claim is provable offline
+by construction and a live run would produce a screenshot rather than a proof. **Decision 17
+retracts it**, and names the error: proving the logic offline says nothing about whether the
+estate that would carry it can exist. Those are two propositions and only one had been checked.
+The run found four design errors that no schema check can reach — among them that PyFlink
+cannot emit a custom watermark, and that a green CI run had moved zero records. Decision 15 is
+kept in full rather than deleted, because an argument that was wrong is worth being able to
+read.
 
 ### The documents that decide things
 

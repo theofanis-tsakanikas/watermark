@@ -36,7 +36,10 @@ it is a gate there is a `gate-proof` mutation that breaks it.*
       on-demand vs provisioned and the shard model under burst · Iceberg maintenance and
       compaction · Lake Formation's integration with whichever table format wins ADR-0002.
       This is what de-risks the Terraform, not writing the Terraform early.
-- [x] `infra/bootstrap/` — state backend + CI OIDC role. Written, validated, **not applied**.
+- [x] `infra/bootstrap/` — state backend + CI OIDC role. **Applied from a laptop 2026-08-10**,
+      once, as its own design always intended: it is the layer that creates the state backend
+      every other layer needs and the role CI assumes, so there is no gated workflow that could
+      have created it. Everything else applies only from `deploy.yml`.
 
 **Done when:** `make test` and `make lint` are green on an empty-but-real skeleton, and CI
 runs them on a pull request.
@@ -75,7 +78,8 @@ runs them on a pull request.
       thing the repository says it does not do.
 - [x] Settlement resolution + restatement pipeline: the 3-day-late batch changes a published
       total, and the prior value survives.
-- [x] `infra/foundation/` and `infra/streaming/` — Terraform, validated, not applied.
+- [x] `infra/foundation/` and `infra/streaming/` — Terraform, validated, and **applied through
+      `deploy.yml`** in phase 4's live capture. Written here to be deploy-ready in one pass.
 
 **Done when:** claims 1 and 2 pass offline, `gate-proof` breaks both and they refuse for the
 named reason, and the late batch restates rather than overwrites.

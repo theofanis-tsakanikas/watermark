@@ -109,7 +109,7 @@ def _compress_instants(raw: str, origin: int, start: int, compression: int) -> s
 def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — needs an estate
     """Publish for real, at the compressed pace the plan describes.
 
-    Reached only from `capture.yml`, and never run. `boto3` and `time` are imported here rather
+    Reached only from `capture.yml`. `boto3` and `time` are imported here rather
     than at module scope so that importing this file costs nothing on a machine with no cloud
     extra — which is every machine the suite runs on, and `time` is a clock the rest of this
     repository is careful not to have.

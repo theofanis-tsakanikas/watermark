@@ -1,4 +1,4 @@
-# Take it all down. Also never run, and more important than the deploy.
+# Take it all down. More important than the deploy, and dispatched as often.
 #
 # A deploy that cannot be reversed is a deploy nobody should make. This workflow is the reason
 # the €100 target in `CLAUDE.md` is a constraint rather than a hope: the estate exists in

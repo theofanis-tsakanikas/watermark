@@ -209,6 +209,7 @@ data "aws_iam_policy_document" "maintenance" {
     ]
   }
 
+  # IAM is only half of it. See `aws_lakeformation_permissions.maintenance_*` below.
   statement {
     # `CreateTable` is here because of ADR-0008: the job creates the Iceberg table it writes,
     # since Terraform cannot. Without it the `CREATE TABLE IF NOT EXISTS` fails with
@@ -298,5 +299,50 @@ resource "aws_glue_trigger" "compaction" {
 
   actions {
     job_name = aws_glue_job.compaction.name
+  }
+}
+
+# **Lake Formation, which is a second and independent yes.**
+#
+# This account's data lake settings grant `CreateDatabaseDefaultPermissions` and
+# `CreateTableDefaultPermissions` to nobody — the strict posture, and the right one, because the
+# alternative is `IAMAllowedPrincipals` and a catalogue where IAM silently decides everything and
+# the tag policy in `infra/governance/` is decoration.
+#
+# The consequence is that an IAM policy allowing `glue:CreateTable` is not enough and does not
+# look insufficient. The job's first statement failed with:
+#
+#     Insufficient Lake Formation permission(s): Required Describe on meter_interval
+#
+# on a table that did not exist yet — Lake Formation answers a lookup the principal may not
+# perform with "insufficient permission" rather than "not found", which is correct (the
+# alternative leaks the catalogue) and reads like a bug.
+#
+# These grants live beside the job rather than in `infra/governance/` on purpose. Governance
+# owns *who may read what kind of data* — the tag policy, the steward grants, the purpose
+# limitation. This is a service role being allowed to write the table it exists to write, which
+# is part of the job's definition and moves when the job moves. Splitting them the other way
+# would put an operational permission in the file where a reader looks for policy.
+resource "aws_lakeformation_permissions" "maintenance_database" {
+  principal   = aws_iam_role.maintenance.arn
+  permissions = ["CREATE_TABLE", "DESCRIBE"]
+
+  database {
+    name = aws_glue_catalog_database.silver.name
+  }
+}
+
+resource "aws_lakeformation_permissions" "maintenance_tables" {
+  principal = aws_iam_role.maintenance.arn
+
+  # No `DROP`. The maintenance jobs create, read, merge and rewrite; none of them removes a
+  # table, and the one operation that removes rows — the erasure path — is granted separately in
+  # `infra/governance/` to the state machine that orchestrates it. A role that can drop the
+  # settlement table to fix a compaction is a role that will.
+  permissions = ["SELECT", "INSERT", "DELETE", "DESCRIBE", "ALTER"]
+
+  table {
+    database_name = aws_glue_catalog_database.silver.name
+    wildcard      = true
   }
 }

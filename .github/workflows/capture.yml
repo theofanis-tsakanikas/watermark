@@ -93,6 +93,17 @@ jobs:
           status=$(aws kinesisanalyticsv2 describe-application --application-name watermark \
             --query 'ApplicationDetail.ApplicationStatus' --output text)
           echo "flink application: $status"
+          # Wait out any transition first. FORCE_STOPPING, STOPPING and UPDATING are all
+          # states a previous run can leave behind, and starting from any of them is refused —
+          # so an unattended capture would fail on the tail of the one before it.
+          for _ in $(seq 1 40); do
+            case "$status" in RUNNING|READY|STARTING) break ;; esac
+            sleep 15
+            status=$(aws kinesisanalyticsv2 describe-application --application-name watermark \
+              --query 'ApplicationDetail.ApplicationStatus' --output text)
+            echo "  waiting out $status"
+          done
+
           if [ "$status" != "RUNNING" ] && [ "$status" != "STARTING" ]; then
             aws kinesisanalyticsv2 start-application \
               --application-name watermark \

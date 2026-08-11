@@ -49,7 +49,9 @@ def merge(sources: list[Path], target: Path) -> tuple[int, int]:
                 if name.startswith("META-INF/services/"):
                     # Appended. Two factories registered under one name are two factories.
                     previous = services.get(name, b"")
-                    joined = previous + (b"\n" if previous and not previous.endswith(b"\n") else b"")
+                    joined = previous + (
+                        b"\n" if previous and not previous.endswith(b"\n") else b""
+                    )
                     services[name] = joined + data
                 elif name not in entries:
                     # First wins. Shaded connectors carry overlapping third-party classes, and
@@ -67,9 +69,14 @@ def merge(sources: list[Path], target: Path) -> tuple[int, int]:
     return len(entries), len(services)
 
 
+#: The program name, a target, and at least one source.
+MINIMUM_ARGUMENTS = 3
+
+
 def main() -> int:
-    if len(sys.argv) < 3:
-        return int(bool(print("usage: merge_connectors.py <out.jar> <in.jar>...", file=sys.stderr)))
+    if len(sys.argv) < MINIMUM_ARGUMENTS:
+        print("usage: merge_connectors.py <out.jar> <in.jar>...", file=sys.stderr)
+        return 1
 
     target, sources = Path(sys.argv[1]), [Path(a) for a in sys.argv[2:]]
     missing = [s for s in sources if not s.is_file()]
@@ -79,7 +86,10 @@ def main() -> int:
 
     classes, service_files = merge(sources, target)
     size = target.stat().st_size / 1_000_000
-    print(f"merged {len(sources)} jars → {target} ({size:.0f} MB, {classes} entries, {service_files} service files)")
+    print(
+        f"merged {len(sources)} jars → {target} "
+        f"({size:.0f} MB, {classes} entries, {service_files} service files)"
+    )
     return 0
 
 

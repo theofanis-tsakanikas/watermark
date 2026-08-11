@@ -51,6 +51,15 @@ jobs:
     # kills it — and the `always()` stop step still runs.
     timeout-minutes: 120
 
+    env:
+      # The project name, which is `var.project`'s default and the prefix every resource in this
+      # estate carries. Written out here the same way `watermark-anomaly` and the application
+      # name already are: this workflow runs no Terraform, so it has no outputs to read, and a
+      # name it composes is a name it can be wrong about in exactly one place rather than six.
+      PROJECT: watermark
+      LAKEHOUSE: watermark-lakehouse-${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
     steps:
       - name: the confirmation word
         run: |
@@ -183,6 +192,121 @@ jobs:
           python -m data.publish --minutes "${{ inputs.minutes }}" --live | tee /tmp/publish.log
           grep -qE 'published [0-9,]+ deliveries' /tmp/publish.log || {
             echo "::error::the publisher reported no deliveries"; exit 1; }
+
+      - name: let the landing files roll and commit
+        # A closed window is not a readable row yet. Flink's `FileSink` rolls a part file on
+        # `LANDING_ROLLOVER` (a minute) or `LANDING_IDLE` (thirty seconds of quiet), and a rolled
+        # file is *pending* until the next successful checkpoint — sixty seconds apart. Merging
+        # before both have happened reads whatever happened to be committed and reports it as
+        # the capture's output, which is the same shape of quiet wrongness as a publisher that
+        # sends nothing.
+        #
+        # Three minutes covers a rollover, an idle interval and two checkpoints.
+        run: |
+          set -euo pipefail
+          sleep 180
+          landed=$(aws s3 ls "s3://${LAKEHOUSE}/landing/meter_interval/" --recursive | wc -l)
+          echo "landing objects: $landed"
+          [ "$landed" -gt 0 ] || { echo "::error::nothing landed; the stream closed no window"; exit 1; }
+
+      - name: merge the landed windows into the lakehouse
+        # Claim 2's other half, and the leg that has never run to completion. The streaming job
+        # decides when a window closes; this is what makes the decision a row that settlement can
+        # total, erasure can delete and a restatement can supersede.
+        run: |
+          set -euo pipefail
+          run_id=$(aws glue start-job-run --job-name watermark-land-to-silver \
+            --query JobRunId --output text)
+          echo "land-to-silver $run_id"
+          for _ in $(seq 1 60); do
+            state=$(aws glue get-job-run --job-name watermark-land-to-silver \
+              --run-id "$run_id" --query 'JobRun.JobRunState' --output text)
+            echo "  $state"
+            case "$state" in
+              SUCCEEDED) break ;;
+              FAILED|ERROR|TIMEOUT|STOPPED)
+                aws glue get-job-run --job-name watermark-land-to-silver --run-id "$run_id" \
+                  --query 'JobRun.ErrorMessage' --output text
+                echo "::error::land-to-silver $state"; exit 1 ;;
+            esac
+            sleep 15
+          done
+
+      - name: the lakehouse holds what the stream decided
+        # **The assertions this workflow existed without.** Every step before this one reported
+        # success for a run that moved zero records, because nothing compared an outcome against
+        # an expectation — the failure decision 17 names and the one this project argues against.
+        #
+        # Four facts, each falsifiable, each about a different claim:
+        #
+        #   rows            — the merge produced something at all.
+        #   closed_at       — claim 1, checkable in SQL: a row published with a watermark
+        #                     earlier than its own interval end could not have come from the
+        #                     core. Zero such rows is the assertion; one is a build failure.
+        #   lineage ids     — claim 2's identity, present on every row and distinct per revision.
+        #   restatements    — doctrine 4: the three-day-late file changed a published total and
+        #                     the row says what it superseded rather than having overwritten it.
+        #
+        # And the edge case, which is the point of driving the generated day rather than a
+        # smooth one: SUB-03 goes silent for forty minutes, so windows must close with a
+        # watermark status that says a partition was excluded, and the exclusion must reach the
+        # row. A capture where every row says `advancing` has not exercised claim 1 at all.
+        run: |
+          set -euo pipefail
+          mkdir -p out/capture
+
+          athena() {
+            local qid
+            qid=$(aws athena start-query-execution --work-group "$PROJECT" \
+              --query-string "$1" --query QueryExecutionId --output text)
+            for _ in $(seq 1 60); do
+              local state
+              state=$(aws athena get-query-execution --query-execution-id "$qid" \
+                --query 'QueryExecution.Status.State' --output text)
+              case "$state" in
+                SUCCEEDED) aws athena get-query-results --query-execution-id "$qid" \
+                             --query 'ResultSet.Rows[1:].Data[*].VarCharValue' --output text
+                           return 0 ;;
+                FAILED|CANCELLED)
+                  aws athena get-query-execution --query-execution-id "$qid" \
+                    --query 'QueryExecution.Status.StateChangeReason' --output text >&2
+                  return 1 ;;
+              esac
+              sleep 3
+            done
+            echo "athena query did not settle" >&2; return 1
+          }
+
+          read -r ROWS UNCLOSED LINEAGE REVISIONS RESTATED IDLE_ROWS STATUSES <<<"$(athena "
+            SELECT COUNT(*),
+                   COUNT_IF(closed_at < interval_start + INTERVAL '15' MINUTE),
+                   COUNT(DISTINCT lineage_id),
+                   COUNT(DISTINCT revision),
+                   COUNT_IF(revision > 0),
+                   COUNT_IF(CARDINALITY(idle_partitions) > 0),
+                   COUNT(DISTINCT watermark_status)
+            FROM ${PROJECT}_silver.meter_interval")"
+
+          {
+            echo "### The lakehouse after the capture"
+            echo ""
+            echo "| fact | value |"
+            echo "|---|---|"
+            echo "| rows merged | $ROWS |"
+            echo "| rows closed before their interval ended | $UNCLOSED |"
+            echo "| distinct lineage ids | $LINEAGE |"
+            echo "| rows that are restatements | $RESTATED |"
+            echo "| rows computed with a partition excluded | $IDLE_ROWS |"
+            echo "| distinct watermark statuses | $STATUSES |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          fail=0
+          [ "$ROWS" -gt 0 ] || { echo "::error::the merge produced no rows"; fail=1; }
+          [ "$UNCLOSED" = "0" ] || { echo "::error::claim 1: $UNCLOSED rows were published with a watermark earlier than their own interval end"; fail=1; }
+          [ "$LINEAGE" = "$ROWS" ] || { echo "::error::claim 2: $ROWS rows carry $LINEAGE distinct lineage ids"; fail=1; }
+          [ "$RESTATED" -gt 0 ] || { echo "::error::doctrine 4: the late batch restated nothing. Either it never arrived or a correction overwrote instead of superseding"; fail=1; }
+          [ "$IDLE_ROWS" -gt 0 ] || { echo "::error::claim 1's edge case: no row was computed with a partition excluded, so the silent substation never held the watermark back"; fail=1; }
+          exit $fail
 
       - name: capture the evidence
         run: |

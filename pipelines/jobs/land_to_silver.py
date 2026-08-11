@@ -117,66 +117,71 @@ spark.sql(f"""
 bucket, _, prefix = ARGUMENTS["LANDING"].removeprefix("s3://").partition("/")
 listing = boto3.client("s3").list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
 
-if listing.get("KeyCount", 0) == 0:
-    # Not an error, and it is also the deploy-time path. A capture that closed no window has
-    # nothing to merge, and a job that failed on that would fail every time the stream was quiet.
+#: Whether there is anything to merge. Not an error when there is not: a capture that closed no
+#: window has nothing to add, and a job that failed on that would fail every time the stream was
+#: quiet — and on the deploy-time run whose only purpose is the CREATE TABLE above.
+#:
+#: **Expressed as a branch and not as an early exit.** It was `job.commit()` followed by
+#: `raise SystemExit(0)`, and Glue reported the run FAILED with `SystemExit: 0` in the error
+#: field. Glue's wrapper treats any `SystemExit` escaping the script as an abnormal end and does
+#: not read the code — so a job that had done exactly what it was asked to do reported failure,
+#: and the deploy step that waits on it stopped the whole apply.
+HAS_LANDED = listing.get("KeyCount", 0) > 0
+
+if not HAS_LANDED:
     print(f"nothing landed under {ARGUMENTS['LANDING']}; {TARGET} exists, no merge")
-    job.commit()
-    raise SystemExit(0)
+else:
+    spark.read.json(ARGUMENTS["LANDING"]).createOrReplaceTempView("landed")
 
-landed = spark.read.json(ARGUMENTS["LANDING"])
+    # Quarantines are evidence, not settlement rows. They land in the same stream because they are
+    # produced by the same operator, and they belong in their own table rather than as nulls here.
+    # **Every column the core computed, and `closed_at` is the one that matters.**
+    #
+    # This view used to select eight columns and set `closed_at` to `CURRENT_TIMESTAMP()` — the time
+    # the *merge* ran, not the watermark that permitted publication. Those are different facts and
+    # only one of them is evidence: a row whose `closed_at` precedes its own interval end could not
+    # have come from the core, which is what makes claim 1 checkable in SQL after the fact. Stamping
+    # it with the merge clock made the column always pass and mean nothing.
+    #
+    # It now comes off the record, where `streaming/operators.py` puts it. `merged_at` is the merge
+    # clock, kept as its own column because dbt's incremental predicate needs to know what this run
+    # touched, and that is a different question from when the window closed.
+    spark.sql("""
+        CREATE OR REPLACE TEMPORARY VIEW closed AS
+        SELECT
+            meter                                              AS meter_id,
+            TIMESTAMP_MILLIS(CAST(interval_start AS BIGINT))   AS interval_start,
+            CAST(energy_wh AS BIGINT)                          AS energy_wh,
+            CAST(readings AS INT)                              AS readings,
+            CAST(duplicates_suppressed AS INT)                 AS duplicates_suppressed,
+            CAST(corrections_absorbed AS INT)                  AS corrections_absorbed,
+            TIMESTAMP_MILLIS(CAST(closed_at AS BIGINT))        AS closed_at,
+            TIMESTAMP_MILLIS(CAST(first_seen_at AS BIGINT))    AS first_seen_at,
+            watermark_status,
+            idle_partitions,
+            CAST(revision AS INT)                              AS revision,
+            CAST(supersedes AS BIGINT)                         AS supersedes,
+            restatement_cause,
+            lineage_id,
+            CURRENT_TIMESTAMP()                                AS merged_at
+        FROM landed
+        -- Three kinds share this prefix because one operator produces all three. `published`,
+        -- `restated` and `confirmed` are rows; `quarantine` is a refusal and belongs in its own
+        -- table; `watermark` is a condition report with no meter at all, which is why the second
+        -- clause is not redundant with the first.
+        WHERE kind NOT IN ('quarantine', 'watermark') AND meter IS NOT NULL
+    """)
 
-landed.createOrReplaceTempView("landed")
+    spark.sql(f"""
+        MERGE INTO {TARGET} AS target
+        USING closed AS source
+        ON  target.meter_id = source.meter_id
+        AND target.interval_start = source.interval_start
+        WHEN MATCHED AND source.revision > target.revision THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+    """)
 
-# Quarantines are evidence, not settlement rows. They land in the same stream because they are
-# produced by the same operator, and they belong in their own table rather than as nulls here.
-# **Every column the core computed, and `closed_at` is the one that matters.**
-#
-# This view used to select eight columns and set `closed_at` to `CURRENT_TIMESTAMP()` — the time
-# the *merge* ran, not the watermark that permitted publication. Those are different facts and
-# only one of them is evidence: a row whose `closed_at` precedes its own interval end could not
-# have come from the core, which is what makes claim 1 checkable in SQL after the fact. Stamping
-# it with the merge clock made the column always pass and mean nothing.
-#
-# It now comes off the record, where `streaming/operators.py` puts it. `merged_at` is the merge
-# clock, kept as its own column because dbt's incremental predicate needs to know what this run
-# touched, and that is a different question from when the window closed.
-spark.sql("""
-    CREATE OR REPLACE TEMPORARY VIEW closed AS
-    SELECT
-        meter                                              AS meter_id,
-        TIMESTAMP_MILLIS(CAST(interval_start AS BIGINT))   AS interval_start,
-        CAST(energy_wh AS BIGINT)                          AS energy_wh,
-        CAST(readings AS INT)                              AS readings,
-        CAST(duplicates_suppressed AS INT)                 AS duplicates_suppressed,
-        CAST(corrections_absorbed AS INT)                  AS corrections_absorbed,
-        TIMESTAMP_MILLIS(CAST(closed_at AS BIGINT))        AS closed_at,
-        TIMESTAMP_MILLIS(CAST(first_seen_at AS BIGINT))    AS first_seen_at,
-        watermark_status,
-        idle_partitions,
-        CAST(revision AS INT)                              AS revision,
-        CAST(supersedes AS BIGINT)                         AS supersedes,
-        restatement_cause,
-        lineage_id,
-        CURRENT_TIMESTAMP()                                AS merged_at
-    FROM landed
-    -- Three kinds share this prefix because one operator produces all three. `published`,
-    -- `restated` and `confirmed` are rows; `quarantine` is a refusal and belongs in its own
-    -- table; `watermark` is a condition report with no meter at all, which is why the second
-    -- clause is not redundant with the first.
-    WHERE kind NOT IN ('quarantine', 'watermark') AND meter IS NOT NULL
-""")
-
-spark.sql(f"""
-    MERGE INTO {TARGET} AS target
-    USING closed AS source
-    ON  target.meter_id = source.meter_id
-    AND target.interval_start = source.interval_start
-    WHEN MATCHED AND source.revision > target.revision THEN UPDATE SET *
-    WHEN NOT MATCHED THEN INSERT *
-""")
-
-merged = spark.sql(f"SELECT COUNT(*) AS rows, MAX(revision) AS top FROM {TARGET}").collect()[0]
-print(f"merged; {TARGET} now holds {merged['rows']} rows, highest revision {merged['top']}")
+    merged = spark.sql(f"SELECT COUNT(*) AS rows, MAX(revision) AS top FROM {TARGET}").collect()[0]
+    print(f"merged; {TARGET} now holds {merged['rows']} rows, highest revision {merged['top']}")
 
 job.commit()

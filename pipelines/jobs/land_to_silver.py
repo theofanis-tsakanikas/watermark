@@ -40,15 +40,13 @@ spark = (
     and GlueContext(SparkContext.getOrCreate()).spark_session
 )
 
-# The same catalog `infra/lakehouse` declared. Configured rather than created: two definitions
-# of one warehouse is how a job writes somewhere Athena does not read.
-spark.conf.set("spark.sql.catalog.glue_catalog", "org.apache.iceberg.spark.SparkCatalog")
-spark.conf.set("spark.sql.catalog.glue_catalog.warehouse", ARGUMENTS["WAREHOUSE"])
-spark.conf.set(
-    "spark.sql.catalog.glue_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog"
-)
-spark.conf.set("spark.sql.catalog.glue_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
-spark.conf.set("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+# The catalog is configured by the *job definition*, not here.
+#
+# `spark.sql.extensions` is a static config: Spark refuses it after the session exists —
+# "Cannot modify the value of a static config" — and Iceberg's MERGE syntax comes from that
+# extension, so setting it late means a session that cannot parse the one statement this job
+# exists to run. `infra/lakehouse/maintenance.tf` passes it as `--conf` where Glue applies it
+# before the session is built.
 
 job = Job(GlueContext(SparkContext.getOrCreate()))
 job.init(ARGUMENTS["JOB_NAME"], ARGUMENTS)

@@ -45,6 +45,17 @@ resource "aws_glue_job" "land_to_silver" {
     "--LANDING"                          = "s3://${data.aws_s3_bucket.lakehouse.id}/landing/meter_interval/"
     "--DATABASE"                         = aws_glue_catalog_database.silver.name
     "--TABLE"                            = aws_glue_catalog_table.meter_interval.name
+
+    # The catalog, applied before the Spark session exists. `spark.sql.extensions` is a static
+    # config and Iceberg's MERGE syntax comes from it, so a job that sets it from Python gets a
+    # session that cannot parse the statement it was written for.
+    "--conf" = join(" --conf ", [
+      "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+      "spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog",
+      "spark.sql.catalog.glue_catalog.warehouse=${local.warehouse}",
+      "spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog",
+      "spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO",
+    ])
   }
 
   execution_property {

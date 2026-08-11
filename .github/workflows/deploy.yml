@@ -35,6 +35,12 @@ on:
         type: choice
         options: [all, foundation, streaming, lakehouse, ml, governance]
         default: all
+      stream_position:
+        description: "Where a fresh Flink application starts reading. TRIM_HORIZON replays everything still on the stream — the conservative default. LATEST starts from now, which is what a clean scenario demonstration needs when earlier captures have left records behind."
+        required: true
+        type: choice
+        options: [TRIM_HORIZON, LATEST]
+        default: TRIM_HORIZON
       expires_at:
         description: "RFC-3339 instant after which the reaper destroys this estate, e.g. 2026-08-10T18:00:00Z"
         required: true
@@ -243,6 +249,7 @@ jobs:
           TF_VAR_aws_region: ${{ vars.AWS_REGION }}
           TF_VAR_github_owner: ${{ github.repository_owner }}
           TF_VAR_substations: ${{ env.SUBSTATIONS }}
+          TF_VAR_initial_stream_position: ${{ inputs.stream_position }}
           TF_VAR_processing_image_tag: ${{ env.PROCESSING_IMAGE_TAG }}
         run: |
           set -euo pipefail

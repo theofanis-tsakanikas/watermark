@@ -245,6 +245,7 @@ read.
 | [ADR-0005](docs/adr/0005-two-reproducibility-tiers.md) | What "reproducible" is promised to mean, and where it stops |
 | [ADR-0006](docs/adr/0006-clarify-runs-but-does-not-vote.md) | Why the standard bias metric is reported and not obeyed — and why it could not run at all |
 | [ADR-0007](docs/adr/0007-the-framework-carries-records-not-semantics.md) | What the live run proved PyFlink cannot do, and why that made the design stronger |
+| [ADR-0008](docs/adr/0008-the-writer-creates-the-iceberg-table.md) | Why Terraform cannot create an Iceberg table, and what owns the schema instead |
 
 ---
 

@@ -267,6 +267,35 @@ jobs:
             terraform -chdir="infra/$layer" show -no-color tfplan
             terraform -chdir="infra/$layer" apply -auto-approve tfplan
             echo "::endgroup::"
+
+            # **Realise the Iceberg tables, between the layer that defines the job and the layer
+            # that attaches a ruleset to its output.** ADR-0008: an Iceberg table is its
+            # metadata and metadata is written by an engine, so Terraform cannot create one —
+            # `land_to_silver` does, with `CREATE TABLE IF NOT EXISTS`, and runs here with
+            # nothing landed for that sole purpose. It is idempotent and it costs one Glue DPU
+            # minute; a governance apply against a table that does not exist costs a failed
+            # deploy.
+            if [ "$layer" = "lakehouse" ]; then
+              echo "::group::create the Iceberg tables"
+              run_id=$(aws glue start-job-run --job-name watermark-land-to-silver \
+                --query JobRunId --output text)
+              echo "land-to-silver $run_id"
+              for _ in $(seq 1 40); do
+                state=$(aws glue get-job-run --job-name watermark-land-to-silver \
+                  --run-id "$run_id" --query 'JobRun.JobRunState' --output text)
+                echo "  $state"
+                case "$state" in
+                  SUCCEEDED) break ;;
+                  FAILED|ERROR|TIMEOUT|STOPPED)
+                    aws glue get-job-run --job-name watermark-land-to-silver --run-id "$run_id" \
+                      --query 'JobRun.ErrorMessage' --output text
+                    echo "::error::the table-creating run of land-to-silver $state"
+                    exit 1 ;;
+                esac
+                sleep 15
+              done
+              echo "::endgroup::"
+            fi
           done
 
       - name: what exists now, and when it expires

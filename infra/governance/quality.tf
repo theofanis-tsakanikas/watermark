@@ -1,5 +1,13 @@
 # Glue Data Quality as a gate on the offline side.
 #
+# **This lives in `governance` and not in `lakehouse`, and the reason is an ordering.** A data
+# quality ruleset attaches to a table, and after ADR-0008 the tables an Iceberg engine writes are
+# created by that engine rather than by Terraform — so at the moment the lakehouse layer applies,
+# `silver.meter_interval` does not exist yet and a ruleset naming it fails with
+# `EntityNotFoundException`. `deploy.yml` runs the merge job once, with nothing landed, between
+# the lakehouse layer and this one for exactly this reason: the job's `CREATE TABLE IF NOT EXISTS`
+# is what brings the table into being, and this layer is the last to apply.
+#
 # The rules are deliberately the ones a *correct* pipeline cannot violate, so that a failure
 # means the pipeline is wrong rather than the data being unusual. A rule about consumption
 # levels would fire on a cold week; these fire only on defects.
@@ -24,13 +32,16 @@
 #                   signature, and either way it is evidence rather than a measurement.
 #   revision/supersedes — doctrine 4: a revision states what it replaced. A restatement with an
 #                   empty `supersedes` has erased the prior value instead of superseding it.
+#   lineage_id    — claim 2's identity. It was `Completeness = 1.0` against a column the
+#                   streaming adapter never wrote, so the rule would have failed every run had
+#                   the table it names ever existed to be scanned.
 resource "aws_glue_data_quality_ruleset" "meter_interval" {
   name        = "${var.project}-meter-interval"
   description = "Invariants the stream core guarantees. A violation is a bug, never a weather event."
 
   target_table {
-    database_name = aws_glue_catalog_database.silver.name
-    table_name    = aws_glue_catalog_table.meter_interval.name
+    database_name = "${var.project}_silver"
+    table_name    = "meter_interval"
   }
 
   ruleset = <<-DQDL
@@ -45,22 +56,14 @@ resource "aws_glue_data_quality_ruleset" "meter_interval" {
   DQDL
 }
 
-resource "aws_glue_data_quality_ruleset" "settlement_hour" {
-  name        = "${var.project}-settlement-hour"
-  description = "What an invoice line may not contain"
-
-  target_table {
-    database_name = aws_glue_catalog_database.gold.name
-    table_name    = aws_glue_catalog_table.settlement_hour.name
-  }
-
-  ruleset = <<-DQDL
-    Rules = [
-      ColumnValues "intervals" <= 4,
-      ColumnValues "intervals" >= 1,
-      ColumnValues "energy_wh" >= 0,
-      IsPrimaryKey "meter_id" "hour_start",
-      Completeness "lineage_id" = 1.0
-    ]
-  DQDL
-}
+# **`gold.settlement_hour` has no ruleset here, and that is a gap rather than a decision.**
+#
+# It had one. It named a table dbt builds, and dbt cannot build it until the silver table holds
+# rows — so the table does not exist at any point during a deploy, and a ruleset naming it
+# cannot be applied at all. Carrying it anyway would have meant a layer that fails on every
+# apply, and carrying it against the Terraform stub meant what the stub meant: nothing.
+#
+# It returns when the gold layer is built inside the capture rather than by hand. Until then the
+# invariants it asserted — one row per meter and hour, between one and four intervals in an
+# hour, a lineage id on every row — are checked only by the dbt tests in `pipelines/dbt/tests/`,
+# which is a weaker place because nothing runs them yet either.

@@ -44,7 +44,11 @@ resource "aws_glue_job" "land_to_silver" {
     "--WAREHOUSE"                        = local.warehouse
     "--LANDING"                          = "s3://${data.aws_s3_bucket.lakehouse.id}/landing/meter_interval/"
     "--DATABASE"                         = aws_glue_catalog_database.silver.name
-    "--TABLE"                            = aws_glue_catalog_table.meter_interval.name
+    # A literal, because the table is no longer a Terraform resource to reference: the job
+    # itself creates it, for the reason ADR-0008 gives. This argument and the CREATE TABLE in
+    # `pipelines/jobs/land_to_silver.py` are the two halves of one name, and
+    # `scripts/check_lakehouse_wiring.py` is what keeps them the same name.
+    "--TABLE" = "meter_interval"
 
     # The catalog, applied before the Spark session exists. `spark.sql.extensions` is a static
     # config and Iceberg's MERGE syntax comes from it, so a job that sets it from Python gets a

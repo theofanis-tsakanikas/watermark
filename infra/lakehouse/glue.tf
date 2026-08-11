@@ -52,133 +52,32 @@ locals {
   }
 }
 
-resource "aws_glue_catalog_table" "meter_interval" {
-  name          = "meter_interval"
-  database_name = aws_glue_catalog_database.silver.name
-  table_type    = "EXTERNAL_TABLE"
-  parameters    = local.iceberg_properties
+# **No `aws_glue_catalog_table` for the tables an Iceberg engine writes.** ADR-0008.
+#
+# `meter_interval` and `settlement_hour` were declared here, with `table_type = "ICEBERG"` in
+# their parameters, and what that produced was a catalogue entry with no metadata location —
+# which is not an Iceberg table and cannot be turned into one. Athena refuses it by name:
+#
+#     GENERIC_USER_ERROR: Detected Iceberg type table without metadata location. [...] Setting
+#     table_type parameter in Glue metastore to create an Iceberg table is not supported.
+#
+# It is not a gap in the provider. An Iceberg table is its metadata, and metadata is written by
+# an engine, so the only thing Terraform could ever have created here was the shadow of one. The
+# `warehouse/` prefix of a fully applied estate was empty, and every query against these tables
+# had failed for as long as they had existed.
+#
+# So the writers declare them: `pipelines/jobs/land_to_silver.py` creates `silver.meter_interval`
+# before it merges, and dbt creates `gold.settlement_hour` as it builds it. What stays here is
+# everything Terraform can actually own — the databases, the warehouse location, the encryption
+# and the catalogue entries below, which describe tables a CDC pipeline lands rather than tables
+# this repository writes.
+#
+# Those remaining entries carry the same flaw and it is stated rather than fixed: nothing in this
+# repository writes them, so nothing has created their metadata either, and a query against one
+# would fail the same way. They are declarations of an interface, not of a table, and they are
+# kept because the erasure orchestration and the policy suite name them. When a writer for one
+# arrives, its declaration moves to the writer, exactly as these two did.
 
-  storage_descriptor {
-    location = "${local.warehouse}/silver/meter_interval"
-
-    columns {
-      name = "meter_id"
-      type = "string"
-    }
-    columns {
-      name = "interval_start"
-      type = "timestamp"
-    }
-    columns {
-      name    = "energy_wh"
-      type    = "bigint"
-      comment = "Integer watt-hours. Not a decimal and not a double: ADR-0004 forbids a tolerance in the parity comparison, and a scaled integer is what replaces it."
-    }
-    columns {
-      name = "readings"
-      type = "int"
-    }
-    columns {
-      name = "duplicates_suppressed"
-      type = "int"
-    }
-    columns {
-      name = "corrections_absorbed"
-      type = "int"
-    }
-    columns {
-      name    = "closed_at"
-      type    = "timestamp"
-      comment = "The watermark that permitted publication. A row whose closed_at precedes its own interval end could not have come from the core — which makes claim 1 checkable in SQL, after the fact, without re-running anything."
-    }
-    columns {
-      name = "watermark_status"
-      type = "string"
-    }
-    columns {
-      name    = "idle_partitions"
-      type    = "array<string>"
-      comment = "Substations excluded from the watermark when this row was published. The hole travels to the invoice."
-    }
-    columns {
-      name = "first_seen_at"
-      type = "timestamp"
-    }
-    columns {
-      name = "revision"
-      type = "int"
-    }
-    columns {
-      name = "supersedes"
-      type = "bigint"
-    }
-    columns {
-      name = "restatement_cause"
-      type = "string"
-    }
-    columns {
-      name = "lineage_id"
-      type = "string"
-    }
-  }
-
-  # Partitioned by day of the interval, not by ingestion date. Settlement asks "what happened on
-  # the 14th", and a table partitioned by when the record arrived answers that by scanning
-  # everything — including the three-day-late file, which is precisely the row it needs.
-  partition_keys {
-    name = "interval_day"
-    type = "date"
-  }
-}
-
-resource "aws_glue_catalog_table" "settlement_hour" {
-  name          = "settlement_hour"
-  database_name = aws_glue_catalog_database.gold.name
-  table_type    = "EXTERNAL_TABLE"
-  parameters    = local.iceberg_properties
-
-  storage_descriptor {
-    location = "${local.warehouse}/gold/settlement_hour"
-
-    columns {
-      name = "meter_id"
-      type = "string"
-    }
-    columns {
-      name = "hour_start"
-      type = "timestamp"
-    }
-    columns {
-      name = "energy_wh"
-      type = "bigint"
-    }
-    columns {
-      name = "intervals"
-      type = "int"
-    }
-    columns {
-      name = "revision"
-      type = "int"
-    }
-    columns {
-      name = "is_complete"
-      type = "boolean"
-    }
-    columns {
-      name = "computed_with_idle_partition"
-      type = "boolean"
-    }
-    columns {
-      name = "lineage_id"
-      type = "string"
-    }
-  }
-
-  partition_keys {
-    name = "hour_day"
-    type = "date"
-  }
-}
 
 resource "aws_glue_catalog_table" "quarantine" {
   name          = "quarantine"

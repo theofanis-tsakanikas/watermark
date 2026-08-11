@@ -8,8 +8,22 @@
 --
 -- A meter with no membership in force is **excluded and reported**, never bucketed into a
 -- default group. An unattributed megawatt-hour is a position somebody did not take.
+-- **It reads the built table, not a table function.** This used to say
+-- `FROM TABLE(gold.settlement_hourly(?, ?))`, treating the sibling query as a parameterised
+-- table function — a construct Athena does not have, so the statement could never have run at
+-- all. `settlement_hour` is the same rows, materialised by `pipelines/dbt/models/gold/`, which
+-- is where an hourly total is supposed to come from: computed once and read many times rather
+-- than recomputed inside every query that needs it.
 WITH hourly AS (
-    SELECT * FROM TABLE(gold.settlement_hourly(?, ?))
+    SELECT
+        meter_id,
+        hour_start,
+        energy_wh,
+        is_complete,
+        computed_with_idle_partition
+    FROM ${gold}.settlement_hour
+    WHERE hour_start >= ?
+      AND hour_start <  ?
 ),
 membership AS (
     SELECT
@@ -20,10 +34,10 @@ membership AS (
         h.computed_with_idle_partition,
         c.balancing_group
     FROM hourly AS h
-    LEFT JOIN gold.customer_scd2 AS c
+    LEFT JOIN ${gold}.customer_scd2 AS c
       ON  c.customer_id = (
               SELECT a.customer_id
-              FROM gold.meter_assignment_scd2 AS a
+              FROM ${gold}.meter_assignment_scd2 AS a
               WHERE a.meter_id    =  h.meter_id
                 AND a.valid_from  <= h.hour_start
                 AND (a.valid_to IS NULL OR a.valid_to > h.hour_start)

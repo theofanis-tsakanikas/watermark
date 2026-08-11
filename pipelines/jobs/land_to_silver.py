@@ -48,12 +48,66 @@ spark = SparkContext.getOrCreate() and GlueContext(SparkContext.getOrCreate()).s
 job = Job(GlueContext(SparkContext.getOrCreate()))
 job.init(ARGUMENTS["JOB_NAME"], ARGUMENTS)
 
+TARGET = f"glue_catalog.{ARGUMENTS['DATABASE']}.{ARGUMENTS['TABLE']}"
+
+# **The writer creates the table, because nothing else can.**
+#
+# This used to be an `aws_glue_catalog_table` in `infra/lakehouse/glue.tf` carrying
+# `table_type = "ICEBERG"`, and it produced a catalogue entry with no metadata location, which
+# is not an Iceberg table and cannot be made into one. Athena says so in as many words:
+#
+#     GENERIC_USER_ERROR: Detected Iceberg type table without metadata location. [...] Setting
+#     table_type parameter in Glue metastore to create an Iceberg table is not supported.
+#
+# An Iceberg table *is* its metadata, and the metadata is written by the engine that creates
+# it. Terraform can declare a database, a location, a bucket and a key; it cannot write a
+# manifest. So the schema moved here, to the job that writes the rows — see ADR-0008. The
+# databases, the warehouse location and the encryption are still Terraform's, and the property
+# list below is the same one every table in this lakehouse gets.
+#
+# `IF NOT EXISTS`, so this is idempotent: it runs on every merge, and `deploy.yml` runs the job
+# once with nothing landed for the sole purpose of bringing the table into existence before the
+# governance layer attaches a data quality ruleset to it.
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS {TARGET} (
+        meter_id              STRING,
+        interval_start        TIMESTAMP,
+        energy_wh             BIGINT,
+        readings              INT,
+        duplicates_suppressed INT,
+        corrections_absorbed  INT,
+        closed_at             TIMESTAMP,
+        first_seen_at         TIMESTAMP,
+        watermark_status      STRING,
+        idle_partitions       ARRAY<STRING>,
+        revision              INT,
+        supersedes            BIGINT,
+        restatement_cause     STRING,
+        lineage_id            STRING,
+        merged_at             TIMESTAMP
+    )
+    USING iceberg
+    PARTITIONED BY (days(interval_start))
+    LOCATION '{ARGUMENTS["WAREHOUSE"]}/silver/{ARGUMENTS["TABLE"]}'
+    TBLPROPERTIES (
+        'format-version' = '2',
+        'write.format.default' = 'parquet',
+        'write.parquet.compression-codec' = 'zstd',
+        'write.delete.mode' = 'merge-on-read',
+        'write.update.mode' = 'merge-on-read',
+        'write.merge.mode' = 'merge-on-read',
+        'history.expire.max-snapshot-age-ms' = '2592000000',
+        'history.expire.min-snapshots-to-keep' = '10'
+    )
+""")
+
 landed = spark.read.json(ARGUMENTS["LANDING"])
 
 if landed.rdd.isEmpty():
-    # Not an error. A capture that closed no window has nothing to merge, and a job that failed
-    # on that would fail every time the stream was quiet.
-    print("nothing landed; no merge")
+    # Not an error, and it is now also the deploy-time path. A capture that closed no window has
+    # nothing to merge, and a job that failed on that would fail every time the stream was quiet
+    # — and would fail on the run whose only job is to create the table above.
+    print(f"nothing landed; {TARGET} exists, no merge")
     job.commit()
     raise SystemExit(0)
 
@@ -61,25 +115,41 @@ landed.createOrReplaceTempView("landed")
 
 # Quarantines are evidence, not settlement rows. They land in the same stream because they are
 # produced by the same operator, and they belong in their own table rather than as nulls here.
+# **Every column the core computed, and `closed_at` is the one that matters.**
+#
+# This view used to select eight columns and set `closed_at` to `CURRENT_TIMESTAMP()` — the time
+# the *merge* ran, not the watermark that permitted publication. Those are different facts and
+# only one of them is evidence: a row whose `closed_at` precedes its own interval end could not
+# have come from the core, which is what makes claim 1 checkable in SQL after the fact. Stamping
+# it with the merge clock made the column always pass and mean nothing.
+#
+# It now comes off the record, where `streaming/operators.py` puts it. `merged_at` is the merge
+# clock, kept as its own column because dbt's incremental predicate needs to know what this run
+# touched, and that is a different question from when the window closed.
 spark.sql("""
     CREATE OR REPLACE TEMPORARY VIEW closed AS
     SELECT
-        meter                                          AS meter_id,
-        TIMESTAMP_MILLIS(CAST(interval_start AS BIGINT)) AS interval_start,
-        CAST(energy_wh AS BIGINT)                      AS energy_wh,
-        CAST(revision AS INT)                          AS revision,
-        CAST(supersedes AS BIGINT)                     AS supersedes,
-        restatement_cause,
+        meter                                              AS meter_id,
+        TIMESTAMP_MILLIS(CAST(interval_start AS BIGINT))   AS interval_start,
+        CAST(energy_wh AS BIGINT)                          AS energy_wh,
+        CAST(readings AS INT)                              AS readings,
+        CAST(duplicates_suppressed AS INT)                 AS duplicates_suppressed,
+        CAST(corrections_absorbed AS INT)                  AS corrections_absorbed,
+        TIMESTAMP_MILLIS(CAST(closed_at AS BIGINT))        AS closed_at,
+        TIMESTAMP_MILLIS(CAST(first_seen_at AS BIGINT))    AS first_seen_at,
         watermark_status,
-        CURRENT_TIMESTAMP()                            AS closed_at
+        idle_partitions,
+        CAST(revision AS INT)                              AS revision,
+        CAST(supersedes AS BIGINT)                         AS supersedes,
+        restatement_cause,
+        lineage_id,
+        CURRENT_TIMESTAMP()                                AS merged_at
     FROM landed
     WHERE kind <> 'quarantine' AND meter IS NOT NULL
 """)
 
-target = f"glue_catalog.{ARGUMENTS['DATABASE']}.{ARGUMENTS['TABLE']}"
-
 spark.sql(f"""
-    MERGE INTO {target} AS target
+    MERGE INTO {TARGET} AS target
     USING closed AS source
     ON  target.meter_id = source.meter_id
     AND target.interval_start = source.interval_start
@@ -87,7 +157,7 @@ spark.sql(f"""
     WHEN NOT MATCHED THEN INSERT *
 """)
 
-merged = spark.sql(f"SELECT COUNT(*) AS rows, MAX(revision) AS top FROM {target}").collect()[0]
-print(f"merged; {target} now holds {merged['rows']} rows, highest revision {merged['top']}")
+merged = spark.sql(f"SELECT COUNT(*) AS rows, MAX(revision) AS top FROM {TARGET}").collect()[0]
+print(f"merged; {TARGET} now holds {merged['rows']} rows, highest revision {merged['top']}")
 
 job.commit()

@@ -12,12 +12,22 @@
 -- **The newest revision wins, and nothing else does.** A published window and its restatement
 -- are two rows for one interval; summing both double-counts it, which is the single arithmetic
 -- mistake this whole path exists to avoid.
+--
+-- **The schema names are placeholders, rendered by `infra/lakehouse/athena.tf`.** They used to
+-- be written out, and both halves of that were wrong: this file read `gold.meter_interval` when
+-- the table is created in *silver*, and the databases are named for the project — not `silver`
+-- and `gold` on their own. Athena answered `SCHEMA_NOT_FOUND: Schema 'gold' does not exist` on
+-- the first live run of the named query this file becomes. Rendering them from the same
+-- Terraform that creates the databases is what makes the pair impossible to disagree.
+--
+-- A literal dollar-brace in this file is a template expression, so it cannot be written even
+-- inside a comment: `templatefile` parses the whole file and fails on one it cannot evaluate.
 WITH latest_revision AS (
     SELECT
         meter_id,
         interval_start,
         MAX(revision) AS revision
-    FROM gold.meter_interval
+    FROM ${silver}.meter_interval
     WHERE interval_start >= ?
       AND interval_start <  ?
     GROUP BY meter_id, interval_start
@@ -31,7 +41,7 @@ settled_interval AS (
         -- Carried up rather than dropped: a total computed while a substation was excluded
         -- from the watermark has a hole in it, and the invoice has to be able to say so.
         CARDINALITY(w.idle_partitions) > 0 AS computed_with_idle_partition
-    FROM gold.meter_interval AS w
+    FROM ${silver}.meter_interval AS w
     JOIN latest_revision AS l
       ON  w.meter_id       = l.meter_id
       AND w.interval_start = l.interval_start

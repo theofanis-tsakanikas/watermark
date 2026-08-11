@@ -206,6 +206,12 @@ data "aws_iam_policy_document" "maintenance" {
       data.aws_s3_bucket.lakehouse.arn,
       "${data.aws_s3_bucket.lakehouse.arn}/warehouse/*",
       "${data.aws_s3_bucket.lakehouse.arn}/jobs/*",
+      # The landing prefix, which `land_to_silver` reads and which this list did not name. The
+      # job was written when its input was a table; it now reads the files the Flink sink
+      # writes, and a role granted the warehouse and not the landing zone is a merge that fails
+      # on `AccessDenied` at the moment it finally has something to merge. The mirror image of
+      # the sink being granted a prefix it did not write to, one layer over.
+      "${data.aws_s3_bucket.lakehouse.arn}/landing/*",
     ]
   }
 

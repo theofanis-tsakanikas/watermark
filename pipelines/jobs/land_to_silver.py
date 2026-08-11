@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import sys
 
+import boto3
 from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
@@ -101,15 +102,29 @@ spark.sql(f"""
     )
 """)
 
-landed = spark.read.json(ARGUMENTS["LANDING"])
+# **Asked before it is read, not caught after.**
+#
+# `landed.rdd.isEmpty()` was the guard, and it cannot run: on an estate where no capture has
+# happened yet the landing prefix does not exist at all, and `spark.read.json` raises
+# `AnalysisException: Path does not exist` before there is a DataFrame to ask. That is precisely
+# the deploy-time run — the one whose only purpose is to create the table above — so the guard
+# was unreachable on the single occasion it was written for.
+#
+# `list_objects_v2` rather than catching the exception, because the exception's import path moved
+# between Spark 3.3 and 3.4 (`pyspark.sql.utils` to `pyspark.errors`) and a job that catches the
+# wrong class on a Glue version upgrade fails in a way that reads like a data problem. An empty
+# prefix and an absent prefix are the same fact to S3, and the same fact to this job.
+bucket, _, prefix = ARGUMENTS["LANDING"].removeprefix("s3://").partition("/")
+listing = boto3.client("s3").list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
 
-if landed.rdd.isEmpty():
-    # Not an error, and it is now also the deploy-time path. A capture that closed no window has
-    # nothing to merge, and a job that failed on that would fail every time the stream was quiet
-    # — and would fail on the run whose only job is to create the table above.
-    print(f"nothing landed; {TARGET} exists, no merge")
+if listing.get("KeyCount", 0) == 0:
+    # Not an error, and it is also the deploy-time path. A capture that closed no window has
+    # nothing to merge, and a job that failed on that would fail every time the stream was quiet.
+    print(f"nothing landed under {ARGUMENTS['LANDING']}; {TARGET} exists, no merge")
     job.commit()
     raise SystemExit(0)
+
+landed = spark.read.json(ARGUMENTS["LANDING"])
 
 landed.createOrReplaceTempView("landed")
 

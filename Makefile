@@ -145,16 +145,21 @@ package: connector iceberg ## Vendor the package into infra/streaming/.package s
 	@# 20 MB binary in a repository whose whole claim is that everything in it is checkable is
 	@# the one file nobody would ever verify. `make connector` fetches it; this refuses to
 	@# package without it, rather than producing an archive that deploys and never reads.
-	@test -f infra/streaming/lib/iceberg-flink-runtime.jar || { \
-		echo "missing infra/streaming/lib/iceberg-flink-runtime.jar — run 'make iceberg'"; \
+	@test -f infra/streaming/lib/iceberg-flink-runtime.jar -a -f infra/streaming/lib/iceberg-aws-bundle.jar || { \
+		echo "missing an Iceberg jar in infra/streaming/lib — run 'make iceberg'"; \
 		exit 1; \
 	}
 	@test -f infra/streaming/lib/flink-sql-connector-kinesis.jar || { \
 		echo "missing infra/streaming/lib/flink-sql-connector-kinesis.jar — run 'make connector'"; \
 		exit 1; \
 	}
+	@# One jar, because `jarfile` takes one path. See scripts/merge_connectors.py for why this
+	@# is a merge rather than a copy: service registrations are appended and signatures dropped.
 	mkdir -p infra/streaming/.package/lib
-	cp infra/streaming/lib/*.jar infra/streaming/.package/lib/
+	$(PY) scripts/merge_connectors.py infra/streaming/.package/lib/connectors.jar \
+		infra/streaming/lib/flink-sql-connector-kinesis.jar \
+		infra/streaming/lib/iceberg-flink-runtime.jar \
+		infra/streaming/lib/iceberg-aws-bundle.jar
 	@echo "packaged infra/streaming/.package ($$(du -sh infra/streaming/.package | cut -f1))"
 
 .PHONY: claim-3
@@ -212,7 +217,13 @@ iceberg: ## Fetch the Iceberg Flink runtime the sink cannot write without
 	@echo "30 MB binary is the one file in this repository nobody would ever verify by reading."
 	curl -fsSL -o infra/streaming/lib/iceberg-flink-runtime.jar \
 		"https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-flink-runtime-1.20/$(ICEBERG_VERSION)/iceberg-flink-runtime-1.20-$(ICEBERG_VERSION).jar"
-	@echo "fetched $$(du -h infra/streaming/lib/iceberg-flink-runtime.jar | cut -f1)"
+	@# `GlueCatalog` and `S3FileIO` are not in the Flink runtime — they are in the AWS bundle.
+	@# A catalog configured with `catalog-impl = org.apache.iceberg.aws.glue.GlueCatalog` and
+	@# only the runtime on the classpath fails at CREATE CATALOG, in the driver, with a class
+	@# nobody can see in the job's own code.
+	curl -fsSL -o infra/streaming/lib/iceberg-aws-bundle.jar \
+		"https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/$(ICEBERG_VERSION)/iceberg-aws-bundle-$(ICEBERG_VERSION).jar"
+	@echo "fetched $$(du -ch infra/streaming/lib/iceberg-*.jar | tail -1 | cut -f1)"
 
 .PHONY: gate-proof
 gate-proof: ## Break every gate on purpose; each must be refused, for the right reason

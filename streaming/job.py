@@ -216,19 +216,9 @@ def main() -> None:  # pragma: no cover — the deployed entry point, never run 
     # run it is no better off.
     environment.add_python_file(_ROOT)
 
-    # The Iceberg runtime, added here because nothing else can.
-    #
-    # Managed Flink's `jarfile` property takes exactly one path and it is spent on the Kinesis
-    # connector; a comma-separated pair is rejected as a *file name*. The archive carries both
-    # JARs either way, and this is the only code that knows where it was extracted to — the
-    # path is a fresh `/tmp/flink-web-<uuid>/...` on every start.
-    #
-    # Without it the catalog fails on a factory it cannot find, from a JAR in the same zip.
-    _iceberg = _Path(_ROOT) / "lib" / "iceberg-flink-runtime.jar"
-    if _iceberg.is_file():
-        environment.add_jars(f"file://{_iceberg}")
-    else:
-        logging.warning("iceberg runtime not in the archive; the lakehouse sink will fail")
+    # No `add_jars` here, and the attempt is worth recording: a catalog factory is resolved by
+    # the planner in the driver, before a job graph exists, so shipping a jar with the job is
+    # too late. All three connectors are merged into one archive at package time instead.
     build_pipeline(environment, placement)
     environment.execute("watermark")
 

@@ -33,7 +33,8 @@ from watermark.core.watermarks import (
     held_back_by,
     observe,
 )
-from watermark.core.windows import Emission, WindowManager, WindowPolicy
+from watermark.core.windows import Emission, WindowManager, WindowPolicy, WindowResult
+from watermark.lineage.identity import LineageId, of_reading, of_result
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +105,15 @@ class MeterWindowOperator:
     _state: WatermarkState = field(init=False)
     _manager: WindowManager = field(init=False)
     _previous: WatermarkView | None = field(default=None, init=False)
+    #: Reading lineage ids per open window, keyed by `(meter_id, interval_start_millis)`.
+    #:
+    #: The same bookkeeping `watermark.runner.run` does, for the same reason and by the same
+    #: calls. Without it the deployed pipeline published totals with **no lineage id at all**
+    #: while the offline runner minted one for every result — so claim 2, which is a claim about
+    #: lineage hashes surviving a replay, was being proved about a path that production did not
+    #: take. The declared table has a `lineage_id` column and dbt tests it `not_null`; nothing
+    #: was ever going to fill it.
+    _contributing: dict[tuple[str, int], list[LineageId]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         # Declared, not discovered. A partition the generator has never heard of cannot hold the
@@ -114,8 +124,14 @@ class MeterWindowOperator:
 
     def process(
         self, envelopes: Iterable[Envelope], at: Instant
-    ) -> tuple[Emission, tuple[Quarantined, ...], WatermarkView]:
-        """One batch, in the order that matters."""
+    ) -> tuple[Emission, tuple[Quarantined, ...], WatermarkView, dict[tuple[str, int, int], str]]:
+        """One batch, in the order that matters.
+
+        Returns the lineage ids alongside the emission rather than folding them into
+        `WindowResult`, because a result is what the core computed and a lineage id is what
+        *this* pipeline computed about it. Keeping them apart is what lets the core stay a pure
+        function of readings.
+        """
         accepted: list[tuple[Envelope, MeterReading]] = []
         refused: list[Quarantined] = []
 
@@ -139,12 +155,33 @@ class MeterWindowOperator:
             refusal = self._manager.admit(reading)
             if refusal is not None:
                 refused.append(refusal)
+                continue
+            self._contributing.setdefault(
+                (reading.meter_id, reading.interval_start.epoch_millis), []
+            ).append(of_reading(reading))
 
         emission = self._manager.close(view)
+        lineage = self._lineage_for(emission)
         # Content order, like everything else this pipeline emits. Arrival order is an accident
         # of partitioning; claim 2 is a claim about bytes.
         ordered = tuple(sorted(refused, key=lambda item: (item.reason.value, item.payload)))
-        return emission, ordered, view
+        return emission, ordered, view, lineage
+
+    def _lineage_for(self, emission: Emission) -> dict[tuple[str, int, int], str]:
+        """Mint an id for every result this batch emitted.
+
+        **Nothing is pruned.** A restatement arrives days after the publication it supersedes
+        and must derive from the same parents, so dropping a window's contributors once it has
+        closed would give revision 1 a different provenance from revision 0 — which is the
+        lineage equivalent of overwriting the prior value, and doctrine 4 forbids it. The cost
+        is memory proportional to the intervals one meter has been seen for, bounded by the
+        keyed state Flink already holds for the same meter.
+        """
+        minted: dict[tuple[str, int, int], str] = {}
+        for result in (*emission.published, *emission.restated, *emission.confirmed):
+            key = (result.meter_id, result.interval_start.epoch_millis)
+            minted[(*key, result.revision)] = of_result(result, self._contributing.get(key, ()))
+        return minted
 
     def current_view(self) -> WatermarkView | None:
         """The last view the core produced, for Flink's periodic watermark emit.
@@ -156,26 +193,56 @@ class MeterWindowOperator:
         return self._previous
 
 
-def _line(kind: str, result: object, view: object) -> str:
-    """One JSON line per outcome, carrying what a reader needs to judge it.
+def _line(kind: str, result: WindowResult, view: object, lineage_id: str | None) -> str:
+    """One JSON line per outcome, carrying the whole of what the core computed.
 
     Emitted rather than returned as an object because the sink is a log: a capture's evidence
     has to be readable by a person and greppable by a script, and neither is true of a pickled
     dataclass in a discarded stream.
+
+    **It used to carry nine of `WindowResult`'s fourteen fields**, and the five it dropped were
+    not the unimportant ones. `closed_at` is the watermark that permitted publication — the
+    column `pipelines/dbt/models/silver/sources.yml` describes as "claim 1, checkable in SQL
+    after the fact", and the only thing that makes a published row auditable without re-running
+    the stream. `readings`, `duplicates_suppressed` and `corrections_absorbed` are how a total
+    is defended against the meter it came from, and `first_seen_at` is what makes the
+    deduplication rule observable at all (see `WindowResult`, where a `gate-proof` mutation
+    turned on exactly that).
+
+    The core had computed all five on every result for the whole of phase 1. The adapter threw
+    them away on the way to the sink, which is the one place no offline test looks — the claim
+    harnesses read `WindowResult` directly and stayed green throughout.
+
+    `idle_partitions` comes off the *result*, not the view. They agree at the moment of
+    publication, but the result's copy is the state when this window closed and the view's is
+    the state now; for a restatement emitted days later those are different facts, and the row
+    is a statement about the window.
     """
     return json.dumps(
         {
             "kind": kind,
-            "meter": getattr(result, "meter_id", None),
-            "interval_start": getattr(
-                getattr(result, "interval_start", None), "epoch_millis", None
-            ),
-            "energy_wh": str(getattr(result, "energy_wh", "")),
-            "revision": getattr(result, "revision", None),
-            "supersedes": getattr(result, "supersedes", None),
-            "restatement_cause": getattr(result, "restatement_cause", None),
-            "watermark_status": getattr(getattr(view, "status", None), "value", None),
-            "idle_partitions": list(getattr(view, "idle_partitions", ()) or ()),
+            "meter": result.meter_id,
+            "interval_start": result.interval_start.epoch_millis,
+            # A string, because `energy_wh` is an exact integer count of watt-hours and JSON
+            # numbers are doubles in most readers. ADR-0004 removed the parity tolerance in
+            # favour of a scaled integer; letting the transport round it would put the tolerance
+            # back where nobody would look for it.
+            "energy_wh": str(result.energy_wh),
+            "readings": result.readings,
+            "duplicates_suppressed": result.duplicates_suppressed,
+            "corrections_absorbed": result.corrections_absorbed,
+            "closed_at": result.closed_at.epoch_millis,
+            "first_seen_at": result.first_seen_at.epoch_millis,
+            "revision": result.revision,
+            "supersedes": result.supersedes,
+            "restatement_cause": result.restatement_cause,
+            "watermark_status": result.watermark_status.value,
+            "idle_partitions": list(result.idle_partitions),
+            "lineage_id": lineage_id,
+            # The watermark's condition *now*, next to the condition when the window closed.
+            # For a first publication they are the same; for a restatement they are the two
+            # halves of "what did we know then, and what do we know now".
+            "observed_status": getattr(getattr(view, "status", None), "value", None),
         },
         default=str,
     )
@@ -273,7 +340,7 @@ def build_process_function(operator: MeterWindowOperator):
 
             if not batch:
                 return
-            emission, refused, view = operator.process(batch, Instant(timestamp))
+            emission, refused, view, lineage = operator.process(batch, Instant(timestamp))
 
             # JSON strings, not tuples of dataclasses. `.process()` defaults to pickling its
             # output, which means every worker must be able to import the core's classes to
@@ -289,7 +356,8 @@ def build_process_function(operator: MeterWindowOperator):
                 ("confirmed", emission.confirmed),
             ):
                 for result in results:
-                    line = _line(kind, result, view)
+                    key = (result.meter_id, result.interval_start.epoch_millis, result.revision)
+                    line = _line(kind, result, view, lineage.get(key))
                     _EVIDENCE.info(line)
                     yield line
             for quarantined in refused:

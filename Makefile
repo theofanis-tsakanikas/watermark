@@ -27,6 +27,10 @@ CONNECTOR_VERSION := 5.1.0-1.20
 #: The Iceberg Flink runtime. Same argument as the Kinesis connector: fetched, never vendored.
 #: The minor must match the Flink runtime in `infra/streaming/variables.tf`.
 ICEBERG_VERSION := 1.7.1
+#: Iceberg's Flink catalog constructs a Hadoop `Configuration` even when the catalog is Glue and
+#: the IO is S3FileIO — and Managed Flink does not package Hadoop. Without this the driver dies
+#: on `NoClassDefFoundError: org/apache/hadoop/conf/Configuration` at CREATE CATALOG.
+HADOOP_VERSION := 3.3.6
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Everything above the "cloud" section runs with NO AWS account and NO
@@ -145,8 +149,9 @@ package: connector iceberg ## Vendor the package into infra/streaming/.package s
 	@# 20 MB binary in a repository whose whole claim is that everything in it is checkable is
 	@# the one file nobody would ever verify. `make connector` fetches it; this refuses to
 	@# package without it, rather than producing an archive that deploys and never reads.
-	@test -f infra/streaming/lib/iceberg-flink-runtime.jar -a -f infra/streaming/lib/iceberg-aws-bundle.jar || { \
-		echo "missing an Iceberg jar in infra/streaming/lib — run 'make iceberg'"; \
+	@test -f infra/streaming/lib/iceberg-flink-runtime.jar -a -f infra/streaming/lib/iceberg-aws-bundle.jar \
+		-a -f infra/streaming/lib/hadoop-common.jar || { \
+		echo "missing a connector jar in infra/streaming/lib — run 'make iceberg'"; \
 		exit 1; \
 	}
 	@test -f infra/streaming/lib/flink-sql-connector-kinesis.jar || { \
@@ -159,7 +164,8 @@ package: connector iceberg ## Vendor the package into infra/streaming/.package s
 	$(PY) scripts/merge_connectors.py infra/streaming/.package/lib/connectors.jar \
 		infra/streaming/lib/flink-sql-connector-kinesis.jar \
 		infra/streaming/lib/iceberg-flink-runtime.jar \
-		infra/streaming/lib/iceberg-aws-bundle.jar
+		infra/streaming/lib/iceberg-aws-bundle.jar \
+		infra/streaming/lib/hadoop-common.jar
 	@echo "packaged infra/streaming/.package ($$(du -sh infra/streaming/.package | cut -f1))"
 
 .PHONY: claim-3
@@ -223,7 +229,9 @@ iceberg: ## Fetch the Iceberg Flink runtime the sink cannot write without
 	@# nobody can see in the job's own code.
 	curl -fsSL -o infra/streaming/lib/iceberg-aws-bundle.jar \
 		"https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/$(ICEBERG_VERSION)/iceberg-aws-bundle-$(ICEBERG_VERSION).jar"
-	@echo "fetched $$(du -ch infra/streaming/lib/iceberg-*.jar | tail -1 | cut -f1)"
+	curl -fsSL -o infra/streaming/lib/hadoop-common.jar \
+		"https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-common/$(HADOOP_VERSION)/hadoop-common-$(HADOOP_VERSION).jar"
+	@echo "fetched $$(du -ch infra/streaming/lib/iceberg-*.jar infra/streaming/lib/hadoop-common.jar | tail -1 | cut -f1)"
 
 .PHONY: gate-proof
 gate-proof: ## Break every gate on purpose; each must be refused, for the right reason

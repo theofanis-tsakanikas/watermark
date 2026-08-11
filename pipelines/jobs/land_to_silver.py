@@ -35,10 +35,7 @@ from pyspark.context import SparkContext
 
 ARGUMENTS = getResolvedOptions(sys.argv, ["JOB_NAME", "WAREHOUSE", "LANDING", "DATABASE", "TABLE"])
 
-spark = (
-    SparkContext.getOrCreate()
-    and GlueContext(SparkContext.getOrCreate()).spark_session
-)
+spark = SparkContext.getOrCreate() and GlueContext(SparkContext.getOrCreate()).spark_session
 
 # The catalog is configured by the *job definition*, not here.
 #

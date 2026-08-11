@@ -50,8 +50,12 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install -e ".[dev,ml]"
-      - run: ruff check src tests tests_flink scripts data evals streaming
-      - run: ruff format --check src tests tests_flink scripts data evals streaming
+      # `pipelines/jobs` is in this list because it was missing from it. The Makefile's `lint`
+      # target calls itself "the exact command CI runs" and lints one path more, so a Glue job
+      # sat unformatted on `main` under a green CI — the drift being invisible in exactly the
+      # direction that matters, since the local command was the stricter one.
+      - run: ruff check src tests tests_flink scripts data evals streaming pipelines/jobs
+      - run: ruff format --check src tests tests_flink scripts data evals streaming pipelines/jobs
       # Tier one of ADR-0003: pure, no JVM, under a second. Everything except the core↔Flink
       # equivalence is proved here.
       #

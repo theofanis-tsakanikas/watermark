@@ -98,6 +98,25 @@ data "aws_iam_policy_document" "flink" {
     ]
   }
 
+  # The Iceberg catalog. Every commit is a Glue `UpdateTable` — that is what an Iceberg commit
+  # *is* against a Glue catalog: the table's metadata pointer moves atomically. A job that can
+  # write parquet into the warehouse and not update the pointer produces files no reader will
+  # ever see, which looks exactly like a job that is working.
+  statement {
+    sid    = "CommitThroughTheGlueCatalog"
+    effect = "Allow"
+    actions = [
+      "glue:GetDatabase", "glue:GetDatabases",
+      "glue:GetTable", "glue:GetTables", "glue:UpdateTable",
+      "glue:CreateTable", "glue:GetPartitions", "glue:BatchCreatePartition",
+    ]
+    resources = [
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/${var.project}_*",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project}_*/*",
+    ]
+  }
+
   statement {
     sid       = "UseTheDataKey"
     effect    = "Allow"
@@ -219,6 +238,11 @@ resource "aws_kinesisanalyticsv2_application" "watermark" {
           # Never defaulted: TRIM_HORIZON and LATEST produce completely different first hours,
           # and the difference is invisible in a dashboard.
           WATERMARK_INITIAL_POSITION = var.initial_stream_position
+
+          # Where the Iceberg sink writes. From the lakehouse layer through a data source, never
+          # reconstructed here: a job that guesses the bucket writes somewhere Athena does not
+          # read, and both look healthy.
+          WATERMARK_LAKEHOUSE_BUCKET = data.aws_s3_bucket.lakehouse.id
         }
       }
     }

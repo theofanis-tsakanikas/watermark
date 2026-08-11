@@ -59,6 +59,11 @@ class Placement:
     #: and the difference is invisible in a dashboard.
     initial_position: str
 
+    #: The bucket `infra/lakehouse` holds the warehouse in. Placement, like the stream names:
+    #: the job must be told where to write, and a guessed bucket is a job that writes somewhere
+    #: nobody reads.
+    lakehouse_bucket: str
+
     @staticmethod
     def from_environment() -> Placement:
         """Read the placement, refusing to invent any of it.
@@ -75,6 +80,7 @@ class Placement:
             max_parallelism=int(_required("WATERMARK_MAX_PARALLELISM")),
             partitions=tuple(_required("WATERMARK_PARTITIONS").split(",")),
             initial_position=_required("WATERMARK_INITIAL_POSITION"),
+            lakehouse_bucket=_required("WATERMARK_LAKEHOUSE_BUCKET"),
         )
 
 

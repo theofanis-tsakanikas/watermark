@@ -116,17 +116,74 @@ def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement
     # work. Claim 1 stays provable offline because the thing being proved never moved into the
     # framework — which is exactly what `scripts/check_adapter_is_thin.py` exists to enforce,
     # and why it refuses both convenience constructors by name.
-    (
+    windows = (
         environment.add_source(consumer)
         .key_by(lambda record: record[1])
         .process(build_process_function(operator), output_type=Types.STRING())
         .name("watermark-meter-windows")
-        # A sink, because a job without one is a job whose output has nowhere to go — and
-        # because the evidence a capture exists to produce has to be *readable*. Every closed
-        # window, every restatement and every quarantine lands in the application log with the
-        # watermark status that allowed it, which is claim 1 in a form a person can check.
-        .print()
     )
+
+    # The log sink stays. It is the evidence a person reads during a capture and it costs
+    # nothing; the Iceberg sink is what the rest of the system depends on.
+    windows.print()
+    _sink_to_iceberg(environment, windows, placement)
+
+
+def _sink_to_iceberg(environment, windows, placement: Placement) -> None:
+    """Persist closed windows into the silver table.
+
+    **Without this the platform computes and forgets.** The job closed windows correctly for a
+    whole live run and wrote them only to a log: the lakehouse stayed empty, so settlement had
+    nothing to total, the erasure legs had nothing to delete, dbt had no source, and a window
+    that is not stored cannot be restated — which took doctrine 4 with it. Four claims rested
+    on a sink that did not exist.
+
+    Written through the Table API against the **Glue catalog**, which is where `infra/lakehouse`
+    already declared these tables: Iceberg v2, merge-on-read, parquet+zstd. The schema is not
+    restated here — a second definition of one table is two definitions that drift on the first
+    column anybody adds.
+    """
+    from pyflink.table import Schema, StreamTableEnvironment  # noqa: PLC0415
+
+    table = StreamTableEnvironment.create(environment)
+
+    # Named, not created. Two definitions of one warehouse is how a job writes somewhere Athena
+    # does not read.
+    table.execute_sql(f"""
+        CREATE CATALOG lakehouse WITH (
+            'type' = 'iceberg',
+            'catalog-impl' = 'org.apache.iceberg.aws.glue.GlueCatalog',
+            'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO',
+            'warehouse' = 's3://{placement.lakehouse_bucket}/warehouse'
+        )
+    """)
+
+    # The operator's own JSON, parsed back. Carrying a typed stream instead would mean the log a
+    # person reads and the table Athena queries were built from different values — and claim 2
+    # is a claim about bytes.
+    table.create_temporary_view(
+        "windows",
+        windows,
+        Schema.new_builder().column("line", "STRING").build(),
+    )
+
+    table.execute_sql("""
+        INSERT INTO lakehouse.watermark_silver.meter_interval
+            (meter_id, interval_start, energy_wh, closed_at, watermark_status,
+             revision, supersedes, restatement_cause, lineage_id)
+        SELECT
+            JSON_VALUE(line, '$.meter'),
+            TO_TIMESTAMP_LTZ(CAST(JSON_VALUE(line, '$.interval_start') AS BIGINT), 3),
+            CAST(JSON_VALUE(line, '$.energy_wh') AS BIGINT),
+            CURRENT_TIMESTAMP,
+            JSON_VALUE(line, '$.watermark_status'),
+            CAST(JSON_VALUE(line, '$.revision') AS INT),
+            CAST(JSON_VALUE(line, '$.supersedes') AS BIGINT),
+            JSON_VALUE(line, '$.restatement_cause'),
+            JSON_VALUE(line, '$.lineage_id')
+        FROM windows
+        WHERE JSON_VALUE(line, '$.kind') <> 'quarantine'
+    """)
 
 
 def replay(arrivals: list[Arrival], partitions: tuple[str, ...]) -> object:

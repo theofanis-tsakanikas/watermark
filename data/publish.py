@@ -13,13 +13,14 @@ exercised by the test suite rather than being the one script nobody has ever exe
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 
 from data.cast import SUBSTATIONS
 from data.generate import generate
 from watermark.core.records import Source
-from watermark.core.time import Duration
+from watermark.core.time import Duration, Instant
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,37 @@ def plan(minutes: int) -> Plan:
     )
 
 
+#: Every ISO-8601 instant in a payload, whatever firmware shape holds it.
+#:
+#: Textual rather than schema-aware on purpose. The three firmware shapes put the instant under
+#: three different keys, and a publisher that had to know which is a publisher doing the core's
+#: job — `normalise` owns that question. A timestamp is a timestamp at the transport layer.
+_INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
+
+
+def _compress_instants(raw: str, origin: int, start: int, compression: int) -> str:
+    """Map every instant in the payload through the same transform as the pacing.
+
+    **This is what makes late data late by the right amount.** The publisher already compressed
+    *arrival* times into the capture window and left *event* times untouched, so a correction
+    that was three days late at source arrived three days late against a window that had closed
+    seconds earlier — 150 days past its interval, in a run that lasted six minutes. The core
+    refused all 288 of them for exactly the reason it should, and doctrine 4 could never be
+    demonstrated live.
+
+    Compressing both keeps the *relationship* between event time and arrival, which is the only
+    thing the scenario is about. A reading three days late becomes seconds late; a window that
+    closes and is then corrected still closes and is then corrected.
+    """
+
+    def shift(match: re.Match[str]) -> str:
+        instant = Instant.from_iso(match.group(0))
+        moved = start + (instant.epoch_millis - origin) // compression
+        return Instant(moved).to_iso()
+
+    return _INSTANT.sub(shift, raw)
+
+
 def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — needs an estate
     """Publish for real, at the compressed pace the plan describes.
 
@@ -101,6 +133,12 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
     # put the last corrections a fraction past the end of the window and drop them.
     origin = min(delivery.ingest_time.epoch_millis for delivery in deliveries)
 
+    # Where the compressed day lands on the wall clock. The core measures lateness in real
+    # elapsed time, so a scenario replayed months after its seeded date is a scenario in which
+    # everything is months late. Anchoring it to now is what makes the run a replay rather than
+    # an archive.
+    wall_start = int(time.time() * 1000)
+
     started = time.monotonic()
     published = 0
 
@@ -118,10 +156,11 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
         # correction claim to be live, so the core refused all 288 as past their window and no
         # restatement was ever produced.
         leaf = "reading" if delivery.source is Source.STREAM else "backfill"
+        payload = _compress_instants(delivery.raw, origin, wall_start, described.compression)
         client.publish(
             topic=f"{topic_prefix}/meter/{_meter_of(delivery.raw)}/{leaf}",
             qos=1,
-            payload=delivery.raw.encode("utf-8"),
+            payload=payload.encode("utf-8"),
         )
         published += 1
     return published

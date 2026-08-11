@@ -95,6 +95,10 @@ data "aws_iam_policy_document" "flink" {
       data.aws_s3_bucket.lakehouse.arn,
       "${data.aws_s3_bucket.lakehouse.arn}/warehouse/*",
       "${data.aws_s3_bucket.lakehouse.arn}/quarantine/*",
+      # Where closed windows land for the merge job. Added with the prefix rather than after
+      # it: a sink writing to a prefix nobody granted fails inside a running job, and the job
+      # keeps reporting healthy while the table stays empty — which is exactly what it did.
+      "${data.aws_s3_bucket.lakehouse.arn}/landing/*",
     ]
   }
 

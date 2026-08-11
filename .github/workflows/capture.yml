@@ -81,11 +81,31 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: start the Flink application
+      - name: start the Flink application, unless it is already running
+        # `ResourceInUseException: Application cannot be started in 'RUNNING' state` is not a
+        # failure — it is the state this step wants. A cancelled run leaves the application up,
+        # and refusing to proceed there means the next capture cannot start until somebody stops
+        # it by hand, which is the opposite of what an unattended workflow is for.
+        #
+        # It waits for RUNNING either way, so the steps after this one can assume it.
         run: |
-          aws kinesisanalyticsv2 start-application \
-            --application-name watermark \
-            --run-configuration '{"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'
+          set -euo pipefail
+          status=$(aws kinesisanalyticsv2 describe-application --application-name watermark \
+            --query 'ApplicationDetail.ApplicationStatus' --output text)
+          echo "flink application: $status"
+          if [ "$status" != "RUNNING" ] && [ "$status" != "STARTING" ]; then
+            aws kinesisanalyticsv2 start-application \
+              --application-name watermark \
+              --run-configuration '{"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'
+          fi
+          for _ in $(seq 1 40); do
+            status=$(aws kinesisanalyticsv2 describe-application --application-name watermark \
+              --query 'ApplicationDetail.ApplicationStatus' --output text)
+            [ "$status" = "RUNNING" ] && break
+            sleep 15
+          done
+          echo "flink application: $status"
+          [ "$status" = "RUNNING" ]
 
       - name: run the training pipeline and wait for it
         # Before the endpoint, deliberately. The endpoint serves a model a *human* approved, so

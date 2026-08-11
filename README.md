@@ -12,17 +12,28 @@ Store · Lake Formation · Step Functions · Terraform*
 
 ---
 
-> **Status: all four phases complete. Every claim proved offline; the estate is deploy-ready and has never been deployed.** The scoreboard
-> below lists what is provable today, which is not yet much; it grows one row per claim, and a
-> row appears only when the command that produces it exists.
+> **Status: all four phases complete. Every claim proved offline, and the estate has been
+> deployed to a real AWS account, driven, and destroyed.** The scoreboard below lists what is
+> provable on a laptop with no credentials; a row appears only when the command that produces
+> it exists.
 >
-> **Nothing here has been created in AWS, and nothing will be.** Every layer of Terraform is
-> written, formatted, validated against real provider schemas and scanned to zero findings —
-> and left unapplied. That is a deliberate scope decision, not a stage the project has not
-> reached yet: all seven claims are provable offline *by construction*, so a live run would
-> have produced a screenshot rather than a proof. There are consequently no console captures,
-> no measured wall-clock times and no euro figures anywhere in this repository. The cost
-> section below is a design constraint, not a result.
+> **What the live run proved, and what it did not.** Claims 1, 5 and 6 were exercised against
+> real infrastructure: every published window carried its watermark status, the model
+> registered `PendingManualApproval`, and the erasure state machine **refused to certify** —
+> the correct answer, live. Three things were *not* exercised and are gaps rather than results:
+> **claim 2 end-to-end**, because the Glue merge job was blocked on a missing IAM read
+> (now fixed, not yet re-run); **the endpoint and Model Monitor**, because both require a model
+> a human has approved and none was; and the `held_back` / `stalled` / `starved` watermark
+> states, which are proved offline but were never induced in the cloud.
+>
+> The run is also where four design errors were found that no schema check could reach — among
+> them that PyFlink cannot emit a custom watermark, and that a green CI run had moved zero
+> records. `docs/DECISIONS.md` 17 has the list and retracts the decision that said a live run
+> would add nothing.
+>
+> **Cost.** The tagged spend for the whole exercise was **USD 12.35**, against a design target
+> of under €100. It undercounts: a cost allocation tag takes up to 24 hours to activate, so the
+> estate's first hours are untagged. Both halves of that belong to the number.
 
 ---
 
@@ -219,21 +230,29 @@ for free.
 | [ADR-0002](docs/adr/0002-iceberg-on-s3-over-s3-tables.md) | Iceberg on S3 over S3 Tables, and the two facts that would reverse it |
 | [ADR-0003](docs/adr/0003-the-pure-core-boundary.md) | What the pure core guarantees, what the adapter may not decide, and where a JVM is needed |
 | [ADR-0004](docs/adr/0004-two-mechanism-parity.md) | How claim 3 avoids being a tautology that reports green |
+| [ADR-0005](docs/adr/0005-two-reproducibility-tiers.md) | What "reproducible" is promised to mean, and where it stops |
+| [ADR-0006](docs/adr/0006-clarify-runs-but-does-not-vote.md) | Why the standard bias metric is reported and not obeyed — and why it could not run at all |
+| [ADR-0007](docs/adr/0007-the-framework-carries-records-not-semantics.md) | What the live run proved PyFlink cannot do, and why that made the design stronger |
 
 ---
 
 ## Cost posture
 
-**This estate is never applied, so nothing here has ever cost anything.** What follows is how
-it is designed to behave if it were, and it is written because a design that cannot answer the
-cost question is not finished — not because a bill exists.
+**The design target for one full capture with teardown is under €100. The measured tagged spend
+was USD 12.35** — and that number undercounts, because a cost allocation tag takes up to 24
+hours to activate and the estate's first hours therefore carry no tag. The two halves belong
+together: a measurement quoted without the reason it is low is not more honest than the design
+constraint it replaced.
 
 Nothing can be applied outside a gated workflow. Every resource carries a
 `watermark:expires-at` tag that a scheduled reaper enforces, and an AWS Budget action disables
-the deploy role at its threshold. The three expensive things — Managed Flink KPUs, the
-SageMaker Feature Store online store and any real-time endpoint — are confined to deliberate
-bounded blocks rather than left standing. The design target for one full capture with teardown
-is **under €100**: a constraint that rules designs out, not a figure anybody has paid.
+the deploy role at its threshold. **Neither has ever fired** — the workflow destroyed everything
+well inside its expiry, and the spend never approached the ceiling — so both remain designed
+controls rather than demonstrated ones, and this section says so rather than implying otherwise.
+
+The three expensive things — Managed Flink KPUs, the SageMaker Feature Store online store and
+any real-time endpoint — are confined to deliberate bounded blocks rather than left standing.
+That discipline is why the figure above is USD 12.35 and not a story about a forgotten cluster.
 
 ---
 

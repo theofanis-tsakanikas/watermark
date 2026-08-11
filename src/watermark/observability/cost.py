@@ -94,8 +94,9 @@ class CostReport:
             f"({self.cents_per_hour}c/h): {self.cents_per_million_decisions}c per million "
             f"decisions across {self.decisions:,} decisions, "
             f"{self.millicents_per_meter_hour} millicents per meter-hour across "
-            f"{self.meters:,} meters. Estimated from a rate card and never billed — nothing "
-            "in this repository has been applied."
+            f"{self.meters:,} meters. Estimated from a rate card, not read off a bill: this "
+            "is what the design permits, and the estate that was stood up and destroyed is "
+            "reconciled against it in docs/DECISIONS.md 17."
         )
 
 

@@ -391,7 +391,7 @@ def main() -> int:
         f"\npreflight: {passed} passed, {len(report.failed)} failed, {len(report.skipped)} skipped"
     )
     if report.ok:
-        print("the repository is ready to deploy; nothing here has been deployed")
+        print("the repository is ready to deploy; nothing is standing right now")
     return 0 if report.ok else 1
 
 

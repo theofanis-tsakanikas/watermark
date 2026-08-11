@@ -6,7 +6,15 @@ that have no API, or that must happen before the API exists. Everything here is 
 account for six months later, and it is always discovered during the incident rather than
 before it.
 
-Nothing on this list has been done. The estate does not exist.
+**Items 1–4 have been done.** The account exists, `infra/bootstrap/` was applied from a laptop
+on 2026-08-10, both GitHub environments carry a required reviewer, and the two repository
+variables are set. Item 4b — activating the cost allocation tag — behaved exactly as written
+below: the first apply failed on it, and the second, a day later, succeeded. Items 6 and 8 have
+not been needed.
+
+The estate itself is **not** standing. It was deployed through the gated workflow, driven, and
+destroyed again; see `docs/DECISIONS.md` 17. What survives a teardown is what this file's
+items create, which is the point of them being here.
 
 ---
 

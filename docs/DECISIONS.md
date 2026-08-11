@@ -78,40 +78,75 @@ casually. A new claim must be as sharply falsifiable as the existing seven.
 that breaks it, in the same commit. Attestor's rules apply: green first; a non-zero exit is
 not evidence; a moved target is STALE, not passed.
 
-**15 · Nothing is ever applied to AWS.** *Revised 2026-08-09; this supersedes the original
-"live capture once, at the end, and destroyed."*
+**15 · ~~Nothing is ever applied to AWS.~~** *Superseded 2026-08-11 by decision 17. Kept in
+full, because the argument was wrong in a way worth being able to read.*
 
-The estate is built, formatted, validated against real provider schemas and scanned to zero
-findings — and left unapplied. Not once, not briefly, not from a laptop.
-
-The reasoning is that the capture was never load-bearing. All seven claims are provable
-offline **by construction** — that is the whole design, and it is why `src/watermark/core/`
-may not import a cloud SDK. A live run would therefore have produced a screenshot, not a
-proof, and it would have cost real money to produce something the repository already
-demonstrates for free. The posture is Attestor's: **ready to deploy, not deployed.**
-
-What this forbids, because these are the ways it gets softened by accident:
-
-- No screenshot, dashboard image or console capture from a real estate. There isn't one.
-- No wall-clock time and no euro figure stated as if it were measured. The **under €100**
-  target stays in `CLAUDE.md` as a *design constraint* — a design that pushes past it is wrong
-  before the budget is — and never appears as a result.
-- No claim of the form "the estate has been stood up and destroyed". `terraform validate`
-  against real provider schemas is what is claimed, and its limits are stated in
-  `scripts/tf_validate.py`: green means every attribute exists, not that every value is
-  acceptable.
-- `infra/bootstrap/` is written and validated but **not applied either**, despite being the one
-  layer whose design permits a laptop apply.
-
-`docs/DAY-ONE.md` stays exactly as it is: the written record of the manual work an operator
-would have to do. Writing it down was always the deliverable; doing it was not.
+> The estate is built, formatted, validated against real provider schemas and scanned to zero
+> findings — and left unapplied. Not once, not briefly, not from a laptop.
+>
+> The reasoning is that the capture was never load-bearing. All seven claims are provable
+> offline **by construction** — that is the whole design, and it is why `src/watermark/core/`
+> may not import a cloud SDK. A live run would therefore have produced a screenshot, not a
+> proof, and it would have cost real money to produce something the repository already
+> demonstrates for free. The posture is Attestor's: **ready to deploy, not deployed.**
 
 **16 · The repository is English. The conversation is Greek.**
 
+**17 · The estate is deployed, driven and destroyed. Decision 15 was wrong.**
+*Decided 2026-08-11, after doing it.*
+
+Every layer has been applied to a real AWS account through the gated workflow, the scenario has
+been driven through it, and the whole estate has been destroyed again. `infra/bootstrap/` was
+applied from a laptop on 2026-08-10, as its own design always intended.
+
+**Why 15 was wrong, precisely.** Its argument was that the claims are provable offline, so a
+live run adds nothing. The first half is true and is still the design. The second half does not
+follow, and confusing the two is the error worth naming: *proving the logic offline says nothing
+about whether the estate that would carry it can exist.* Those are different propositions, and
+only one of them had been checked.
+
+The run found things `terraform validate` and checkov cannot, because none of them is a schema
+error. The full list is in the commit history; four stand for the rest:
+
+- **SageMaker Clarify is in maintenance mode and unavailable to new customers.** The pipeline
+  step could not pull its image. ADR-0006 is amended rather than quietly kept, and the honest
+  claim shrank: this project does not run Clarify, it reimplements the metrics that mattered.
+- **PyFlink cannot emit a custom watermark.** The Python API has no `for_generator`; the
+  strategy the job was written around does not exist in the language the job is written in.
+- **Writing Iceberg from PyFlink did not work**, through four attempted classpath layers. The
+  design moved to a landing prefix plus a Glue `MERGE INTO` — which is a better design, arrived
+  at by failing.
+- **The publisher ran dry and the workflow went green.** Zero records reached Kinesis and every
+  step reported success, because nothing asserted that anything had moved. A green run that did
+  nothing is exactly the failure this project exists to argue against, and it was in our own CI.
+
+None of that is discoverable offline, and none of it is a screenshot.
+
+**What is claimed, and what is not.** Claims 1, 5 and 6 were exercised live — every published
+window carried its watermark status, the model registered `PendingManualApproval`, and the
+erasure state machine **refused to certify**, which was the correct answer. Claim 2 was not:
+`land_to_silver` was blocked on a missing IAM read, so settlement had nothing to total. The
+endpoint and Model Monitor were not exercised either, because both need a model a human has
+approved and no human had. **Those are gaps, not results, and they are listed as gaps in
+`README.md`.**
+
+**What this permits, and its limits.** Euro figures and wall-clock times may now be stated —
+*when they are measured, labelled as measured, and given their error bars.* The tagged spend for
+the whole exercise was **USD 12.35**; the true figure is higher, because the cost allocation tag
+takes up to 24 hours to activate and the early hours of the estate are therefore untagged. Both
+halves of that sentence must travel together. A measurement quoted without the reason it
+undercounts is worse than the design constraint it replaced.
+
+The **under €100** target in `CLAUDE.md` remains a design constraint. It is now also survivable
+evidence, and it was met.
+
+`docs/DAY-ONE.md` no longer says the list is undone. It says which items were done, when, and
+what each one taught.
+
 ## Deliberately deferred
 
-- The video walkthrough — Phase 4. (Live capture and screenshots are not deferred; see 15.
-  They are out of scope.)
+- The video walkthrough — Phase 4. (The live capture is no longer deferred and no longer out of
+  scope; it has been done. See 17.)
 - The second worked example (the Readiness Framework scored against Watermark) — after the
   system exists, never as a design target. A build shaped to score well on its author's own
   framework proves nothing about either.

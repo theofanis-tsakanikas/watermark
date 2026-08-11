@@ -222,13 +222,16 @@ Changing a feature's window, grain or definition is a **restatement**: it requir
 
 ## Cost controls — always active
 
-> **Nothing is ever applied to AWS.** Decided 2026-08-09; see `docs/DECISIONS.md` 15. The
-> estate is built, validated against real provider schemas and scanned clean, and left
-> unapplied — including `infra/bootstrap/`. Every claim is provable offline by construction, so
-> a live run would produce a screenshot rather than a proof. The controls below are therefore a
-> *design* discipline: they decide what may be built, and they rule out designs that could only
-> be afforded by watching a bill. No euro figure and no wall-clock time in this repository is a
-> measurement, and none may be written as if it were.
+> **The estate has been deployed, driven and destroyed.** Decided 2026-08-11; see
+> `docs/DECISIONS.md` 17, which supersedes 15. Every layer went up through the gated workflow,
+> the scenario ran through it, and it all came down again; `infra/bootstrap/` was applied from a
+> laptop on 2026-08-10. The controls below are therefore both a *design* discipline and a thing
+> that has been tested against a real bill.
+>
+> **A euro figure or a wall-clock time may be written only if it was measured, is labelled as
+> measured, and carries what it excludes.** The exercise's tagged spend was USD 12.35, and it
+> undercounts: a cost allocation tag takes up to 24 hours to activate, so the estate's first
+> hours carry no tag. Quoting the number without that sentence is the failure mode here.
 
 - **Nothing is applied outside a gated workflow.** No exceptions.
 - Every resource carries `watermark:expires-at`; a scheduled reaper destroys what expired.

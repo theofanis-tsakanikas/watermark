@@ -167,15 +167,18 @@ is demonstrated end to end in the offline harness.
       against real provider schemas, checkov at zero findings. One command, all checks.
 - [x] `README.md` with a scoreboard, in the style of Attestor's: numbers that are the output
       of a command in the repository, not a summary of one.
-- [—] ~~**The live capture.**~~ **Out of scope — nothing is ever applied to AWS.** The estate
-      is built, validated against real provider schemas, scanned, and left unapplied. Decided
-      2026-08-09: a live capture costs real money and adds nothing to any of the seven claims,
-      every one of which is provable offline by construction. The replacement deliverable is
-      `make preflight` green, `terraform validate` against real provider schemas, and checkov
-      at zero findings — **ready to deploy, not deployed.**
-      Consequences that are easy to get wrong: no screenshot, no wall-clock time and no euro
-      figure may be published as if it were measured, and the €100 target is a design
-      constraint rather than a result.
+- [x] **The live capture.** Done 2026-08-10/11, after decision 15 was retracted. Bootstrap
+      applied from a laptop; every other layer applied through the gated workflow; the scenario
+      driven through it; the whole estate destroyed and the account verified clean by name and
+      by tag. Claims 1, 5 and 6 exercised live — including an erasure run that **refused to
+      certify**, which is the answer the design wanted.
+      What it cost: **USD 12.35** tagged, undercounting the untagged first hours before the cost
+      allocation tag activated. What it found: four design errors invisible to `terraform
+      validate` and checkov, listed in `docs/DECISIONS.md` 17.
+      Still not exercised live, and recorded as gaps in `README.md` rather than quietly dropped:
+      claim 2 end-to-end (the Glue merge job was blocked on a missing IAM read — fixed, not yet
+      re-run), the endpoint and Model Monitor (both need a human-approved model), and the
+      `held_back` / `stalled` / `starved` watermark states.
 
 **Done when:** `make preflight` is green, every layer validates and scans clean, and the
 README's scoreboard is reproducible by a stranger with no AWS account.

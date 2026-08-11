@@ -16,7 +16,11 @@
 # KPUs, the Feature Store online store, a real-time endpoint — cost money for exactly as long as
 # they exist, and nothing about a forgotten one looks wrong.
 #
-# Neither has ever fired, because nothing has ever been applied.
+# Neither has fired. The estate has been applied, driven and destroyed since this was written,
+# and the exercise's tagged spend was USD 12.35 against a USD 110 ceiling — so the budget action
+# was never close, and every resource was destroyed by the workflow well inside its
+# `expires-at`. That is an untested control rather than a working one, and it is worth saying
+# plainly: the ceiling and the floor are both still theoretical.
 
 # ── The reaper ───────────────────────────────────────────────────────────────
 

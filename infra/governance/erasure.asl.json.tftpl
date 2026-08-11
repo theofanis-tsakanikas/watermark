@@ -21,13 +21,30 @@
       "ResultPath": "$.legs",
       "Branches": [
         {
-          "StartAt": "CryptoShred",
+          "StartAt": "ResolveTheSubjectKey",
           "States": {
+            "ResolveTheSubjectKey": {
+              "Comment": "ScheduleKeyDeletion refuses an alias — 'Key Aliases are not supported for this operation' — and DescribeKey accepts one. So the alias is resolved to a key id first, which is one call and the only way to name a per-subject key without keeping a map of them.",
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:kms:describeKey",
+              "Parameters": {
+                "KeyId.$": "States.Format('alias/${project}-subject-{}', $.subject_id)"
+              },
+              "ResultPath": "$.subject_key",
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "ShredFailed"
+                }
+              ],
+              "Next": "CryptoShred"
+            },
             "CryptoShred": {
               "Type": "Task",
               "Resource": "arn:aws:states:::aws-sdk:kms:scheduleKeyDeletion",
               "Parameters": {
-                "KeyId.$": "States.Format('alias/${project}-subject-{}', $.subject_id)",
+                "KeyId.$": "$.subject_key.KeyMetadata.KeyId",
                 "PendingWindowInDays": 7
               },
               "ResultSelector": {

@@ -75,6 +75,9 @@ resource "aws_iam_role" "erasure" {
 }
 
 data "aws_iam_policy_document" "erasure" {
+  #checkov:skip=CKV_AWS_111:`glue:UpdateTable` and the Glue `Get*` calls sit on `*`. An Iceberg DELETE rewrites the table's metadata pointer, and a query planner resolves databases it was not told about in advance — Glue offers no resource form narrower than the catalogue for either. The identity is assumable only by Step Functions and runs one state machine.
+  #checkov:skip=CKV_AWS_356:As above.
+  #checkov:skip=CKV_AWS_290:As above.
   statement {
     sid    = "DestroyASubjectKey"
     effect = "Allow"
@@ -116,6 +119,49 @@ data "aws_iam_policy_document" "erasure" {
     effect    = "Allow"
     actions   = ["s3:PutObject"]
     resources = ["${data.aws_s3_bucket.lakehouse.arn}/erasure-certificates/*"]
+  }
+
+  # Athena writes its results before it will start a query, and refuses with "Unable to
+  # verify/create output bucket" when it cannot — a message about a bucket, caused by a missing
+  # grant. The first live erasure failed both DELETE legs on it.
+  #
+  # `ListBucket` on the bucket itself is what the *verify* half needs; `athena-results/*` is
+  # where the workgroup puts them.
+  statement {
+    sid    = "LetAthenaWriteItsResults"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload",
+      "s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts",
+    ]
+    resources = ["${data.aws_s3_bucket.lakehouse.arn}/athena-results/*"]
+  }
+
+  statement {
+    sid       = "AndFindTheBucketFirst"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = [data.aws_s3_bucket.lakehouse.arn]
+  }
+
+  # The results are SSE-KMS with the data key, so writing them needs the key as well as the
+  # prefix. A grant on the bucket and not the key is a query that fails on encryption.
+  statement {
+    sid       = "AndEncryptThem"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+    resources = [data.aws_kms_key.data.arn]
+  }
+
+  # Athena reads the tables through Glue, and a DELETE has to resolve them first.
+  statement {
+    sid    = "ResolveTheTablesItDeletesFrom"
+    effect = "Allow"
+    actions = [
+      "glue:GetDatabase", "glue:GetDatabases", "glue:GetTable", "glue:GetTables",
+      "glue:GetPartition", "glue:GetPartitions", "glue:UpdateTable",
+    ]
+    resources = ["*"]
   }
 
   statement {

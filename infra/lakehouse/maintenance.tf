@@ -222,9 +222,16 @@ data "aws_iam_policy_document" "maintenance" {
   }
 
   statement {
-    sid       = "WriteItsOwnLogs"
-    effect    = "Allow"
-    actions   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+    sid    = "WriteItsOwnLogs"
+    effect = "Allow"
+    # `AssociateKmsKey` because the security configuration encrypts Glue's logs, and Glue
+    # attaches the key to the log group as the *job role* — so a role that may create the group
+    # and not attach the key cannot start at all. The job never reaches its first line, and the
+    # error names the log group rather than the missing action.
+    actions = [
+      "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents",
+      "logs:AssociateKmsKey",
+    ]
     resources = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws-glue/*"]
   }
 }

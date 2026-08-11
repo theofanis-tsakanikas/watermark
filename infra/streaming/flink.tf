@@ -214,8 +214,12 @@ resource "aws_kinesisanalyticsv2_application" "watermark" {
         property_group_id = "kinesis.analytics.flink.run.options"
 
         property_map = {
-          python  = "streaming/job.py"
-          jarfile = "lib/flink-sql-connector-kinesis.jar"
+          python = "streaming/job.py"
+          # Both, comma-separated. `jarfile` names what Managed Flink puts on the classpath, and
+          # it named only the Kinesis connector — so the Iceberg runtime travelled inside the
+          # archive and was never loaded. The catalog then failed with a factory it could not
+          # find, from a JAR that was sitting in the same zip.
+          jarfile = "lib/flink-sql-connector-kinesis.jar,lib/iceberg-flink-runtime.jar"
         }
       }
 

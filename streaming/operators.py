@@ -275,6 +275,8 @@ def build_process_function(operator: MeterWindowOperator):
             #: Rows the transport could not decode at all. Held rather than dropped: a record
             #: that vanishes silently is the one nobody can account for afterwards.
             self._undecodable: list[tuple[str | None, str | None]] = []
+            #: The last watermark condition reported, so that only changes are reported.
+            self._reported: tuple[str, str | None] | None = None
 
         def process_element(self, value, ctx):
             # Destructured by name rather than indexed. `value[2]` is a tuple position, and the
@@ -329,6 +331,11 @@ def build_process_function(operator: MeterWindowOperator):
             undecodable, self._undecodable = self._undecodable, []
 
             for partition, source in undecodable:
+                # Emitted, not merely constructed. This block used to build the line and drop
+                # it: the local was assigned once per undecodable record and never logged,
+                # never yielded and never read. A record the transport could not decode
+                # vanished without trace — from the very branch whose comment says that a
+                # record which vanishes silently is the one nobody can account for afterwards.
                 quarantine_line = json.dumps(
                     {
                         "kind": "quarantine",
@@ -337,10 +344,43 @@ def build_process_function(operator: MeterWindowOperator):
                         "source": source,
                     }
                 )
+                _EVIDENCE.info(quarantine_line)
+                yield quarantine_line
 
             if not batch:
                 return
             emission, refused, view, lineage = operator.process(batch, Instant(timestamp))
+
+            # **The watermark reports its own condition, and not only when it publishes.**
+            #
+            # Everything below this speaks about a *result*, so the job was silent in exactly
+            # the state claim 1 exists to make visible: while a partition holds the watermark
+            # back, no window closes, so no line was emitted, so a held-back grid and a healthy
+            # quiet one produced identical output — nothing. `README.md` listed `held_back`,
+            # `stalled` and `starved` as states proved offline and never induced in the cloud;
+            # they could not have been induced, because there was no way for the deployed job to
+            # say so.
+            #
+            # On change rather than on every batch. The grain is a second, and a line a second
+            # per key is a log nobody reads and a bill somebody notices; a *transition* is the
+            # event — the moment SUB-03 went quiet and the moment it came back.
+            condition = (view.status.value, view.holding_back)
+            if condition != self._reported:
+                self._reported = condition
+                status_line = json.dumps(
+                    {
+                        "kind": "watermark",
+                        "status": view.status.value,
+                        "holding_back": view.holding_back,
+                        "idle_partitions": list(view.idle),
+                        "lag_millis": view.lag.millis,
+                        "watermark": getattr(view.watermark, "epoch_millis", None),
+                        "may_close_windows": view.status.may_close_windows,
+                        "at": timestamp,
+                    }
+                )
+                _EVIDENCE.info(status_line)
+                yield status_line
 
             # JSON strings, not tuples of dataclasses. `.process()` defaults to pickling its
             # output, which means every worker must be able to import the core's classes to

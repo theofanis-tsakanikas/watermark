@@ -40,7 +40,12 @@ from streaming.operators import (
     build_process_function,
 )
 from watermark.core.normalise import DEFAULT_POLICY as NORMALISATION_POLICY
-from watermark.core.records import LANDING_IDLE, LANDING_PART_BYTES, LANDING_ROLLOVER
+from watermark.core.records import (
+    LANDING_IDLE,
+    LANDING_PART_BYTES,
+    LANDING_ROLLOVER,
+    WATERMARK_OPERATOR_PARALLELISM,
+)
 from watermark.core.watermarks import DEFAULT_POLICY as WATERMARK_POLICY
 from watermark.core.windows import WindowPolicy
 from watermark.runner import Arrival, run
@@ -117,11 +122,21 @@ def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement
     # work. Claim 1 stays provable offline because the thing being proved never moved into the
     # framework — which is exactly what `scripts/check_adapter_is_thin.py` exists to enforce,
     # and why it refuses both convenience constructors by name.
+    # **One instance, from the core.** `WATERMARK_OPERATOR_PARALLELISM` explains itself where it
+    # is declared; the short version is that each instance holds a `WatermarkState` declaring
+    # every substation, so a second instance is a second operator that hears from none of the
+    # partitions the first one owns and marks them idle. Flink would normally take the minimum
+    # across subtasks and make any parallelism correct — that is the aggregation ADR-0007 gave
+    # up when the watermark moved into the core, and this is what replaces it.
+    #
+    # The source and the sink stay at the application's parallelism. Only the operator that
+    # holds the watermark is pinned.
     windows = (
         environment.add_source(consumer)
         .key_by(lambda record: record[1])
         .process(build_process_function(operator), output_type=Types.STRING())
         .name("watermark-meter-windows")
+        .set_parallelism(WATERMARK_OPERATOR_PARALLELISM)
     )
 
     # The log sink stays. It is the evidence a person reads during a capture and it costs

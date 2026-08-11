@@ -247,10 +247,10 @@ jobs:
         #   restatements    — doctrine 4: the three-day-late file changed a published total and
         #                     the row says what it superseded rather than having overwritten it.
         #
-        # And the edge case, which is the point of driving the generated day rather than a
-        # smooth one: SUB-03 goes silent for forty minutes, so windows must close with a
-        # watermark status that says a partition was excluded, and the exclusion must reach the
-        # row. A capture where every row says `advancing` has not exercised claim 1 at all.
+        # The edge case is asserted separately, in the step below, because it is not a property
+        # of a row: SUB-03's forty-minute silence produces `held_back`, and `held_back` means
+        # *no window closed*. There is nothing in the table to look at, which is the whole
+        # difficulty of proving claim 1 from its output.
         run: |
           set -euo pipefail
           mkdir -p out/capture
@@ -277,13 +277,12 @@ jobs:
             echo "athena query did not settle" >&2; return 1
           }
 
-          read -r ROWS UNCLOSED LINEAGE REVISIONS RESTATED IDLE_ROWS STATUSES <<<"$(athena "
+          read -r ROWS UNCLOSED LINEAGE RESTATED SUPERSEDED STATUSES <<<"$(athena "
             SELECT COUNT(*),
                    COUNT_IF(closed_at < interval_start + INTERVAL '15' MINUTE),
                    COUNT(DISTINCT lineage_id),
-                   COUNT(DISTINCT revision),
                    COUNT_IF(revision > 0),
-                   COUNT_IF(CARDINALITY(idle_partitions) > 0),
+                   COUNT_IF(revision > 0 AND supersedes IS NOT NULL),
                    COUNT(DISTINCT watermark_status)
             FROM ${PROJECT}_silver.meter_interval")"
 
@@ -296,7 +295,7 @@ jobs:
             echo "| rows closed before their interval ended | $UNCLOSED |"
             echo "| distinct lineage ids | $LINEAGE |"
             echo "| rows that are restatements | $RESTATED |"
-            echo "| rows computed with a partition excluded | $IDLE_ROWS |"
+            echo "| restatements naming what they replaced | $SUPERSEDED |"
             echo "| distinct watermark statuses | $STATUSES |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -304,8 +303,53 @@ jobs:
           [ "$ROWS" -gt 0 ] || { echo "::error::the merge produced no rows"; fail=1; }
           [ "$UNCLOSED" = "0" ] || { echo "::error::claim 1: $UNCLOSED rows were published with a watermark earlier than their own interval end"; fail=1; }
           [ "$LINEAGE" = "$ROWS" ] || { echo "::error::claim 2: $ROWS rows carry $LINEAGE distinct lineage ids"; fail=1; }
-          [ "$RESTATED" -gt 0 ] || { echo "::error::doctrine 4: the late batch restated nothing. Either it never arrived or a correction overwrote instead of superseding"; fail=1; }
-          [ "$IDLE_ROWS" -gt 0 ] || { echo "::error::claim 1's edge case: no row was computed with a partition excluded, so the silent substation never held the watermark back"; fail=1; }
+          [ "$RESTATED" -gt 0 ] || { echo "::error::doctrine 4: the late batch restated nothing. Either it never arrived, or a correction overwrote instead of superseding"; fail=1; }
+          [ "$SUPERSEDED" = "$RESTATED" ] || { echo "::error::doctrine 4: $RESTATED restatements, only $SUPERSEDED of which say what they replaced"; fail=1; }
+          exit $fail
+
+      - name: the silent substation held the watermark back, and said so
+        # **Claim 1's edge case, and the one the README listed as never induced in the cloud.**
+        #
+        # SUB-03's comms drop for forty minutes in the generated day. The meters keep metering
+        # and buffer; the partition simply says nothing. What must happen is that the watermark
+        # stops — `held_back`, with SUB-03 named — and that **no window closes** while it does.
+        #
+        # That last part is why this cannot be asserted from the table. A held-back watermark
+        # publishes nothing, so the evidence for it is an absence, and an absence is exactly
+        # what a run that never started also produces. The status lines are what make the two
+        # distinguishable: the job reports its watermark condition on every transition, so a
+        # grid that is holding back says so, on the record, with the substation that is doing
+        # it.
+        #
+        # Read from the landing prefix rather than from CloudWatch, because these are the same
+        # bytes the merge job reads and skips — one source of evidence rather than two that can
+        # disagree.
+        run: |
+          set -euo pipefail
+          mkdir -p out/capture
+          aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" - --recursive \
+            | grep '"kind": "watermark"' > out/capture/watermark-status.jsonl || true
+
+          transitions=$(wc -l < out/capture/watermark-status.jsonl | tr -d ' ')
+          held=$(grep -c '"status": "held_back"' out/capture/watermark-status.jsonl || true)
+          named=$(grep '"status": "held_back"' out/capture/watermark-status.jsonl \
+            | grep -c '"holding_back": "SUB-03"' || true)
+
+          {
+            echo ""
+            echo "### The watermark's own account of itself"
+            echo ""
+            echo "| fact | value |"
+            echo "|---|---|"
+            echo "| status transitions reported | $transitions |"
+            echo "| transitions into \`held_back\` | $held |"
+            echo "| of those, naming SUB-03 | $named |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          fail=0
+          [ "$transitions" -gt 0 ] || { echo "::error::the job never reported a watermark condition at all"; fail=1; }
+          [ "$held" -gt 0 ] || { echo "::error::claim 1's edge case: the watermark never went held_back, so the forty-minute silence closed windows it should have stopped"; fail=1; }
+          [ "$named" -gt 0 ] || { echo "::error::the watermark was held back and did not name the partition doing it, which is the half that makes it actionable"; fail=1; }
           exit $fail
 
       - name: capture the evidence

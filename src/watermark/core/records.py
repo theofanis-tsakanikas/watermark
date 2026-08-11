@@ -45,6 +45,28 @@ SETTLEMENT_GRAIN = Duration.of_hours(1)
 #: restart repeats.
 BATCH_GRAIN = Duration.of_seconds(1)
 
+#: How many parallel instances of the windowing operator may exist. Exactly one.
+#:
+#: **This is a semantic constraint, not a capacity setting, and it is the price of ADR-0007.**
+#: A watermark is a statement about *the whole stream*, and Flink normally makes it true at any
+#: parallelism by taking the minimum across subtasks — every operator emits its own and the
+#: framework aggregates. That aggregation is the thing this pipeline gave up when it turned out
+#: PyFlink cannot emit a watermark at all and the core took the job over.
+#:
+#: What is left is a `WatermarkState` per operator instance, each one declaring every substation
+#: because `WATERMARK_PARTITIONS` is a property of the grid rather than of a subtask. Run four of
+#: them and each sees a quarter of the partitions and hears nothing from the rest — so the other
+#: three quarters lag "infinitely", are marked idle, and every window closes with a hole in it
+#: that is an artefact of key hashing. The totals are still arithmetically right and the
+#: `idle_partitions` on every one of them is a lie about the grid.
+#:
+#: At one instance the declared set and the observed set are the same set, and the watermark
+#: means what it says. The cost is that the windowing stage does not scale horizontally, which
+#: for this scenario is affordable — 250,000 meters at four readings an hour is under 300
+#: records a second — and which is anyway the honest position: a system that cannot compute a
+#: correct watermark in parallel should not claim to.
+WATERMARK_OPERATOR_PARALLELISM = 1
+
 #: How long a closed window may wait before it is durable.
 #:
 #: The streaming job writes closed windows to a landing prefix and a Glue job merges them into

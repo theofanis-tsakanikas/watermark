@@ -145,7 +145,11 @@ spark.sql("""
         lineage_id,
         CURRENT_TIMESTAMP()                                AS merged_at
     FROM landed
-    WHERE kind <> 'quarantine' AND meter IS NOT NULL
+    -- Three kinds share this prefix because one operator produces all three. `published`,
+    -- `restated` and `confirmed` are rows; `quarantine` is a refusal and belongs in its own
+    -- table; `watermark` is a condition report with no meter at all, which is why the second
+    -- clause is not redundant with the first.
+    WHERE kind NOT IN ('quarantine', 'watermark') AND meter IS NOT NULL
 """)
 
 spark.sql(f"""

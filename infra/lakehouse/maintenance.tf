@@ -232,6 +232,27 @@ data "aws_iam_policy_document" "maintenance" {
     resources = [data.aws_kms_key.data.arn, data.aws_kms_key.logs.arn]
   }
 
+  # The job has to read the security configuration it was created with.
+  #
+  # This is the fifth time this repository has been caught by the same shape — a resource
+  # created with a reference the role may not follow — and it is the one that stopped
+  # `land_to_silver` on the first live run: *"error while getting security configuration for
+  # watermark-maintenance"*. Every job above names `aws_glue_security_configuration.maintenance`,
+  # Terraform applies cleanly because attaching a configuration is the *deploy* role's action,
+  # and then the job role reaches its first line and cannot fetch the document that tells it how
+  # to encrypt anything.
+  #
+  # `*` is not laziness. `glue:GetSecurityConfiguration` has no resource type in the Glue action
+  # table — the configurations are account-scoped and the action rejects an ARN — so a narrower
+  # grant is one that silently matches nothing. What bounds it is that reading an encryption
+  # configuration discloses key ARNs, and the keys themselves are guarded by the statement above.
+  statement {
+    sid       = "ReadTheSecurityConfigurationItWasCreatedWith"
+    effect    = "Allow"
+    actions   = ["glue:GetSecurityConfiguration", "glue:GetSecurityConfigurations"]
+    resources = ["*"]
+  }
+
   statement {
     sid    = "WriteItsOwnLogs"
     effect = "Allow"

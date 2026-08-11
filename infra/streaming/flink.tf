@@ -215,11 +215,10 @@ resource "aws_kinesisanalyticsv2_application" "watermark" {
 
         property_map = {
           python = "streaming/job.py"
-          # One path, and Managed Flink means it: a comma-separated pair is rejected as a file
-          # name. This job needs three connectors, so `make package` merges them into one —
-          # see `scripts/merge_connectors.py`, which appends service registrations rather than
-          # letting the last archive win.
-          jarfile = "lib/connectors.jar"
+          # One connector, and one is all this job needs now. The Iceberg runtime was here for
+          # a while — see `pipelines/jobs/land_to_silver.py` for why writing the lakehouse moved
+          # to Glue and what it cost to find out.
+          jarfile = "lib/flink-sql-connector-kinesis.jar"
         }
       }
 

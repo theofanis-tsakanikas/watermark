@@ -40,6 +40,7 @@ from streaming.operators import (
     build_process_function,
 )
 from watermark.core.normalise import DEFAULT_POLICY as NORMALISATION_POLICY
+from watermark.core.records import LANDING_IDLE, LANDING_PART_BYTES, LANDING_ROLLOVER
 from watermark.core.watermarks import DEFAULT_POLICY as WATERMARK_POLICY
 from watermark.core.windows import WindowPolicy
 from watermark.runner import Arrival, run
@@ -126,64 +127,67 @@ def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement
     # The log sink stays. It is the evidence a person reads during a capture and it costs
     # nothing; the Iceberg sink is what the rest of the system depends on.
     windows.print()
-    _sink_to_iceberg(environment, windows, placement)
+    _sink_to_landing(windows, placement)
 
 
-def _sink_to_iceberg(environment, windows, placement: Placement) -> None:
-    """Persist closed windows into the silver table.
+def _sink_to_landing(windows, placement: Placement) -> None:
+    """Write closed windows to the landing prefix, as files, and stop there.
 
-    **Without this the platform computes and forgets.** The job closed windows correctly for a
-    whole live run and wrote them only to a log: the lakehouse stayed empty, so settlement had
-    nothing to total, the erasure legs had nothing to delete, dbt had no source, and a window
-    that is not stored cannot be restated — which took doctrine 4 with it. Four claims rested
-    on a sink that did not exist.
+    **The streaming layer decides; it does not store.** Claim 1 is about *when* a window may
+    close. Once it has closed, the result is a fact, and writing facts durably is a different
+    problem with different failure modes — idempotence, compaction, schema evolution — that do
+    not belong in the operator that decided.
 
-    Written through the Table API against the **Glue catalog**, which is where `infra/lakehouse`
-    already declared these tables: Iceberg v2, merge-on-read, parquet+zstd. The schema is not
-    restated here — a second definition of one table is two definitions that drift on the first
-    column anybody adds.
+    So this is Flink's own `FileSink` and nothing else: no catalog, no Iceberg runtime, no
+    Hadoop, no merged uber-jar. `pipelines/jobs/land_to_silver.py` reads what lands here and
+    `MERGE INTO`s it, which is how a restatement is expressed in one statement rather than
+    assembled from row-level updates inside a streaming job.
+
+    The route was chosen after the direct one was tried. Writing Iceberg from PyFlink means a
+    catalog factory resolved by the planner in the driver, a platform that loads exactly one
+    jar, and — four layers down — Iceberg constructing a Hadoop `Configuration` for a catalog
+    that is Glue and an IO that is S3. Teams that write Flink to Iceberg do it in Java, where a
+    shade plugin makes that one Maven problem. This core is Python, so that door is shut.
+
+    What it costs is a minute of lag between a window closing and Athena seeing it. The only
+    decision in this system that needs seconds — curtailment — never reads the lakehouse, and
+    settlement's horizon is days. The cost is real and it is not charged to anything.
     """
-    from pyflink.table import Schema, StreamTableEnvironment  # noqa: PLC0415
-
-    table = StreamTableEnvironment.create(environment)
-
-    # Named, not created. Two definitions of one warehouse is how a job writes somewhere Athena
-    # does not read.
-    table.execute_sql(f"""
-        CREATE CATALOG lakehouse WITH (
-            'type' = 'iceberg',
-            'catalog-impl' = 'org.apache.iceberg.aws.glue.GlueCatalog',
-            'io-impl' = 'org.apache.iceberg.aws.s3.S3FileIO',
-            'warehouse' = 's3://{placement.lakehouse_bucket}/warehouse'
-        )
-    """)
-
-    # The operator's own JSON, parsed back. Carrying a typed stream instead would mean the log a
-    # person reads and the table Athena queries were built from different values — and claim 2
-    # is a claim about bytes.
-    table.create_temporary_view(
-        "windows",
-        windows,
-        Schema.new_builder().column("line", "STRING").build(),
+    from pyflink.common.serialization import Encoder  # noqa: PLC0415
+    from pyflink.datastream.connectors.file_system import (  # noqa: PLC0415
+        FileSink,
+        OutputFileConfig,
+        RollingPolicy,
     )
 
-    table.execute_sql("""
-        INSERT INTO lakehouse.watermark_silver.meter_interval
-            (meter_id, interval_start, energy_wh, closed_at, watermark_status,
-             revision, supersedes, restatement_cause, lineage_id)
-        SELECT
-            JSON_VALUE(line, '$.meter'),
-            TO_TIMESTAMP_LTZ(CAST(JSON_VALUE(line, '$.interval_start') AS BIGINT), 3),
-            CAST(JSON_VALUE(line, '$.energy_wh') AS BIGINT),
-            CURRENT_TIMESTAMP,
-            JSON_VALUE(line, '$.watermark_status'),
-            CAST(JSON_VALUE(line, '$.revision') AS INT),
-            CAST(JSON_VALUE(line, '$.supersedes') AS BIGINT),
-            JSON_VALUE(line, '$.restatement_cause'),
-            JSON_VALUE(line, '$.lineage_id')
-        FROM windows
-        WHERE JSON_VALUE(line, '$.kind') <> 'quarantine'
-    """)
+    sink = (
+        FileSink.for_row_format(
+            f"s3://{placement.lakehouse_bucket}/landing/meter_interval",
+            Encoder.simple_string_encoder("utf-8"),
+        )
+        .with_output_file_config(
+            OutputFileConfig.builder()
+            .with_part_prefix("windows")
+            .with_part_suffix(".jsonl")
+            .build()
+        )
+        # Rolled on time as well as size. A part file that only closes when it is full is a part
+        # file that never closes on a quiet meter, and the merge job would find nothing to read
+        # while the stream looked healthy — the same shape of silence this project keeps finding.
+        # Every number from the core. The adapter gate refuses a literal here and it is right
+        # to: how long a closed window waits before it is readable is a decision settlement
+        # depends on, not a file-system knob.
+        .with_rolling_policy(
+            RollingPolicy.default_rolling_policy(
+                part_size=LANDING_PART_BYTES,
+                rollover_interval=LANDING_ROLLOVER.millis,
+                inactivity_interval=LANDING_IDLE.millis,
+            )
+        )
+        .build()
+    )
+
+    windows.sink_to(sink).name("watermark-landing")
 
 
 def replay(arrivals: list[Arrival], partitions: tuple[str, ...]) -> object:

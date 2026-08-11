@@ -24,13 +24,6 @@ LINT_PATHS := src tests tests_flink scripts data evals streaming pipelines/jobs
 # time, which is the expensive place — the application reports READY and reads nothing.
 # `scripts/check_flink_versions_agree.py` compares the two.
 CONNECTOR_VERSION := 5.1.0-1.20
-#: The Iceberg Flink runtime. Same argument as the Kinesis connector: fetched, never vendored.
-#: The minor must match the Flink runtime in `infra/streaming/variables.tf`.
-ICEBERG_VERSION := 1.7.1
-#: Iceberg's Flink catalog constructs a Hadoop `Configuration` even when the catalog is Glue and
-#: the IO is S3FileIO — and Managed Flink does not package Hadoop. Without this the driver dies
-#: on `NoClassDefFoundError: org/apache/hadoop/conf/Configuration` at CREATE CATALOG.
-HADOOP_VERSION := 3.3.6
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Everything above the "cloud" section runs with NO AWS account and NO
@@ -140,7 +133,7 @@ package-ml: ## Build the wheel the SageMaker processing steps install before run
 	cp pipelines/steps/*.sh infra/ml/.package/
 	@echo "packaged $$(ls infra/ml/.package/*.whl) + population.csv + step scripts"
 
-package: connector iceberg ## Vendor the package into infra/streaming/.package so terraform can zip it
+package: connector ## Vendor the package into infra/streaming/.package so terraform can zip it
 	rm -rf infra/streaming/.package
 	mkdir -p infra/streaming/.package
 	$(PIP) install --quiet --target infra/streaming/.package --no-compile --no-deps .
@@ -149,23 +142,14 @@ package: connector iceberg ## Vendor the package into infra/streaming/.package s
 	@# 20 MB binary in a repository whose whole claim is that everything in it is checkable is
 	@# the one file nobody would ever verify. `make connector` fetches it; this refuses to
 	@# package without it, rather than producing an archive that deploys and never reads.
-	@test -f infra/streaming/lib/iceberg-flink-runtime.jar -a -f infra/streaming/lib/iceberg-aws-bundle.jar \
-		-a -f infra/streaming/lib/hadoop-common.jar || { \
-		echo "missing a connector jar in infra/streaming/lib — run 'make iceberg'"; \
-		exit 1; \
-	}
 	@test -f infra/streaming/lib/flink-sql-connector-kinesis.jar || { \
 		echo "missing infra/streaming/lib/flink-sql-connector-kinesis.jar — run 'make connector'"; \
 		exit 1; \
 	}
-	@# One jar, because `jarfile` takes one path. See scripts/merge_connectors.py for why this
-	@# is a merge rather than a copy: service registrations are appended and signatures dropped.
+	@# One connector, one jar. The Iceberg runtime lived here briefly and is gone: the lakehouse
+	@# is written by `pipelines/jobs/land_to_silver.py`, where Glue supplies Iceberg natively.
 	mkdir -p infra/streaming/.package/lib
-	$(PY) scripts/merge_connectors.py infra/streaming/.package/lib/connectors.jar \
-		infra/streaming/lib/flink-sql-connector-kinesis.jar \
-		infra/streaming/lib/iceberg-flink-runtime.jar \
-		infra/streaming/lib/iceberg-aws-bundle.jar \
-		infra/streaming/lib/hadoop-common.jar
+	cp infra/streaming/lib/flink-sql-connector-kinesis.jar infra/streaming/.package/lib/
 	@echo "packaged infra/streaming/.package ($$(du -sh infra/streaming/.package | cut -f1))"
 
 .PHONY: claim-3
@@ -212,26 +196,6 @@ connector: ## Fetch the Kinesis connector JAR the Flink job cannot start without
 	curl -fsSL -o infra/streaming/lib/flink-sql-connector-kinesis.jar \
 		"https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kinesis/$(CONNECTOR_VERSION)/flink-sql-connector-kinesis-$(CONNECTOR_VERSION).jar"
 	@echo "fetched $$(du -h infra/streaming/lib/flink-sql-connector-kinesis.jar | cut -f1)"
-
-.PHONY: iceberg
-iceberg: ## Fetch the Iceberg Flink runtime the sink cannot write without
-	@test -f infra/streaming/lib/iceberg-flink-runtime.jar && { \
-		echo "  iceberg runtime already present"; exit 0; \
-	} || true
-	@mkdir -p infra/streaming/lib
-	@echo "Fetching the Iceberg Flink runtime. Same reasoning as the Kinesis connector: a"
-	@echo "30 MB binary is the one file in this repository nobody would ever verify by reading."
-	curl -fsSL -o infra/streaming/lib/iceberg-flink-runtime.jar \
-		"https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-flink-runtime-1.20/$(ICEBERG_VERSION)/iceberg-flink-runtime-1.20-$(ICEBERG_VERSION).jar"
-	@# `GlueCatalog` and `S3FileIO` are not in the Flink runtime — they are in the AWS bundle.
-	@# A catalog configured with `catalog-impl = org.apache.iceberg.aws.glue.GlueCatalog` and
-	@# only the runtime on the classpath fails at CREATE CATALOG, in the driver, with a class
-	@# nobody can see in the job's own code.
-	curl -fsSL -o infra/streaming/lib/iceberg-aws-bundle.jar \
-		"https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/$(ICEBERG_VERSION)/iceberg-aws-bundle-$(ICEBERG_VERSION).jar"
-	curl -fsSL -o infra/streaming/lib/hadoop-common.jar \
-		"https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-common/$(HADOOP_VERSION)/hadoop-common-$(HADOOP_VERSION).jar"
-	@echo "fetched $$(du -ch infra/streaming/lib/iceberg-*.jar infra/streaming/lib/hadoop-common.jar | tail -1 | cut -f1)"
 
 .PHONY: gate-proof
 gate-proof: ## Break every gate on purpose; each must be refused, for the right reason

@@ -13,6 +13,48 @@
 # And the expiry job refuses to remove a *tagged* snapshot. A published settlement total is
 # bound to the snapshot it was computed from; without that refusal, claim 2 has a shelf life.
 
+# The job that makes the lakehouse a lakehouse.
+#
+# The Flink job writes closed windows to a landing prefix as JSON lines; this merges them into
+# the silver table. Without it the platform decides correctly and stores nothing, which is what
+# the first live run actually did — settlement had nothing to total, the erasure legs had
+# nothing to delete, and a window that is not stored cannot be restated.
+#
+# It is here rather than inside the streaming job because writing Iceberg from PyFlink means a
+# catalog factory resolved in the driver, a platform that loads one jar, and Hadoop classes for
+# a catalog that is Glue. Glue has native Iceberg and no classpath to assemble.
+resource "aws_glue_job" "land_to_silver" {
+  name              = "${var.project}-land-to-silver"
+  role_arn          = aws_iam_role.maintenance.arn
+  glue_version      = "4.0"
+  worker_type       = "G.1X"
+  number_of_workers = 2
+
+  command {
+    script_location = "s3://${data.aws_s3_bucket.lakehouse.id}/jobs/land_to_silver.py"
+    python_version  = "3"
+  }
+  security_configuration = aws_glue_security_configuration.maintenance.name
+
+
+  default_arguments = {
+    "--enable-metrics"                   = "true"
+    "--enable-continuous-cloudwatch-log" = "true"
+    "--datalake-formats"                 = "iceberg"
+    "--WAREHOUSE"                        = local.warehouse
+    "--LANDING"                          = "s3://${data.aws_s3_bucket.lakehouse.id}/landing/meter_interval/"
+    "--DATABASE"                         = aws_glue_catalog_database.silver.name
+    "--TABLE"                            = aws_glue_catalog_table.meter_interval.name
+  }
+
+  execution_property {
+    # One at a time, like the compaction below and for the same reason: two merges over one
+    # table conflict under Iceberg's optimistic writes and both eventually fail, noisily and
+    # for a reason that reads like a data problem.
+    max_concurrent_runs = 1
+  }
+}
+
 resource "aws_glue_job" "compaction" {
   name         = "${var.project}-compaction"
   role_arn     = aws_iam_role.maintenance.arn

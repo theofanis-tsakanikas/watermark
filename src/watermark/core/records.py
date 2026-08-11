@@ -45,6 +45,31 @@ SETTLEMENT_GRAIN = Duration.of_hours(1)
 #: restart repeats.
 BATCH_GRAIN = Duration.of_seconds(1)
 
+#: How long a closed window may wait before it is durable.
+#:
+#: The streaming job writes closed windows to a landing prefix and a Glue job merges them into
+#: the silver table, so this bounds the gap between *deciding* and *being able to read the
+#: decision*. That is a semantic budget, not a file-system tuning knob: settlement reads the
+#: table, and a window that has closed but is not yet readable is invisible to every query that
+#: would total it.
+#:
+#: A minute, because the only decision in this system that needs seconds — curtailment — never
+#: reads the lakehouse, and settlement's horizon is days. It lives here rather than in the
+#: adapter for the same reason `BATCH_GRAIN` does: a duration written into a connector call is
+#: an answer moved where no offline test can read it.
+LANDING_ROLLOVER = Duration.of_minutes(1)
+
+#: And how long a part file may sit with nothing arriving before it is closed anyway.
+#:
+#: Without it a quiet meter's file never rolls, the merge finds nothing, and the stream looks
+#: healthy while the table stays empty — the failure shape this project keeps meeting.
+LANDING_IDLE = Duration.of_seconds(30)
+
+#: The size at which a part file rolls regardless of time. 64 MiB is a compaction-friendly
+#: floor: smaller parts mean more files for `compaction` to merge, which ADR-0002 accepted as
+#: operational work but did not invite.
+LANDING_PART_BYTES = 64 * 1024 * 1024
+
 
 class Source(Enum):
     """How a reading reached us.

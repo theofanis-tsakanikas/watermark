@@ -408,7 +408,7 @@ resource "aws_glue_catalog_table" "training_snapshot" {
 # succeeds, every maintenance run then fails, and the failure surfaces as the erasure Step
 # Function timing out on a compaction that was never going to start.
 resource "aws_s3_object" "maintenance_job" {
-  for_each = toset(["compaction", "expire_snapshots", "delete_orphan_files"])
+  for_each = toset(["compaction", "expire_snapshots", "delete_orphan_files", "land_to_silver"])
 
   bucket = data.aws_s3_bucket.lakehouse.id
   key    = "jobs/${each.key}.py"

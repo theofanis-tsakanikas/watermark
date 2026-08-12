@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
@@ -215,3 +217,51 @@ def digest(deliveries: tuple[Delivery, ...]) -> str:
         f"{d.ingest_time.to_iso()}|{d.partition}|{d.source.value}|{d.raw}" for d in deliveries
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+#: Every shape's timestamp, as (pattern, how to read it, how to write it).
+#:
+#: The generator built these three shapes, so the generator is what rewrites them. It used to be
+#: a regex in `data/publish.py` matching ISO-8601 instants, and the reasoning given was that a
+#: timestamp is a timestamp at the transport layer. That is true of two shapes out of three:
+#: **fw1 encodes its instant as epoch seconds**, an integer under `"ts"`, which no pattern for
+#: ISO text will ever match.
+#:
+#: What that cost, live: a third of the fleet published with its event times untouched — months
+#: before the capture window — so every window those meters opened was ancient, every correction
+#: for one was more than the four-day allowance late, and all 164 were refused
+#: `too_late_for_window`. The restatement case that carries doctrine 4 could not occur, and the
+#: run looked healthy: the readings were published, the totals were right, and nothing anywhere
+#: said that a third of the estate was living in March.
+_TIMESTAMPS: Final = (
+    # fw1: {"ts":1773445500}
+    (
+        re.compile(r'("ts":)(\d+)'),
+        lambda m: Instant(int(m.group(2)) * 1000),
+        lambda m, i: f"{m.group(1)}{i.epoch_millis // 1000}",
+    ),
+    # fw2: {"timestamp":"2026-03-14T10:00:00Z"} and fw3: {"start":"..."}
+    (
+        re.compile(r'("(?:timestamp|start)":")([^"]+)(")'),
+        lambda m: Instant.from_iso(m.group(2)),
+        lambda m, i: f"{m.group(1)}{i.to_iso()}{m.group(3)}",
+    ),
+)
+
+
+def retimed(raw: str, move: Callable[[Instant], Instant]) -> str:
+    """Rewrite a payload's event time through `move`, in whichever shape its firmware uses.
+
+    Every shape is tried and every match is rewritten, so a payload that grows a second instant
+    is moved consistently rather than half-moved. A payload no pattern matches comes back
+    unchanged — and `tests/data/test_retimed.py` asserts that no shape in the cast is such a
+    payload, which is the half that was missing.
+    """
+    for pattern, read, write in _TIMESTAMPS:
+        # Bound as defaults rather than closed over. A lambda that captures the loop variables
+        # would use whichever pair the loop finished on — every shape rewritten with the last
+        # shape's reader, which for these two means an ISO parse of an integer.
+        raw = pattern.sub(
+            lambda match, read=read, write=write: write(match, move(read(match))), raw
+        )
+    return raw

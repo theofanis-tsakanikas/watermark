@@ -13,10 +13,10 @@ exercised by the test suite rather than being the one script nobody has ever exe
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from dataclasses import dataclass
 
+from data import generate as generate_module
 from data.cast import SUBSTATIONS
 from data.generate import generate
 from watermark.core.records import Source
@@ -75,14 +75,6 @@ def plan(minutes: int) -> Plan:
     )
 
 
-#: Every ISO-8601 instant in a payload, whatever firmware shape holds it.
-#:
-#: Textual rather than schema-aware on purpose. The three firmware shapes put the instant under
-#: three different keys, and a publisher that had to know which is a publisher doing the core's
-#: job — `normalise` owns that question. A timestamp is a timestamp at the transport layer.
-_INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
-
-
 def _compress_instants(raw: str, origin: int, start: int, compression: int) -> str:
     """Map every instant in the payload through the same transform as the pacing.
 
@@ -96,14 +88,19 @@ def _compress_instants(raw: str, origin: int, start: int, compression: int) -> s
     Compressing both keeps the *relationship* between event time and arrival, which is the only
     thing the scenario is about. A reading three days late becomes seconds late; a window that
     closes and is then corrected still closes and is then corrected.
+
+    **And it is `data.generate` that knows how to rewrite an instant, not this file.** The first
+    version matched ISO-8601 text with a regex here, on the argument that a timestamp is a
+    timestamp at the transport layer. Two of the three firmware shapes in the cast agree with
+    that. `fw1` does not: it writes epoch seconds as a bare integer, which no pattern for ISO
+    text can match, so a third of the fleet published with its event times untouched — five
+    months before the capture window. Every window those meters opened was ancient, every
+    correction for one was past the four-day allowance, and all 164 were refused
+    `too_late_for_window` while the run reported success.
     """
-
-    def shift(match: re.Match[str]) -> str:
-        instant = Instant.from_iso(match.group(0))
-        moved = start + (instant.epoch_millis - origin) // compression
-        return Instant(moved).to_iso()
-
-    return _INSTANT.sub(shift, raw)
+    return generate_module.retimed(
+        raw, lambda instant: Instant(start + (instant.epoch_millis - origin) // compression)
+    )
 
 
 def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — needs an estate

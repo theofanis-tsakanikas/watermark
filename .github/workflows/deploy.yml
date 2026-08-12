@@ -280,12 +280,13 @@ jobs:
               run_id=$(aws glue start-job-run --job-name watermark-land-to-silver \
                 --query JobRunId --output text)
               echo "land-to-silver $run_id"
+              settled=""
               for _ in $(seq 1 40); do
                 state=$(aws glue get-job-run --job-name watermark-land-to-silver \
                   --run-id "$run_id" --query 'JobRun.JobRunState' --output text)
                 echo "  $state"
                 case "$state" in
-                  SUCCEEDED) break ;;
+                  SUCCEEDED) settled="yes"; break ;;
                   FAILED|ERROR|TIMEOUT|STOPPED)
                     aws glue get-job-run --job-name watermark-land-to-silver --run-id "$run_id" \
                       --query 'JobRun.ErrorMessage' --output text
@@ -294,6 +295,10 @@ jobs:
                 esac
                 sleep 15
               done
+              # A loop that ran out has not created the table, and the governance layer that
+              # attaches a ruleset to it applies next. Silence here is a failure two layers on.
+              [ -n "$settled" ] || {
+                echo "::error::the table-creating run never settled"; exit 1; }
               echo "::endgroup::"
             fi
           done

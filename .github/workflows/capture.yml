@@ -142,17 +142,31 @@ jobs:
             --query PipelineExecutionArn --output text)
           echo "PIPELINE_EXECUTION=$execution" >> "$GITHUB_ENV"
           echo "waiting on $execution"
+
+          # **A loop that runs out is a failure, not a pass.** This waited thirty minutes for
+          # `Succeeded`, and if the pipeline was still `Executing` at the end the loop simply
+          # ended and the step reported success — so a pipeline that hung produced a green
+          # capture, an endpoint step that found no model, and a run whose summary said
+          # everything worked. That is the same shape as the publisher that sent nothing and
+          # exited zero, which is the failure `docs/DECISIONS.md` 17 names.
+          settled=""
           for _ in $(seq 1 60); do
             status=$(aws sagemaker describe-pipeline-execution \
               --pipeline-execution-arn "$execution" \
               --query PipelineExecutionStatus --output text)
             echo "  $status"
             case "$status" in
-              Succeeded) break ;;
+              Succeeded) settled="yes"; break ;;
               Failed|Stopped) echo "::error::pipeline $status"; exit 1 ;;
             esac
             sleep 30
           done
+          [ -n "$settled" ] || {
+            aws sagemaker list-pipeline-execution-steps --pipeline-execution-arn "$execution" \
+              --query 'PipelineExecutionSteps[].[StepName,StepStatus]' --output text
+            echo "::error::the pipeline was still running after thirty minutes. Not treating that as a pass"
+            exit 1
+          }
 
       - name: start the endpoint, if there is one
         # The one resource in this estate that bills by the minute for as long as it exists.
@@ -218,12 +232,13 @@ jobs:
           run_id=$(aws glue start-job-run --job-name watermark-land-to-silver \
             --query JobRunId --output text)
           echo "land-to-silver $run_id"
+          settled=""
           for _ in $(seq 1 60); do
             state=$(aws glue get-job-run --job-name watermark-land-to-silver \
               --run-id "$run_id" --query 'JobRun.JobRunState' --output text)
             echo "  $state"
             case "$state" in
-              SUCCEEDED) break ;;
+              SUCCEEDED) settled="yes"; break ;;
               FAILED|ERROR|TIMEOUT|STOPPED)
                 aws glue get-job-run --job-name watermark-land-to-silver --run-id "$run_id" \
                   --query 'JobRun.ErrorMessage' --output text
@@ -231,6 +246,8 @@ jobs:
             esac
             sleep 15
           done
+          # A loop that ran out is a merge that did not happen. See the pipeline wait above.
+          [ -n "$settled" ] || { echo "::error::land-to-silver never settled"; exit 1; }
 
       - name: the lakehouse holds what the stream decided
         # **The assertions this workflow existed without.** Every step before this one reported

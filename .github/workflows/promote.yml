@@ -1,0 +1,159 @@
+# The one act that lets a model reach an endpoint. A person does it, and the person is named.
+#
+# **Why this is a workflow and not a script somebody runs.** Doctrine 5 says nothing approves
+# itself, and that is only true if the approval is a recorded act with an identity attached. A
+# promotion run from a laptop is an approval whose only trace is a shell history; run from here
+# it carries the dispatcher, the ref, the model version and the approver into a log nobody can
+# quietly edit.
+#
+# **What it does, in order.** Reads the pinned dataset the pipeline wrote — not a regenerated
+# one — evaluates `scripts/promote.py` against it, and only if the gate passes copies the
+# training artefact to the `approved/` prefix the endpoint reads and sets the registry entry to
+# `Approved`. A refusal stops before either, so a refused model is not half-promoted.
+#
+# **It cannot start an endpoint.** That is still a `deploy` with `endpoint_enabled=true`, which
+# is a separate, gated act. This workflow makes an endpoint *possible*; it does not make one.
+
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_package_version:
+        description: "Which registry version to promote. Every version is registered PendingManualApproval; this names the one being approved."
+        required: true
+        type: string
+      approver:
+        description: "The human taking responsibility, by name. No default. `pipeline`, `system` and the training identities are refused by name — doctrine 5, nothing approves itself."
+        required: true
+        type: string
+      parity_holds:
+        description: "Whether train/serve parity held for this run. Doctrine 7: the one door with no key. A mismatch means the number that trained the model and the number in production are different things, so nobody — including you — knows what they would be approving."
+        required: true
+        type: choice
+        options: ["true", "false"]
+        default: "false"
+      confirm:
+        description: "Type `promote` to confirm."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: promote-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: evaluate the gate, then approve
+    runs-on: ubuntu-latest
+    environment: deploy
+
+    env:
+      PROJECT: watermark
+      LAKEHOUSE: watermark-lakehouse-${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - name: the confirmation word
+        run: |
+          if [ "${{ inputs.confirm }}" != "promote" ]; then
+            echo "::error::Type 'promote' in the confirm field."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,ml]"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: find the registered model and the dataset it was fitted on
+        run: |
+          set -euo pipefail
+          arn="arn:aws:sagemaker:${AWS_DEFAULT_REGION}:${{ vars.AWS_ACCOUNT_ID }}:model-package/${PROJECT}-meter-anomaly/${{ inputs.model_package_version }}"
+          echo "MODEL_PACKAGE_ARN=$arn" >> "$GITHUB_ENV"
+
+          status=$(aws sagemaker describe-model-package --model-package-name "$arn" \
+            --query ModelApprovalStatus --output text)
+          echo "registry status: $status"
+          # Already approved is not success. Re-approving would overwrite the artefact the
+          # endpoint is serving with whichever version was typed, without anybody looking at
+          # what changed.
+          [ "$status" = "PendingManualApproval" ] || {
+            echo "::error::version ${{ inputs.model_package_version }} is $status, not PendingManualApproval"; exit 1; }
+
+          artefact=$(aws sagemaker describe-model-package --model-package-name "$arn" \
+            --query 'InferenceSpecification.Containers[0].ModelDataUrl' --output text)
+          echo "ARTEFACT=$artefact" >> "$GITHUB_ENV"
+          echo "artefact: $artefact"
+
+          mkdir -p out/promote
+          aws s3 cp "s3://${LAKEHOUSE}/pipelines/${PROJECT}/dataset/dataset.csv" out/promote/dataset.csv
+          head -1 out/promote/dataset.csv
+
+      - name: the gate decides
+        # Not `continue-on-error`. A refusal is the documented result for a model fitted on the
+        # dispatch log — see docs/BIAS-FINDING.md — and it must stop the run, because the steps
+        # after this one are what put a model in front of traffic.
+        run: |
+          set -euo pipefail
+          python scripts/promote.py \
+            --dataset out/promote/dataset.csv \
+            --snapshot "$(date -u +%Y-%m-%dT%H:%M:%SZ)-v${{ inputs.model_package_version }}" \
+            --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --approver "${{ inputs.approver }}" \
+            --parity-holds "${{ inputs.parity_holds }}" | tee out/promote/verdict.txt
+
+      - name: put the artefact where the endpoint reads it
+        # The endpoint's model resource names `approved/<promoted_model_name>/model.tar.gz`. It
+        # is a copy rather than a reference so that a pipeline run cannot change what is being
+        # served by overwriting its own output: what is approved stops moving at the moment of
+        # approval.
+        run: |
+          set -euo pipefail
+          name="v${{ inputs.model_package_version }}"
+          echo "PROMOTED_MODEL_NAME=$name" >> "$GITHUB_ENV"
+          aws s3 cp "$ARTEFACT" "s3://${LAKEHOUSE}/pipelines/${PROJECT}/approved/$name/model.tar.gz"
+          aws s3 ls "s3://${LAKEHOUSE}/pipelines/${PROJECT}/approved/$name/"
+
+      - name: record the approval in the registry
+        run: |
+          set -euo pipefail
+          aws sagemaker update-model-package \
+            --model-package-name "$MODEL_PACKAGE_ARN" \
+            --model-approval-status Approved \
+            --approval-description "Approved by ${{ inputs.approver }} via promote.yml run ${{ github.run_id }}. Gate: scripts/promote.py, thresholds in watermark.models.promotion."
+          aws sagemaker describe-model-package --model-package-name "$MODEL_PACKAGE_ARN" \
+            --query '{status:ModelApprovalStatus,description:ApprovalDescription}' --output json
+
+      - name: what to do with it
+        run: |
+          {
+            echo "### Promoted"
+            echo ""
+            echo "Version **${{ inputs.model_package_version }}**, approved by **${{ inputs.approver }}**."
+            echo ""
+            echo '```'
+            cat out/promote/verdict.txt
+            echo '```'
+            echo ""
+            echo "An endpoint does not exist yet. Dispatch \`deploy\` with"
+            echo "\`endpoint_enabled=true\` and \`promoted_model_name=$PROMOTED_MODEL_NAME\`."
+            echo "That is a separate act on purpose: this workflow makes an endpoint possible,"
+            echo "it does not make one."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: promote
+          path: out/promote

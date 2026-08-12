@@ -41,6 +41,16 @@ on:
         type: choice
         options: [TRIM_HORIZON, LATEST]
         default: TRIM_HORIZON
+      online_store:
+        description: "Whether the SageMaker Feature Store online store exists. One of the three expensive things, and what claim 3 needs: with it off there is no online side to compare the offline value against, so train/serve parity cannot be exercised live at all."
+        required: true
+        type: boolean
+        default: false
+      promoted_model:
+        description: "The approved model an endpoint serves, e.g. `v9`. Produced by `promote.yml` and by nothing else. Leave empty for no endpoint; an endpoint with an empty model fails at plan time rather than at the first inference."
+        required: false
+        type: string
+        default: ""
       expires_at:
         description: "RFC-3339 instant after which the reaper destroys this estate, e.g. 2026-08-10T18:00:00Z"
         required: true
@@ -251,6 +261,13 @@ jobs:
           TF_VAR_substations: ${{ env.SUBSTATIONS }}
           TF_VAR_initial_stream_position: ${{ inputs.stream_position }}
           TF_VAR_processing_image_tag: ${{ env.PROCESSING_IMAGE_TAG }}
+          TF_VAR_online_store_enabled: ${{ inputs.online_store }}
+          # An endpoint exists exactly when a promoted model was named. Deriving it from the
+          # name rather than taking a second boolean removes the state where the two disagree —
+          # `endpoint_enabled = true` with nothing to serve is the failure the check block in
+          # `infra/ml/variables.tf` exists to catch, and it should not be reachable from a form.
+          TF_VAR_endpoint_enabled: ${{ inputs.promoted_model != '' }}
+          TF_VAR_promoted_model_name: ${{ inputs.promoted_model }}
         run: |
           set -euo pipefail
           ORDER="foundation streaming lakehouse ml governance"

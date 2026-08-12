@@ -33,6 +33,15 @@ from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
+from pyspark.sql.types import (
+    ArrayType,
+    BooleanType,
+    IntegerType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+)
 
 ARGUMENTS = getResolvedOptions(sys.argv, ["JOB_NAME", "WAREHOUSE", "LANDING", "DATABASE", "TABLE"])
 
@@ -131,7 +140,73 @@ HAS_LANDED = listing.get("KeyCount", 0) > 0
 if not HAS_LANDED:
     print(f"nothing landed under {ARGUMENTS['LANDING']}; {TARGET} exists, no merge")
 else:
-    spark.read.json(ARGUMENTS["LANDING"]).createOrReplaceTempView("landed")
+    # **The schema is declared, and the lookup is explicitly recursive.** Two failures, one read.
+    #
+    # `spark.read.json(path)` returned `AnalysisException: Unable to infer schema for JSON` on a
+    # prefix holding twenty-two committed part files. Flink's `FileSink` buckets by hour, so
+    # every file sits one directory down — `landing/meter_interval/2026-08-12--00/windows-….jsonl`
+    # — and the directory name is not `key=value`, so it is not a partition and the default
+    # listing does not descend into it. Nothing was read, and "nothing was read" surfaces as a
+    # schema error rather than an empty frame.
+    #
+    # Inference had to go anyway, and this is the more important half. The landed lines are a
+    # union of three shapes, and the columns of the rarest one decide the types: a capture with
+    # no restatement has `supersedes` null on every line, Spark types it `string`, and the
+    # `MERGE` fails on a type mismatch against a `bigint` column — on the capture that happened
+    # to be quiet, not on the one that introduced the bug. A declared schema makes the read mean
+    # the same thing every time, which is the whole of what claim 2 asks of a pipeline.
+    LANDED = StructType(
+        [
+            StructField("kind", StringType()),
+            StructField("meter", StringType()),
+            StructField("interval_start", LongType()),
+            # A string on the wire, deliberately: JSON numbers are doubles in most readers and
+            # `energy_wh` is an exact count of watt-hours. Cast to `bigint` in the view below.
+            StructField("energy_wh", StringType()),
+            StructField("readings", IntegerType()),
+            StructField("duplicates_suppressed", IntegerType()),
+            StructField("corrections_absorbed", IntegerType()),
+            StructField("closed_at", LongType()),
+            StructField("first_seen_at", LongType()),
+            StructField("revision", IntegerType()),
+            StructField("supersedes", LongType()),
+            StructField("restatement_cause", StringType()),
+            StructField("watermark_status", StringType()),
+            StructField("idle_partitions", ArrayType(StringType())),
+            StructField("lineage_id", StringType()),
+            StructField("observed_status", StringType()),
+            # The watermark condition lines and the quarantine lines share this file. They are
+            # filtered out below; their columns are declared so that a line the schema does not
+            # describe is not silently dropped by `PERMISSIVE` mode.
+            StructField("status", StringType()),
+            StructField("holding_back", StringType()),
+            StructField("lag_millis", LongType()),
+            StructField("watermark", LongType()),
+            StructField("may_close_windows", BooleanType()),
+            StructField("at", LongType()),
+            StructField("reason", StringType()),
+            StructField("detail", StringType()),
+            StructField("partition", StringType()),
+            StructField("source", StringType()),
+        ]
+    )
+
+    landed = (
+        spark.read.option("recursiveFileLookup", "true").schema(LANDED).json(ARGUMENTS["LANDING"])
+    )
+    landed.createOrReplaceTempView("landed")
+
+    # S3 said there were objects; the reader has to agree. Without this the two failures above
+    # would have produced an empty frame, a merge of nothing, and a job that reported success —
+    # which is the failure this repository exists to argue against, in the job that stores the
+    # evidence for it.
+    read = landed.count()
+    print(f"read {read} landed lines from {ARGUMENTS['LANDING']}")
+    if read == 0:
+        raise ValueError(
+            f"{ARGUMENTS['LANDING']} holds objects and the reader produced no rows. "
+            "A merge of nothing must not be reported as a merge."
+        )
 
     # Quarantines are evidence, not settlement rows. They land in the same stream because they are
     # produced by the same operator, and they belong in their own table rather than as nulls here.

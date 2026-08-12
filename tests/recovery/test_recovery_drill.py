@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from data import cast
 from data.generate import generate
-
 from watermark.core.time import Duration, Instant
 from watermark.runner import Arrival, run
 

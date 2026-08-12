@@ -20,8 +20,8 @@ import dataclasses
 import json
 
 import pytest
-from streaming.operators import _line
 
+from streaming.operators import _line
 from watermark.core.time import Duration, Instant
 from watermark.core.watermarks import WatermarkStatus, WatermarkView
 from watermark.core.windows import WindowResult

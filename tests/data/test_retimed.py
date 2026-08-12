@@ -19,9 +19,9 @@ in a capture that looks healthy.
 from __future__ import annotations
 
 import pytest
-from data.generate import energy_wh, payload_with, retimed
 
 from data import cast
+from data.generate import energy_wh, payload_with, retimed
 from watermark.core.normalise import DEFAULT_POLICY, normalise_meter_reading
 from watermark.core.records import Source
 from watermark.core.time import Duration, Instant

@@ -33,7 +33,6 @@ from data import cast
 from data.generate import digest as stream_digest
 from data.generate import generate
 from evals.replay import fingerprint
-
 from watermark.runner import Arrival, run
 
 RECORDING = Path(__file__).resolve().parents[1] / "recordings" / "day.json"

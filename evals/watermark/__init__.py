@@ -24,7 +24,6 @@ from collections import Counter
 
 from data import cast
 from data.generate import IDLE_FROM, IDLE_UNTIL, generate
-
 from evals.scoring import Case, first_problem, require
 from watermark.core.time import Duration
 from watermark.core.watermarks import WatermarkStatus

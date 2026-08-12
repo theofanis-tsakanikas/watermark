@@ -12,7 +12,6 @@ somebody would fix the card.
 from __future__ import annotations
 
 from data.labels import labels
-
 from evals.scoring import Case, first_problem, require
 from watermark.core.time import Instant
 from watermark.models.bias import Subject, measure_proxy_discrimination

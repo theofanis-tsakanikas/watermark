@@ -62,7 +62,11 @@ ml = [
 dev = [
     "pytest>=8.3",
     "pytest-cov>=5.0",
-    "ruff>=0.7",
+    # Pinned to a minor range, not floated. CI installs the latest matching release and a
+    # laptop installs whatever it already has, and the two disagreed: import sorting that was
+    # clean locally under 0.16 came back as five `I001` errors on a newer ruff, so a push that
+    # passed `make lint` failed the CI job that calls itself the same command.
+    "ruff>=0.16,<0.17",
     # checkov is deliberately absent from this environment: it pins boto3 exactly, and a
     # scanner is a tool while boto3 is the application. `make iac-scan` builds it its own
     # venv on demand; CI installs it separately. The scan itself gates every push either way.
@@ -75,6 +79,13 @@ packages = ["src/watermark"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+
+[tool.ruff.lint.isort]
+# Declared, not inferred. `src = ["src", "tests"]` tells ruff where the first-party code is, and
+# it leaves every other top-level package in this repository — `data`, `streaming`, `evals`,
+# `scripts`, `pipelines` — to a heuristic that has changed between ruff releases. Naming them
+# makes the sort order a property of this file rather than of whichever ruff a machine has.
+known-first-party = ["watermark", "contracts", "data", "streaming", "evals", "scripts", "pipelines"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "PL", "S"]

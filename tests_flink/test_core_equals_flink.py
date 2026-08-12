@@ -18,10 +18,10 @@ depends on in production while being proved offline.
 from __future__ import annotations
 
 import pytest
+
 from data import cast
 from data.generate import generate
 from evals.replay import value_fingerprint
-
 from watermark.runner import Arrival, run
 
 pytestmark = pytest.mark.slow

@@ -32,7 +32,6 @@ import random
 from data import cast
 from data.generate import digest as stream_digest
 from data.generate import generate
-
 from evals.scoring import Case, first_problem, require
 from watermark.runner import Arrival, RunResult, run
 

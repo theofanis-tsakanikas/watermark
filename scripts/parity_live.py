@@ -119,7 +119,7 @@ def _materialise(estate: Estate, limit: int):
     raw = _query(
         estate,
         f"SELECT {contract.entity_key}, {contract.event_time_column}, "
-        f"{contract.source_column}, merged_at FROM {estate.table} "
+        f"{contract.source_column}, {contract.ingest_time_column} FROM {estate.table} "
         f"ORDER BY {contract.event_time_column}",
     )
     if not raw:
@@ -129,7 +129,16 @@ def _materialise(estate: Estate, limit: int):
     for entity_id, event_time, value, ingest in raw:
         materialiser.observe(entity_id, _instant(event_time), int(value), _instant(ingest))
 
-    as_of = _instant(raw[-1][1])
+    # **Two instants, because the query has two axes.** The event-time bound is the latest
+    # reading the aggregator saw; the ingestion bound is the latest moment anything was known.
+    #
+    # Binding one instant to both was the first thing this harness got wrong, and the failure is
+    # worth keeping in view: the day is *shifted* so that it ends when the capture begins, and
+    # every record is ingested during the capture — so `first_seen_at <= max(event_time)` is
+    # false for every row and the offline side returned nothing at all. "What did we know at the
+    # start of the run" is a correct answer to a question nobody asked.
+    as_of_event = _instant(max(row[1] for row in raw))
+    as_of_ingest = _instant(max(row[3] for row in raw))
     entities = sorted({row[0] for row in raw})[:limit]
 
     written = 0
@@ -151,17 +160,18 @@ def _materialise(estate: Estate, limit: int):
         written += 1
 
     print(f"materialised {written} of {len(entities)} entities into {estate.feature_group}")
-    return as_of, entities, written
+    return as_of_event, as_of_ingest, entities, written
 
 
-def _compare(estate: Estate, as_of: Instant, entities: list[str]):
+def _compare(estate: Estate, as_of_event: Instant, as_of_ingest: Instant, entities: list[str]):
     """The offline mechanism, and the comparison. Set-oriented, recomputed whole, by Athena."""
     contract = estate.contract
     budget = Duration.of_seconds(contract.freshness_budget_seconds)
     offline_sql = as_of_sql(contract).replace(
         f"FROM {contract.source_table}", f"FROM {estate.table}"
     )
-    bound = as_of.to_iso()[:19].replace("T", " ")
+    event_bound = as_of_event.to_iso()[:19].replace("T", " ")
+    ingest_bound = as_of_ingest.to_iso()[:19].replace("T", " ")
 
     agreed: list[str] = []
     diverged: list[str] = []
@@ -173,7 +183,10 @@ def _compare(estate: Estate, as_of: Instant, entities: list[str]):
         # bound, and the ingestion bound. The three instants are the same moment here — the
         # question is what a decision taken now would have been served, which is bitemporal
         # with both axes pinned together.
-        rows = _query(estate, offline_sql, [entity_id, bound, bound, bound])
+        # The placeholders in order: the entity, the window's lower bound, its upper bound,
+        # and the ingestion bound. The first three are the event axis; the last is the other
+        # one, and it is a different instant.
+        rows = _query(estate, offline_sql, [entity_id, event_bound, event_bound, ingest_bound])
         expected = rows[0][0] if rows and rows[0][0] else None
 
         response = estate.runtime.get_record(
@@ -191,7 +204,7 @@ def _compare(estate: Estate, as_of: Instant, entities: list[str]):
             diverged.append(f"{entity_id}: offline {expected}, online {online}")
             continue
         agreed.append(entity_id)
-        if as_of.since(Instant.from_iso(record["event_time"])).millis > budget.millis:
+        if as_of_event.since(Instant.from_iso(record["event_time"])).millis > budget.millis:
             stale += 1
 
     print(f"claim 3: {len(agreed)} agreed, {len(diverged)} diverged, {len(missing)} missing")
@@ -229,13 +242,13 @@ def main(argv: list[str] | None = None) -> int:
         feature_group=arguments.feature_group,
     )
 
-    as_of, entities, written = _materialise(estate, arguments.entities)
+    as_of_event, as_of_ingest, entities, written = _materialise(estate, arguments.entities)
     if not written:
         print("::error::nothing was materialised, so nothing can be compared", file=sys.stderr)
         return 1
 
     time.sleep(SETTLE.millis / 1000)
-    agreed, diverged, missing = _compare(estate, as_of, entities)
+    agreed, diverged, missing = _compare(estate, as_of_event, as_of_ingest, entities)
 
     problems = 0
     if diverged:

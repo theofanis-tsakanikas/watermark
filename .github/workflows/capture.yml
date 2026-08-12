@@ -310,7 +310,15 @@ jobs:
             echo "::error::the lakehouse could not be queried; the assertions below were not run"
             exit 1
           }
-          read -r ROWS UNCLOSED LINEAGE RESTATED SUPERSEDED STATUSES <<<"$facts"
+          # Printed before it is parsed, and split by field rather than by `read`. The previous
+          # run failed this step with no output at all: `read` consuming a short or empty line
+          # under `set -e` ends the script silently, so a query problem and a parsing problem
+          # were indistinguishable — from a step whose whole purpose is to say what happened.
+          echo "athena returned: [$facts]"
+          set -- $facts
+          [ "$#" -eq 6 ] || {
+            echo "::error::expected six counts from Athena, got $#: [$facts]"; exit 1; }
+          ROWS=$1 UNCLOSED=$2 LINEAGE=$3 RESTATED=$4 SUPERSEDED=$5 STATUSES=$6
 
           {
             echo "### The lakehouse after the capture"

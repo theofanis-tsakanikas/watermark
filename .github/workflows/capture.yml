@@ -29,6 +29,12 @@ on:
         required: true
         type: string
         default: "700"
+      labels:
+        description: "Which labels the model is fitted against. `dispatch_log` is what history gives you and the promotion gate REFUSES it, for the label-coverage finding in docs/BIAS-FINDING.md. `randomised_inspection` is what that document's mitigation produces and the gate promotes it. Same population, same model class, same thresholds — the difference is the labels, which is the finding."
+        required: true
+        type: choice
+        options: [dispatch_log, randomised_inspection]
+        default: dispatch_log
       confirm:
         description: "Type `capture` to confirm. This starts billable compute."
         required: true
@@ -139,6 +145,7 @@ jobs:
               Name=SnapshotId,Value="${{ inputs.snapshot }}" \
               Name=AsOfInstant,Value="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               Name=Threshold,Value="${{ inputs.threshold }}" \
+              Name=LabelSource,Value="${{ inputs.labels }}" \
             --query PipelineExecutionArn --output text)
           echo "PIPELINE_EXECUTION=$execution" >> "$GITHUB_ENV"
           echo "waiting on $execution"

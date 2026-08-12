@@ -132,8 +132,8 @@ package-ml: ## Build the wheel the SageMaker processing steps install before run
 	@# the wheel, and a step that imports it dies on ImportError inside a paid cluster.
 	$(PYTHON) -c "import csv,sys; sys.path.insert(0,'.'); from data.labels import labels; \
 	w=csv.writer(open('infra/ml/.package/population.csv','w',newline='')); \
-	w.writerow(['entity_id','deprivation_decile','score','confirmed']); \
-	[w.writerow([i.meter_id,i.deprivation_decile,i.score,int(i.confirmed)]) for i in labels()]"
+	w.writerow(['entity_id','deprivation_decile','score','confirmed','truly']); \
+	[w.writerow([i.meter_id,i.deprivation_decile,i.score,int(i.confirmed),int(i.truly_tampering)]) for i in labels()]"
 	cp pipelines/steps/*.sh infra/ml/.package/
 	@echo "packaged $$(ls infra/ml/.package/*.whl) + population.csv + step scripts"
 

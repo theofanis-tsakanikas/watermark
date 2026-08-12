@@ -157,6 +157,12 @@ resource "aws_sagemaker_pipeline" "training" {
       # model nobody can trace.
       { Name = "SnapshotId", Type = "String" },
       { Name = "AsOfInstant", Type = "String" },
+      # Which labels the model is fitted against, and it has no default for the same reason
+      # `SnapshotId` has none: it is the fact that decides whether the run can be promoted.
+      # `dispatch_log` is what history gives you and the gate refuses it for the finding in
+      # `docs/BIAS-FINDING.md`; `randomised_inspection` is what that document's mitigation
+      # produces, and the gate promotes it. Same population, same model, same thresholds.
+      { Name = "LabelSource", Type = "String" },
       { Name = "InstanceType", Type = "String", DefaultValue = local.instance_type },
       # The fitted threshold, from the training step. No default: see `examine`.
       { Name = "Threshold", Type = "String" },
@@ -182,8 +188,9 @@ resource "aws_sagemaker_pipeline" "training" {
             ContainerEntrypoint = ["bash", "/opt/ml/processing/input/code/snapshot.sh"]
           }
           Environment = {
-            SNAPSHOT_ID = { Get = "Parameters.SnapshotId" }
-            AS_OF       = { Get = "Parameters.AsOfInstant" }
+            SNAPSHOT_ID  = { Get = "Parameters.SnapshotId" }
+            AS_OF        = { Get = "Parameters.AsOfInstant" }
+            LABEL_SOURCE = { Get = "Parameters.LabelSource" }
           }
           RoleArn = aws_iam_role.training.arn
           ProcessingInputs = [

@@ -23,12 +23,32 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Final
 
 #: Where SageMaker mounts a processing job's outputs. Fixed by the service, not by us.
 OUTPUT = Path("/opt/ml/processing/output")
 
 
-def rows_as_of(source: Path, snapshot: str, as_of: str) -> list[dict[str, object]]:
+#: Which column of the population becomes the label the model is fitted against.
+#:
+#: **Both are real and neither is a test fixture.** `dispatch_log` is what a distribution
+#: operator actually has: a record of inspections that were carried out, and inspectors went
+#: where they had always gone. `randomised_inspection` is what the mitigation in
+#: `docs/BIAS-FINDING.md` produces once a fraction of visits is allocated at random — labels
+#: that no longer encode where the vans went.
+#:
+#: The promotion gate refuses a model fitted on the first and promotes one fitted on the second,
+#: over the same population, the same model class and the same thresholds. That difference is
+#: the finding: the defect is in the labels, not the algorithm.
+LABEL_COLUMNS: Final = {
+    "dispatch_log": "confirmed",
+    "randomised_inspection": "truly",
+}
+
+
+def rows_as_of(
+    source: Path, snapshot: str, as_of: str, labels: str = "dispatch_log"
+) -> list[dict[str, object]]:
     """Read the training set from the source the caller was given, and stamp it.
 
     **It reads a path. It does not know where the rows came from**, and that is deliberate: an
@@ -47,7 +67,7 @@ def rows_as_of(source: Path, snapshot: str, as_of: str) -> list[dict[str, object
     if not rows:
         return []
 
-    required = {"entity_id", "deprivation_decile", "score", "confirmed"}
+    required = {"entity_id", "deprivation_decile", "score", "confirmed", "truly"}
     missing = required - set(rows[0])
     if missing:
         raise ValueError(f"{source} is missing columns: {sorted(missing)}")
@@ -57,9 +77,13 @@ def rows_as_of(source: Path, snapshot: str, as_of: str) -> list[dict[str, object
             "entity_id": row["entity_id"],
             "deprivation_decile": int(row["deprivation_decile"]),
             "score": int(row["score"]),
-            "confirmed": int(row["confirmed"]),
+            "confirmed": int(row[LABEL_COLUMNS[labels]]),
             "as_of": as_of,
             "snapshot": snapshot,
+            # Recorded on every row, so the choice travels into the dataset digest and out of it
+            # into the model card. A model trained on one label source and described as the
+            # other is the shape of provenance failure `docs/BIAS-FINDING.md` is about.
+            "label_source": labels,
         }
         for row in rows
     ]
@@ -89,10 +113,13 @@ def main(argv: list[str] | None = None) -> int:
         help="The rows to pin. Supplied as a channel; never imported.",
     )
     parser.add_argument("--as-of", required=True)
+    # No default. Which labels a model was fitted against is the single fact that decides
+    # whether it can be promoted, and a run that did not say cannot be argued with afterwards.
+    parser.add_argument("--labels", required=True, choices=sorted(LABEL_COLUMNS))
     parser.add_argument("--output", type=Path, default=OUTPUT)
     arguments = parser.parse_args(argv)
 
-    rows = rows_as_of(arguments.source, arguments.snapshot, arguments.as_of)
+    rows = rows_as_of(arguments.source, arguments.snapshot, arguments.as_of, arguments.labels)
     if not rows:
         # Louder than an empty file. A downstream trainer given nothing fits nothing and scores
         # perfectly on it, and the run would register a model with flawless metrics.

@@ -13,4 +13,5 @@ pip install --no-deps --quiet /tmp/code/*.whl
 python3 -m watermark.models.snapshot \
   --snapshot "$SNAPSHOT_ID" \
   --as-of "$AS_OF" \
+  --labels "$LABEL_SOURCE" \
   --source /tmp/code/population.csv

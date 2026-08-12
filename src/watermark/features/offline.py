@@ -57,16 +57,29 @@ def as_of_sql(contract: FeatureContract) -> str:
     aggregation = _SQL_AGGREGATIONS[contract.aggregation].format(
         column=contract.source_column, event_time=contract.event_time_column
     )
+    # **Every bound instant is cast.** Athena binds `ExecutionParameters` as `varchar`, so a
+    # placeholder used in arithmetic answers
+    #
+    #     TYPE_MISMATCH: Cannot apply operator: varchar(19) - interval day to second
+    #
+    # and one used in a comparison against a `timestamp` column is a comparison between
+    # different types. The SQL had never been executed by Athena — the offline resolver beside
+    # it is Python over rows — so it compiled, it read correctly, and it could not run.
+    #
+    # The cast is in the compiled text rather than in the caller, because the caller binding a
+    # timestamp differently from the caller next to it is how two executors of one contract
+    # start disagreeing.
     query = f"""
         SELECT {aggregation} AS value
         FROM {contract.source_table}
         WHERE {contract.entity_key} = ?
-          AND {contract.event_time_column} >  ? - INTERVAL '{contract.window.length_seconds}' SECOND
-          AND {contract.event_time_column} <= ?
+          AND {contract.event_time_column} >  CAST(? AS TIMESTAMP)
+                                              - INTERVAL '{contract.window.length_seconds}' SECOND
+          AND {contract.event_time_column} <= CAST(? AS TIMESTAMP)
           -- The second time axis. Without it a late arrival changes what this returns for an
           -- instant that has already been served, and the parity harness reports a divergence
           -- about a reading nobody had when the decision was taken.
-          AND ingest_time <= ?
+          AND ingest_time <= CAST(? AS TIMESTAMP)
     """
     return query.strip()
 

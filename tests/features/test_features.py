@@ -82,7 +82,23 @@ class TestTheOfflineMechanism:
 
     def test_the_compiled_sql_binds_both_time_axes(self) -> None:
         sql = as_of_sql(load().features["substation_load_15m"])
-        assert "ingest_time <= ?" in sql
+        assert "ingest_time <= CAST(? AS TIMESTAMP)" in sql
+
+    def test_every_bound_instant_is_cast(self) -> None:
+        """Athena binds `ExecutionParameters` as `varchar`.
+
+        An uncast placeholder in arithmetic answers `TYPE_MISMATCH: Cannot apply operator:
+        varchar(19) - interval day to second`, and one in a comparison against a `timestamp`
+        column compares different types. The SQL read correctly and could not run, because
+        nothing executed it: the resolver beside it is Python over rows, and the deployed
+        executor arrived with the live parity harness.
+        """
+        for feature in ("meter_consumption_1h", "substation_load_15m"):
+            sql = as_of_sql(load().features[feature])
+            # Three of the four placeholders are instants; the fourth is the entity key, which
+            # is a string on both sides and must *not* be cast to a timestamp.
+            assert sql.count("CAST(? AS TIMESTAMP)") == 3, feature
+            assert sql.count("?") == 4, feature
 
     def test_it_returns_nothing_rather_than_zero_when_there_is_nothing(self) -> None:
         """A substation with no telemetry has no load figure. Inventing a zero tells the

@@ -360,8 +360,20 @@ jobs:
         # disagree.
         run: |
           set -euo pipefail
-          mkdir -p out/capture
-          aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" - --recursive \
+          mkdir -p out/capture out/landing
+          # Copied to a directory, then read. `aws s3 cp <prefix> -` streams to stdout and
+          # `--recursive` is not compatible with streaming:
+          #
+          #     An error occurred (ParamValidation): Streaming currently is only compatible
+          #     with non-recursive cp commands
+          #
+          # The error went to stderr, the pipeline produced an empty file, and the step reported
+          # "the job never reported a watermark condition at all" — a read that never happened,
+          # described as a system that never spoke. The run it said that about had in fact
+          # reported nine transitions, one of them `held_back` naming SUB-01.
+          aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" out/landing \
+            --recursive --exclude "*_tmp_*" --quiet
+          cat out/landing/*/* 2>/dev/null \
             | grep '"kind": "watermark"' > out/capture/watermark-status.jsonl || true
 
           transitions=$(wc -l < out/capture/watermark-status.jsonl | tr -d ' ')

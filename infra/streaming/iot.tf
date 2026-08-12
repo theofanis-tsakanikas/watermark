@@ -39,11 +39,11 @@ data "aws_iam_policy_document" "device" {
     effect  = "Allow"
     actions = ["iot:Publish"]
     resources = [
-      "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.project}/meter/$${iot:Connection.Thing.ThingName}/reading",
+      "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.project}/meter/+/$${iot:Connection.Thing.ThingName}/reading",
       # And its own backfill topic. Still its own: the head-end corrects readings *for* a meter,
       # and a publisher that could write to another meter's backfill could restate somebody
       # else's consumption.
-      "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.project}/meter/$${iot:Connection.Thing.ThingName}/backfill",
+      "arn:aws:iot:${var.aws_region}:${data.aws_caller_identity.current.account_id}:topic/${var.project}/meter/+/$${iot:Connection.Thing.ThingName}/backfill",
     ]
   }
 }
@@ -55,10 +55,35 @@ resource "aws_iot_policy" "device" {
 
 # The rule that moves readings onto the stream.
 #
-# `topic(3)` is the thing name from the topic the device published to — which the policy above
-# has already constrained to be the device's own. The partition key is therefore the meter id,
-# established by the broker rather than taken from the payload: a producer that chose its own
-# partition key could concentrate the whole fleet onto one shard, deliberately or by accident.
+# **The topic carries the substation, and that is the whole of a bug worth reading about.**
+#
+# The topic used to be `<project>/meter/<thing>/reading`, so `topic(3)` was the meter id, and the
+# rule put the meter id in the field the core calls `partition`. The core declares its partitions
+# from `WATERMARK_PARTITIONS`, which is the substation list out of `data/cast.py`. Two
+# vocabularies, one field name.
+#
+# What that produced in a live run, visible on every published row:
+#
+#     "holding_back": "M00038",
+#     "idle_partitions": ["SUB-01", "SUB-02", "SUB-03", "SUB-04"]
+#
+# Every declared substation lagged infinitely because no record ever named one, so all four were
+# excluded as idle for ever, and the watermark was pinned by whichever *meter* happened to be
+# slowest. Every total was published `advancing_with_idle` and carried a hole that did not exist.
+# Worse, claim 1's sharpest case could not fire at all: SUB-03 going quiet for forty minutes is
+# invisible when SUB-03 never speaks in the first place.
+#
+# So the topic is `<project>/meter/<substation>/<thing>/reading`. `topic(3)` is the substation —
+# the comms domain that actually goes silent, which is what a watermark partition has to be — and
+# `topic(4)` is the thing name, still pinned to the device's own by the policy above, so a device
+# still cannot publish as another meter. The Kinesis partition key is the meter, because shard
+# distribution wants the high-cardinality key and the watermark wants the physical one; they were
+# the same field until now only because both were wrong.
+#
+# The substation segment is *not* pinned by the policy, and that is a real weakening stated
+# rather than hidden: a device could claim to sit under a substation it does not. In a deployment
+# the segment is provisioned with the certificate; here the honest note is that meter identity is
+# what the policy protects and topology is not.
 resource "aws_iot_topic_rule" "meter_readings" {
   name        = replace("${var.project}_meter_readings", "-", "_")
   description = "Forward device readings to the meter stream, keyed by the topic's thing name"
@@ -78,16 +103,17 @@ resource "aws_iot_topic_rule" "meter_readings" {
   #
   # `encode(*, 'base64')` because the payload is arbitrary device JSON and nesting it inside
   # another JSON document would mean escaping it; base64 travels through both intact, and
-  # `normalise` in the core is what reads it. `topic(3)` is the thing name from
-  # `<project>/meter/<thing>/reading` — the device's own, which the IoT policy already forces it
-  # to publish under, so it cannot claim to be another meter.
-  sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'stream' AS source FROM '${var.project}/meter/+/reading'"
+  # `normalise` in the core is what reads it. `topic(3)` is the substation from
+  # `<project>/meter/<substation>/<thing>/reading` — the partition the core declares — and
+  # `topic(4)` is the thing name the IoT policy forces the device to publish under, so it cannot
+  # claim to be another meter.
+  sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'stream' AS source FROM '${var.project}/meter/+/+/reading'"
   sql_version = "2016-03-23"
 
   kinesis {
     role_arn      = aws_iam_role.iot_to_kinesis.arn
     stream_name   = aws_kinesis_stream.meter_readings.name
-    partition_key = "$${topic(3)}"
+    partition_key = "$${topic(4)}"
   }
 
   # Where a record goes when the rule itself fails — a throttled stream, a permissions change.
@@ -133,16 +159,17 @@ resource "aws_iot_topic_rule" "meter_backfill" {
   #
   # `encode(*, 'base64')` because the payload is arbitrary device JSON and nesting it inside
   # another JSON document would mean escaping it; base64 travels through both intact, and
-  # `normalise` in the core is what reads it. `topic(3)` is the thing name from
-  # `<project>/meter/<thing>/reading` — the device's own, which the IoT policy already forces it
-  # to publish under, so it cannot claim to be another meter.
-  sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'batch' AS source FROM '${var.project}/meter/+/backfill'"
+  # `normalise` in the core is what reads it. `topic(3)` is the substation from
+  # `<project>/meter/<substation>/<thing>/reading` — the partition the core declares — and
+  # `topic(4)` is the thing name the IoT policy forces the device to publish under, so it cannot
+  # claim to be another meter.
+  sql         = "SELECT encode(*, 'base64') AS raw, topic(3) AS partition, 'batch' AS source FROM '${var.project}/meter/+/+/backfill'"
   sql_version = "2016-03-23"
 
   kinesis {
     role_arn      = aws_iam_role.iot_to_kinesis.arn
     stream_name   = aws_kinesis_stream.meter_readings.name
-    partition_key = "$${topic(3)}"
+    partition_key = "$${topic(4)}"
   }
 
   # Where a record goes when the rule itself fails — a throttled stream, a permissions change.

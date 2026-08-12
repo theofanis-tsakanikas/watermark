@@ -133,6 +133,17 @@ jobs:
         # that day on, reporting green in eleven milliseconds forever.
         run: python scripts/check_parity_paths_are_independent.py
 
+      - name: the transport labels records with the partitions the core declares
+        # The IoT rule's `partition` field and `WATERMARK_PARTITIONS` were two vocabularies with
+        # one name for the whole of phase 4: the rule sent the meter id, the core declared the
+        # substations, and so every substation lagged infinitely, was excluded as idle, and every
+        # published total carried a hole that did not exist. Claim 1's sharpest case — a
+        # substation going quiet — could not fire, because it never spoke to begin with.
+        #
+        # Valid HCL, correct core, green evals. The two only meet in a running estate, so the
+        # topic is where they are compared.
+        run: python scripts/check_partition_vocabulary.py
+
       - name: the stream core is framework-free and reads no ambient state
         # The precondition for every other claim. The day a boto3 import or a `datetime.now()`
         # appears three levels down inside a windowing function, nothing fails — the suite just

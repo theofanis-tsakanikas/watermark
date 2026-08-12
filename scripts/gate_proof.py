@@ -381,7 +381,36 @@ def _transcribe_the_state_bucket_into_a_repository_variable(root: Path) -> bool:
     )
 
 
+def _let_the_transport_send_the_meter_as_the_partition(root: Path) -> bool:
+    """Read the meter id, not the substation, as the record's partition.
+
+    This is the mutation that is not hypothetical: it is what the repository shipped, and it was
+    found only by reading a landing file from a live capture. The rule is valid SQL, the core is
+    correct, and every claim harness stays green because they drive the core directly with the
+    partitions it declares. The two halves meet nowhere offline except the topic.
+
+    What it costs when it is wrong: every declared substation lags infinitely, is excluded as
+    idle, and every published total carries a hole that is not there — while claim 1's sharpest
+    case, a substation going quiet, cannot fire at all, because it never spoke.
+    """
+    return _replace(
+        root / "infra/streaming/iot.tf",
+        "topic(3) AS partition, 'stream' AS source",
+        "topic(4) AS partition, 'stream' AS source",
+    )
+
+
 MUTATIONS: tuple[Mutation, ...] = (
+    Mutation(
+        "let the transport send the meter id as the record's partition",
+        "partition vocabulary",
+        "partition-vocabulary",
+        ["scripts/check_partition_vocabulary.py"],
+        "the core declares its partitions",
+        _let_the_transport_send_the_meter_as_the_partition,
+        "The bug this repository actually shipped. Valid HCL, correct core, seven green "
+        "claims — and every substation idle for ever in the one place the two meet.",
+    ),
     Mutation(
         "import a cloud SDK into the stream core",
         "core purity",

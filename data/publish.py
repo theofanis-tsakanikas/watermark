@@ -157,8 +157,13 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
         # restatement was ever produced.
         leaf = "reading" if delivery.source is Source.STREAM else "backfill"
         payload = _compress_instants(delivery.raw, origin, wall_start, described.compression)
+        # **The substation is in the topic**, because it is what the core declares as a partition
+        # and the IoT rule can read nothing else. `delivery.partition` is the substation the
+        # generator put the meter on; it used to be dropped here and the meter id was published
+        # in its place, so every reading arrived claiming a partition the core had never heard of
+        # while all four declared substations sat idle for ever. See `infra/streaming/iot.tf`.
         client.publish(
-            topic=f"{topic_prefix}/meter/{_meter_of(delivery.raw)}/{leaf}",
+            topic=f"{topic_prefix}/meter/{delivery.partition}/{_meter_of(delivery.raw)}/{leaf}",
             qos=1,
             payload=payload.encode("utf-8"),
         )

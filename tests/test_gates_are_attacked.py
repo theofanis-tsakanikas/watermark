@@ -41,7 +41,11 @@ CLAIMS = {f"claim-{number}" for number in range(1, 8)}
 #: shape. `deploy-inputs` is the rule that no value the account can be asked for may be
 #: transcribed into a settings page, which is a control precisely because its failure mode is
 #: silent and lives outside the repository.
-WIRING = {"deploy-inputs"}
+WIRING = {"deploy-inputs", "partition-vocabulary"}
+#: `partition-vocabulary` is the rule that the field the IoT topic rule calls `partition`
+#: carries what `WATERMARK_PARTITIONS` declares. Wiring rather than a gate for the same
+#: reason: the two sides are HCL and a Python constant, they meet only in a running
+#: estate, and nothing imports either of them.
 
 
 def _targets() -> set[str]:

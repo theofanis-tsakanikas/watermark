@@ -158,6 +158,14 @@ CHECKS: list[Check] = [
         "function with itself and reports green forever.",
     ),
     Check(
+        "deployability",
+        "partition vocabulary",
+        [PYTHON, "scripts/check_partition_vocabulary.py"],
+        "The IoT rule labels each record with the partition the core declares. Different "
+        "vocabularies mean every substation lags for ever and every total carries a hole that "
+        "is not there.",
+    ),
+    Check(
         "correctness",
         "gate-proof",
         [PYTHON, "scripts/gate_proof.py"],

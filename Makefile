@@ -80,7 +80,7 @@ fmt: ## Apply ruff formatting
 #   claim 7  no automatic consequential decision on a person — phase 3
 
 .PHONY: claims
-claims: core-pure adapter-thin parity-independent flink-versions contracts-validate seed-check claim-1 claim-2 claim-3 claim-4 claim-5 claim-6 claim-7 policy cost ## Every claim gate that exists today
+claims: core-pure adapter-thin parity-independent partition-vocabulary flink-versions contracts-validate seed-check claim-1 claim-2 claim-3 claim-4 claim-5 claim-6 claim-7 policy cost ## Every claim gate that exists today
 
 .PHONY: core-pure
 core-pure: ## The stream core imports no framework and no cloud SDK
@@ -93,6 +93,10 @@ adapter-thin: ## The streaming adapter carries no semantic literal (ADR-0003)
 .PHONY: parity-independent
 parity-independent: ## The two feature mechanisms share the contract and nothing else (ADR-0004)
 	$(PY) scripts/check_parity_paths_are_independent.py
+
+.PHONY: partition-vocabulary
+partition-vocabulary: ## The IoT rule labels records with the partitions the core declares
+	$(PY) scripts/check_partition_vocabulary.py
 
 .PHONY: contracts-validate
 contracts-validate: ## Every entity contract loads and cross-checks

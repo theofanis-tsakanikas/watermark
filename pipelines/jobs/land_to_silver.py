@@ -114,8 +114,20 @@ def _metadata_is_missing() -> bool:
 
 try:
     if _metadata_is_missing():
+        # **The catalogue entry is deleted directly, not through `DROP TABLE`.** Spark's Iceberg
+        # catalog loads a table before it drops it — it has to, in order to purge the metadata it
+        # is about to orphan — so `DROP TABLE IF EXISTS` against a table whose metadata has gone
+        # fails on the same missing object as the merge would:
+        #
+        #     An error occurred while calling o112.sql. The specified key does not exist.
+        #     (Service: S3, Status Code: 404)
+        #
+        # There is nothing to purge. What is left is a row in the Glue catalogue, and that is
+        # what `glue:DeleteTable` removes.
         print(f"recreating {TARGET}: its metadata is unreachable, so it holds nothing readable")
-        spark.sql(f"DROP TABLE IF EXISTS {TARGET}")
+        boto3.client("glue").delete_table(
+            DatabaseName=ARGUMENTS["DATABASE"], Name=ARGUMENTS["TABLE"]
+        )
 except boto3.client("glue").exceptions.EntityNotFoundException:
     pass  # No table at all is the ordinary first-run case; the CREATE below handles it.
 

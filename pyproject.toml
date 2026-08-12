@@ -120,6 +120,12 @@ ignore = [
 # anywhere near them. Spark's `CALL system.rewrite_data_files(...)` takes its table as a string
 # literal, so there is no bound-parameter form to use instead.
 "pipelines/jobs/*.py" = ["S608"]
+# S608 in the live parity harness, for the same reason as `offline.py`: the interpolated names
+# are contract identifiers already validated against `^[a-z][a-z0-9_]*$`, and the data — the
+# entity id and all three time bounds — goes through Athena's `ExecutionParameters` and is
+# never concatenated. Per-file for the same reason too: ruff attributes it to a multi-line
+# string it cannot be annotated inside.
+"scripts/parity_live.py" = ["S608"]
 # PLR0917: the parity comparison takes the contract, both mechanisms, the population, the
 # instants and the serving lag. Bundling them into a context object would hide which of the two
 # mechanisms a given line touches, and that visibility is the one thing a reader of this

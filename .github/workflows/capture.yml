@@ -410,6 +410,31 @@ jobs:
           [ "$SUPERSEDED" = "$RESTATED" ] || { echo "::error::doctrine 4: $RESTATED restatements, only $SUPERSEDED of which say what they replaced"; fail=1; }
           exit $fail
 
+      - name: "claim 3 and claim 4 — two mechanisms, one contract, no tolerance"
+        # **The claim the README calls the one nothing else in the portfolio proves**, against
+        # the estate instead of against a model of it.
+        #
+        # `evals/parity/` proves it offline every CI run. What it cannot prove is that the
+        # *deployed* mechanisms are the two the argument is about: an `as_of` query Athena
+        # recomputes whole over Iceberg, and an incremental aggregator that saw each record
+        # once, wrote to the Feature Store, and is read back with `GetRecord`. This runs both
+        # and compares them as integers, because the contract declares a scale and ADR-0004
+        # forbids a tolerance.
+        #
+        # Claim 4 rides on the same fetch: a served value older than the contract's freshness
+        # budget is one a decision must refuse, and the count is reported on every run.
+        #
+        # It needs the online store, which `deploy` creates only when asked. With it off there
+        # is no online side at all, and this step says so rather than passing over an absence.
+        run: |
+          set -euo pipefail
+          python scripts/parity_live.py \
+            --feature meter_consumption_1h \
+            --feature-group "${PROJECT}-meter-consumption" \
+            --database "${PROJECT}_silver" \
+            --workgroup "$PROJECT" \
+            --region "$AWS_DEFAULT_REGION"
+
       - name: the silent substation held the watermark back, and said so
         # **Claim 1's edge case, and the one the README listed as never induced in the cloud.**
         #

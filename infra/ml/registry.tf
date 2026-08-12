@@ -147,6 +147,16 @@ data "aws_iam_policy_document" "training" {
       # The prefix was added when the pipeline was, and this grant was not — so the first step
       # could reach S3 and not read the wheel that contains the module it was told to run.
       "${data.aws_s3_bucket.lakehouse.arn}/pipelines/*",
+      # Where the endpoint writes what it was asked and what it answered. `data_capture_config`
+      # names this prefix and the *serving* role has to be able to write it — which is the same
+      # role, because `aws_sagemaker_model.anomaly` runs under it.
+      #
+      # Without this the endpoint serves perfectly and records nothing: SageMaker does not fail
+      # an inference because it could not capture it, so the first sign is an empty prefix that
+      # looks like an endpoint nobody used. The AI Act Art. 12 record was the thing being lost,
+      # and losing it silently is the whole reason the capture asserts the objects exist rather
+      # than trusting `enable_capture = true`.
+      "${data.aws_s3_bucket.lakehouse.arn}/model-capture/*",
     ]
   }
 

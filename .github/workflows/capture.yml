@@ -234,10 +234,15 @@ jobs:
           print(f'a probability: {value}')
           "
 
-          # Written asynchronously. A minute is generous for one request, and the check is that
-          # something arrived rather than that a particular file did.
-          sleep 60
-          captured=$(aws s3 ls "s3://${LAKEHOUSE}/model-capture/anomaly/" --recursive | wc -l)
+          # Written asynchronously, and SageMaker buffers before flushing. Five minutes with a
+          # poll rather than one flat sleep: a fixed wait that is too short reports a permissions
+          # problem and a timing problem identically, which cost a run to find out.
+          captured=0
+          for _ in $(seq 1 20); do
+            captured=$(aws s3 ls "s3://${LAKEHOUSE}/model-capture/" --recursive | wc -l)
+            [ "$captured" -gt 0 ] && break
+            sleep 15
+          done
           echo "capture objects: $captured"
           [ "$captured" -gt 0 ] || {
             echo "::error::the endpoint answered and nothing was recorded. Art. 12 asks for the inputs as served, and an inference with no record is one no investigation can reach"

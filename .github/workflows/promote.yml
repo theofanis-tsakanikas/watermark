@@ -128,8 +128,12 @@ jobs:
       - name: record the approval in the registry
         run: |
           set -euo pipefail
+          # `--model-package-arn`, not `--model-package-name`. `describe-model-package` takes
+          # the name and accepts an ARN for it, `update-model-package` takes only the ARN, and
+          # the two commands disagreeing about the flag for one identifier cost a run that had
+          # already passed the gate and copied the artefact.
           aws sagemaker update-model-package \
-            --model-package-name "$MODEL_PACKAGE_ARN" \
+            --model-package-arn "$MODEL_PACKAGE_ARN" \
             --model-approval-status Approved \
             --approval-description "Approved by ${{ inputs.approver }} via promote.yml run ${{ github.run_id }}. Gate: scripts/promote.py, thresholds in watermark.models.promotion."
           aws sagemaker describe-model-package --model-package-name "$MODEL_PACKAGE_ARN" \

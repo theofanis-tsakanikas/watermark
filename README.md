@@ -17,19 +17,41 @@ Store · Lake Formation · Step Functions · Terraform*
 > provable on a laptop with no credentials; a row appears only when the command that produces
 > it exists.
 >
-> **What the live run proved, and what it did not.** Claims 1, 5 and 6 were exercised against
-> real infrastructure: every published window carried its watermark status, the model
-> registered `PendingManualApproval`, and the erasure state machine **refused to certify** —
-> the correct answer, live. Three things were *not* exercised and are gaps rather than results:
-> **claim 2 end-to-end**, because the Glue merge job was blocked on a missing IAM read
-> (now fixed, not yet re-run); **the endpoint and Model Monitor**, because both require a model
-> a human has approved and none was; and the `held_back` / `stalled` / `starved` watermark
-> states, which are proved offline but were never induced in the cloud.
+> **What the live run proved.** The whole chain, asserted by the capture workflow rather than
+> read off a dashboard: the stream closes windows, a Glue `MERGE` lands them in Iceberg, and
+> Athena is then asked six questions whose answers are the claims.
 >
-> The run is also where four design errors were found that no schema check could reach — among
-> them that PyFlink cannot emit a custom watermark, and that a green CI run had moved zero
-> records. `docs/DECISIONS.md` 17 has the list and retracts the decision that said a live run
-> would add nothing.
+> | asserted live, in SQL, on every capture | result |
+> |---|---|
+> | rows merged into the lakehouse | **4,682** |
+> | rows published with a watermark earlier than their own interval end | **0** — claim 1, checkable after the fact |
+> | distinct lineage ids | **4,682 for 4,682 rows** — claim 2's identity, one per row |
+> | restatements | **597** |
+> | restatements that name what they replaced | **597 of 597** — doctrine 4, no silent overwrite |
+>
+> Claim 5 and claim 6 were exercised too: the model registers `PendingManualApproval` and
+> nothing can approve itself, and the erasure state machine **refuses to certify** — the correct
+> answer, live.
+>
+> **`held_back` has now been induced in the cloud**, with `holding_back: SUB-01` and
+> `may_close_windows: false` on the record. It is *reported* rather than *required* by the
+> capture, and the reason is in `capture.yml`: the silent substation's gap is forty minutes of
+> event time compressed into about eight seconds of wall clock, so whether a batch boundary
+> falls inside it is alignment rather than behaviour. The guarantee is asserted where it is
+> deterministic — the zero above, and `evals/watermark/` offline.
+>
+> **Still not exercised, and gaps rather than results:** the endpoint and Model Monitor, because
+> both need a model a human has approved and none is; and the `stalled` / `starved` states,
+> which need a stream that stops rather than one that is quiet.
+>
+> The runs are also where the design errors live. Beyond the four in `docs/DECISIONS.md` 17 —
+> PyFlink cannot emit a custom watermark; a green CI run had moved zero records — a second pass
+> found that **no Iceberg table had ever existed** (ADR-0008), that the watermark was being
+> computed over meters rather than substations so every total carried a hole that was not there,
+> that the adapter dropped five of the core's fourteen fields including `closed_at`, and that a
+> third of the fleet published its readings five months late because one firmware writes epoch
+> seconds where a regex expected ISO-8601. Each was invisible offline; each is now refused by a
+> check that fails on a laptop.
 >
 > **Cost.** The tagged spend for the whole exercise was **USD 12.35**, against a design target
 > of under €100. It undercounts: a cost allocation tag takes up to 24 hours to activate, so the
@@ -93,13 +115,13 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 | **claim 5** · no model reaches an endpoint ungated | **12/12** — and **the shipped model is refused**, for the finding in [docs/BIAS-FINDING.md](docs/BIAS-FINDING.md) |
 | **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach |
 | **claim 7** · no automatic decision about a person | **8/8** — the contract does not load and the actuation type cannot be constructed |
-| `make gate-proof` | **21 refused, 0 accepted, 0 stale** |
+| `make gate-proof` | **22 refused, 0 accepted, 0 stale** |
 | `make policy` | **24 principal-resource pairs** — every reachable set exact and every closed path closed |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined, net restatement **+2,261 Wh** |
-| `make test` | **213 passing**, offline, credential-free, no JVM, under a second |
+| `make test` | **225 passing**, offline, credential-free, no JVM, under a second |
 | `terraform validate` | **6/6 layers** against real provider schemas |
 | `checkov` | **0 findings**, 48 deliberate exceptions each carrying a written reason beside the resource |
-| `make preflight` | **30 passed, 0 failed, 0 skipped** |
+| `make preflight` | **27 passed, 0 failed, 0 skipped** |
 | core↔Flink equivalence | **not yet observed green anywhere** — see below |
 
 Two rows are worth reading twice.

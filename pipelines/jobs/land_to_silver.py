@@ -78,6 +78,47 @@ TARGET = f"glue_catalog.{ARGUMENTS['DATABASE']}.{ARGUMENTS['TABLE']}"
 # `IF NOT EXISTS`, so this is idempotent: it runs on every merge, and `deploy.yml` runs the job
 # once with nothing landed for the sole purpose of bringing the table into existence before the
 # governance layer attaches a data quality ruleset to it.
+
+
+def _metadata_is_missing() -> bool:
+    """Whether the catalogue points at an Iceberg metadata file that is not there.
+
+    **A narrow rule, and the narrowness is the point.** An Iceberg table is its metadata: the
+    catalogue entry is a pointer, and if the object it names has gone then nothing in the table
+    can be read, no snapshot can be resolved, and every statement against it fails with an error
+    about the pointer rather than about the data. `CREATE TABLE IF NOT EXISTS` sees a table and
+    steps aside; the `MERGE` below then fails on a file that does not exist.
+
+    Recreating in that state is not data loss — there is no reachable data to lose. It is
+    removing a tombstone. The condition is deliberately not "the table looks wrong" or "the
+    schema has drifted", either of which would make this a job that silently rewrites a
+    settlement table; it is exactly "the pointer resolves to nothing".
+
+    It happens for dull reasons: a lifecycle rule that expired warehouse objects, a partial
+    destroy, a prefix cleared by hand between captures. All three leave the same wreck.
+    """
+    table = boto3.client("glue").get_table(
+        DatabaseName=ARGUMENTS["DATABASE"], Name=ARGUMENTS["TABLE"]
+    )["Table"]
+    location = table.get("Parameters", {}).get("metadata_location")
+    if not location:
+        return False
+    metadata_bucket, _, metadata_key = location.removeprefix("s3://").partition("/")
+    try:
+        boto3.client("s3").head_object(Bucket=metadata_bucket, Key=metadata_key)
+    except boto3.client("s3").exceptions.ClientError:
+        print(f"{location} is gone; the catalogue entry points at nothing")
+        return True
+    return False
+
+
+try:
+    if _metadata_is_missing():
+        print(f"recreating {TARGET}: its metadata is unreachable, so it holds nothing readable")
+        spark.sql(f"DROP TABLE IF EXISTS {TARGET}")
+except boto3.client("glue").exceptions.EntityNotFoundException:
+    pass  # No table at all is the ordinary first-run case; the CREATE below handles it.
+
 spark.sql(f"""
     CREATE TABLE IF NOT EXISTS {TARGET} (
         meter_id              STRING,

@@ -231,6 +231,12 @@ data "aws_iam_policy_document" "maintenance" {
       "glue:GetDatabase",
       "glue:GetDatabases",
       "glue:CreateTable",
+      # And `DeleteTable`, for one narrow case: a catalogue entry whose Iceberg metadata object
+      # has gone. `pipelines/jobs/land_to_silver.py` recreates the table then, because a pointer
+      # that resolves to nothing is not a table and nothing readable is lost by replacing it.
+      # Lake Formation already allows the drop — it grants the creator full rights over what it
+      # created, and this role is the creator — so IAM was the half that said no.
+      "glue:DeleteTable",
       "glue:GetTable",
       "glue:GetTables",
       "glue:UpdateTable",

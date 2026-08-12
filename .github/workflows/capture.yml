@@ -198,6 +198,51 @@ jobs:
             echo "::notice::no endpoint — this capture exercises the pipeline, not serving. Approve a model and redeploy with endpoint_enabled=true to capture inference."
           fi
 
+      - name: the endpoint answers, and the answer is recorded
+        # **An endpoint that exists and has never been asked anything is the same shape as a
+        # green run that moved no records.** `deploy` creates it, `describe-endpoint` says
+        # `InService`, and none of that establishes that it serves.
+        #
+        # Two features, in the order the training channel was written: `score` then
+        # `deprivation_decile`, label-first and headerless, which is what the built-in XGBoost
+        # image reads. A payload in the wrong shape gets an answer anyway — the container will
+        # score whatever it is handed — so the order is taken from the training data rather
+        # than assumed.
+        #
+        # The response is checked for being a probability, not for being non-empty. And the
+        # *capture* is checked separately: `data_capture_config` writes the request and the
+        # response to `model-capture/anomaly`, which is what AI Act Art. 12 asks for, and a
+        # serving path whose audit trail is empty is one no investigation can reach.
+        if: env.ENDPOINT_STARTED == 'yes'
+        run: |
+          set -euo pipefail
+          mkdir -p out/capture
+          printf '820,0' > out/capture/payload.csv
+          aws sagemaker-runtime invoke-endpoint \
+            --endpoint-name "${PROJECT}-anomaly" \
+            --content-type text/csv \
+            --body fileb://out/capture/payload.csv \
+            out/capture/inference.txt > out/capture/invoke.json
+          score=$(cat out/capture/inference.txt)
+          echo "the endpoint scored $score for score=820, decile=0"
+
+          python3 -c "
+          import sys
+          value = float(open('out/capture/inference.txt').read().strip())
+          if not 0.0 <= value <= 1.0:
+              sys.exit(f'::error::the endpoint answered {value}, which is not a probability')
+          print(f'a probability: {value}')
+          "
+
+          # Written asynchronously. A minute is generous for one request, and the check is that
+          # something arrived rather than that a particular file did.
+          sleep 60
+          captured=$(aws s3 ls "s3://${LAKEHOUSE}/model-capture/anomaly/" --recursive | wc -l)
+          echo "capture objects: $captured"
+          [ "$captured" -gt 0 ] || {
+            echo "::error::the endpoint answered and nothing was recorded. Art. 12 asks for the inputs as served, and an inference with no record is one no investigation can reach"
+            exit 1; }
+
       - name: drive the scenario
         # `--live`. Without it `data.publish` prints the plan and touches nothing, which is the
         # right default for a script that can spend money and the wrong one for the workflow

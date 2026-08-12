@@ -74,3 +74,18 @@ variable "processing_image_tag" {
   EOT
   type        = string
 }
+
+variable "model_monitor_available" {
+  type    = bool
+  default = false
+
+  description = <<-EOT
+    Whether this account may create SageMaker Model Monitor job definitions.
+
+    False, and it is a fact about the account rather than a choice about the design.
+    `CreateDataQualityJobDefinition` refuses with "This operation is in maintenance mode and is
+    not available to new customers" — the same sentence Clarify gives, recorded with its date in
+    docs/AWS-CONSTRAINTS.md. An account that predates the change sets this true and the schedule
+    and its job definition apply unchanged.
+  EOT
+}

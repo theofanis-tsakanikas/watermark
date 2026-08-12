@@ -224,6 +224,38 @@ today; both are verified in Phase 4, before the policy suite is written.
 
 ---
 
+## Amazon SageMaker Model Monitor — closed to new accounts
+
+**Verified 2026-08-12, against this account, by trying it.** `terraform apply` of
+`infra/ml/monitoring.tf`:
+
+```
+Error: creating SageMaker AI Data Quality Job Definition (watermark-anomaly-data-quality):
+api error ValidationException: This operation is in maintenance mode and is not available to
+new customers. Existing customers are unaffected.
+```
+
+This is the **second** SageMaker feature this project designed against and cannot use, for the
+same reason and in the same words as the first. ADR-0006 records Clarify: *"SageMaker Clarify
+processing is in maintenance mode and is not available to new customers."* Model Monitor's data
+quality job definition now answers identically.
+
+**What that costs.** The drift half of claim 5's lifecycle is not implementable on this account
+by the mechanism the design named. The endpoint's `data_capture_config` still records every
+request and response to `model-capture/anomaly` — that part works and is what AI Act Art. 12
+asks for — but nothing compares those records against the baseline the `Examine` step computes.
+The baseline is still produced, because it is cheap and because the day this reopens, or the day
+somebody points a different comparator at it, the artefact is already there and is derived from
+the training set rather than from recent traffic.
+
+**What was not done about it.** No substitute was written. A hand-rolled drift comparator would
+be a second implementation of a monitoring product, in a repository whose whole argument is that
+deterministic code should own only the things that have exactly one right answer — and "has this
+distribution moved enough to matter" is not one of them. The gap is declared instead.
+
+**What would change this.** An account that predates the change, or AWS reopening the API. Both
+are outside the repository, which is why this is a constraint and not a decision.
+
 ## Re-verification
 
 Every section above is dated. AWS changes; a constraint recorded in August 2026 and relied on

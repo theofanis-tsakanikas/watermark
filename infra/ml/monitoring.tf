@@ -69,8 +69,24 @@ resource "aws_sagemaker_endpoint" "anomaly" {
 # model was fitted on. Not from "recent production data", which is the tempting shortcut and
 # the one that defines drift as normal.
 
+# **Both resources below are behind `model_monitor_available`, which defaults to false.**
+#
+# Not a cost switch and not a preference. `CreateDataQualityJobDefinition` answers, in this
+# account, on 2026-08-12:
+#
+#     ValidationException: This operation is in maintenance mode and is not available to new
+#     customers. Existing customers are unaffected.
+#
+# The same sentence Clarify answers with, which ADR-0006 already records. Two SageMaker features
+# this design named and this account cannot have. `docs/AWS-CONSTRAINTS.md` has what it costs;
+# the short version is that the endpoint still captures every request and response — AI Act
+# Art. 12 — and nothing compares them against the baseline `Examine` computes.
+#
+# They are kept rather than deleted because the baseline is still produced and the wiring is
+# correct: an account that predates the change flips one variable. Deleting them would turn a
+# constraint into a gap in the design, which is the opposite of what happened.
 resource "aws_sagemaker_data_quality_job_definition" "anomaly" {
-  count = var.endpoint_enabled ? 1 : 0
+  count = var.endpoint_enabled && var.model_monitor_available ? 1 : 0
 
   name     = "${var.project}-anomaly-data-quality"
   role_arn = aws_iam_role.training.arn
@@ -132,7 +148,7 @@ resource "aws_sagemaker_data_quality_job_definition" "anomaly" {
 }
 
 resource "aws_sagemaker_monitoring_schedule" "anomaly" {
-  count = var.endpoint_enabled ? 1 : 0
+  count = var.endpoint_enabled && var.model_monitor_available ? 1 : 0
 
   name = "${var.project}-anomaly-data-quality"
 

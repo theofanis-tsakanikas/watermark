@@ -237,10 +237,15 @@ jobs:
           # Written asynchronously, and SageMaker buffers before flushing. Five minutes with a
           # poll rather than one flat sleep: a fixed wait that is too short reports a permissions
           # problem and a timing problem identically, which cost a run to find out.
+          # `if ... then break; fi`, not `[ ... ] && break`. Under `set -e` an AND-list whose
+          # left side fails takes the shell's exit status with it, so the first poll that found
+          # nothing killed the step — before the echo below, so the log showed the inference
+          # succeeding and then nothing at all. The capture had in fact landed sixty-eight
+          # seconds later, and the run reported it as absent.
           captured=0
           for _ in $(seq 1 20); do
             captured=$(aws s3 ls "s3://${LAKEHOUSE}/model-capture/" --recursive | wc -l)
-            [ "$captured" -gt 0 ] && break
+            if [ "$captured" -gt 0 ]; then break; fi
             sleep 15
           done
           echo "capture objects: $captured"

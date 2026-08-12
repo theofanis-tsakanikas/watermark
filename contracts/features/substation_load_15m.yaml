@@ -23,4 +23,5 @@ scale: 1
 aggregation: mean
 source_table: substation_telemetry
 source_column: load_w
+ingest_time_column: ingest_time
 event_time_column: event_time

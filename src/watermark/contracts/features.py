@@ -97,6 +97,20 @@ class FeatureContract(BaseModel):
     source_table: str
     source_column: str
     event_time_column: str
+    #: The **ingestion** axis, and it is declared rather than assumed.
+    #:
+    #: `as_of_sql` hardcoded `ingest_time`, which is the column `substation_telemetry` happens
+    #: to have and `meter_interval` does not — that one records when the winning copy of a
+    #: reading was first seen, under the name `first_seen_at`. Athena answered
+    #: `COLUMN_NOT_FOUND` the first time the compiled query was executed against the table its
+    #: own contract names.
+    #:
+    #: A bitemporal query without this axis is not merely missing a filter: a late arrival then
+    #: changes what the query returns for an instant that has already been served, and the
+    #: parity harness reports a divergence about a reading nobody had when the decision was
+    #: taken. So it is required, with no default — a contract that does not say which column
+    #: records ingestion cannot be resolved as-of anything.
+    ingest_time_column: str
 
     @property
     def freshness_budget(self) -> Duration:

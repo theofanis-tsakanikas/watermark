@@ -31,4 +31,5 @@ scale: 1000
 aggregation: sum
 source_table: meter_interval
 source_column: energy_wh
+ingest_time_column: first_seen_at
 event_time_column: interval_start

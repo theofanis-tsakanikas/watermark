@@ -69,6 +69,7 @@ def as_of_sql(contract: FeatureContract) -> str:
     # The cast is in the compiled text rather than in the caller, because the caller binding a
     # timestamp differently from the caller next to it is how two executors of one contract
     # start disagreeing.
+    ingest_time = contract.ingest_time_column
     query = f"""
         SELECT {aggregation} AS value
         FROM {contract.source_table}
@@ -79,7 +80,7 @@ def as_of_sql(contract: FeatureContract) -> str:
           -- The second time axis. Without it a late arrival changes what this returns for an
           -- instant that has already been served, and the parity harness reports a divergence
           -- about a reading nobody had when the decision was taken.
-          AND ingest_time <= CAST(? AS TIMESTAMP)
+          AND {ingest_time} <= CAST(? AS TIMESTAMP)
     """
     return query.strip()
 

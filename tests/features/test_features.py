@@ -25,6 +25,7 @@ VALID = {
     "source_table": "substation_telemetry",
     "source_column": "load_w",
     "event_time_column": "event_time",
+    "ingest_time_column": "ingest_time",
 }
 
 

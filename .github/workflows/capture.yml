@@ -237,14 +237,18 @@ jobs:
           # Written asynchronously, and SageMaker buffers before flushing. Five minutes with a
           # poll rather than one flat sleep: a fixed wait that is too short reports a permissions
           # problem and a timing problem identically, which cost a run to find out.
-          # `if ... then break; fi`, not `[ ... ] && break`. Under `set -e` an AND-list whose
-          # left side fails takes the shell's exit status with it, so the first poll that found
-          # nothing killed the step — before the echo below, so the log showed the inference
-          # succeeding and then nothing at all. The capture had in fact landed sixty-eight
-          # seconds later, and the run reported it as absent.
+          # **`aws s3 ls` exits 1 on an empty prefix**, and with `set -o pipefail` that status
+          # survives the pipe into `wc -l`, so the assignment fails and `set -e` ends the step —
+          # before the echo below, which is why the log showed the inference succeeding and then
+          # nothing at all. The capture had landed sixty-eight seconds later; the run reported
+          # its absence, and the absence was the shell's.
+          #
+          # `|| true` inside the substitution, so an empty listing is the zero it means rather
+          # than an error. The check that the count is greater than zero is two lines down and
+          # is where an empty prefix is supposed to be caught.
           captured=0
           for _ in $(seq 1 20); do
-            captured=$(aws s3 ls "s3://${LAKEHOUSE}/model-capture/" --recursive | wc -l)
+            captured=$( { aws s3 ls "s3://${LAKEHOUSE}/model-capture/" --recursive || true; } | wc -l )
             if [ "$captured" -gt 0 ]; then break; fi
             sleep 15
           done
@@ -281,7 +285,10 @@ jobs:
         run: |
           set -euo pipefail
           sleep 180
-          landed=$(aws s3 ls "s3://${LAKEHOUSE}/landing/meter_interval/" --recursive | wc -l)
+          # `|| true` for the same reason as the capture poll below: an empty prefix is an
+          # exit status, and under `pipefail` it ends the step with no message instead of
+          # reaching the assertion written to catch exactly that.
+          landed=$( { aws s3 ls "s3://${LAKEHOUSE}/landing/meter_interval/" --recursive || true; } | wc -l )
           echo "landing objects: $landed"
           [ "$landed" -gt 0 ] || { echo "::error::nothing landed; the stream closed no window"; exit 1; }
 

@@ -17,6 +17,7 @@ from watermark.core.time import Instant
 from watermark.models.bias import Subject, measure_proxy_discrimination
 from watermark.models.clarify import measure_as_clarify_would, sensitivity
 from watermark.models.promotion import (
+    THRESHOLDS,
     Approval,
     PromotionGate,
     PromotionRefused,
@@ -27,14 +28,8 @@ from watermark.models.train import Example, train_anomaly_scorer
 AT = Instant.from_iso("2026-03-14T00:00:00Z")
 SNAPSHOT = "iceberg-snapshot-8811923044"
 
-#: Deliberately not the thresholds the current model passes. A gate whose numbers were chosen
-#: after seeing the metrics is a gate that has never refused anything.
-THRESHOLDS = Thresholds(
-    min_precision_per_mille=600,
-    min_recall_per_mille=800,
-    max_unexplained_disparity_per_mille=200,
-    max_precision_gap_per_mille=300,
-)
+#: The thresholds in force, imported rather than restated. A harness that declared its own
+#: would be testing a gate nobody runs.
 
 
 def _run(*, on_ground_truth: bool = False):

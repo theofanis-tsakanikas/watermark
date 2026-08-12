@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Final
 
 from watermark.core.time import Instant
 from watermark.models.bias import BiasReport
@@ -97,6 +98,22 @@ class Thresholds:
 
 #: Principals that may never approve. Doctrine 5, as a list the offline gate can check and the
 #: estate mirrors in an IAM deny on `sagemaker:UpdateModelPackage`.
+#: The thresholds in force. **Policy, not a fixture.**
+#:
+#: They lived in `evals/promotion/` until a promotion had to be run for real, which made the
+#: problem visible: the numbers a model must clear were readable only by the harness that tests
+#: the gate. Anything outside the harness — a promotion script, a reviewer, an auditor asking
+#: what the bar is — had nowhere to look, and a second copy would have been a second policy.
+#:
+#: Deliberately not the numbers the current model passes. A gate whose thresholds were chosen
+#: after seeing the metrics is a gate that has never refused anything.
+THRESHOLDS: Final = Thresholds(
+    min_precision_per_mille=600,
+    min_recall_per_mille=800,
+    max_unexplained_disparity_per_mille=200,
+    max_precision_gap_per_mille=300,
+)
+
 FORBIDDEN_APPROVERS = frozenset({"pipeline", "system", "watermark-pipeline", "watermark-training"})
 
 #: The one threshold no approval can waive.

@@ -352,3 +352,37 @@ resource "aws_lakeformation_permissions" "maintenance_tables" {
     wildcard      = true
   }
 }
+
+# And the principal that *reads* the table back.
+#
+# `capture.yml` asserts what reached the lakehouse — that rows exist, that no row was published
+# with a watermark earlier than its own interval end, that every row carries a lineage id — and
+# it runs as the deploy role. Lake Formation grants the creator of a table full rights to it and
+# nobody else, and the creator here is the maintenance role, so the workflow's query came back:
+#
+#     COLUMN_NOT_FOUND: Column 'closed_at' cannot be resolved or requester is not authorized to
+#     access requested resources
+#
+# One message for two very different facts, which is deliberate on Lake Formation's part — the
+# alternative tells an unauthorised caller which columns exist — and which reads, from the
+# outside, exactly like a schema that was never created.
+#
+# Database-level `ALL` does not cover it. The deploy role has that already, as the principal that
+# created the database, and database permissions are about the database: creating tables,
+# altering it, describing it. Reading rows out of a table in it is a table permission.
+#
+# `SELECT` and `DESCRIBE`, and nothing that writes. The role that stands the estate up may check
+# what the estate produced; it may not produce it.
+data "aws_ssm_parameter" "deploy_role_arn" {
+  name = "/${var.project}/bootstrap/deploy_role_arn"
+}
+
+resource "aws_lakeformation_permissions" "deploy_reads_silver" {
+  principal   = data.aws_ssm_parameter.deploy_role_arn.value
+  permissions = ["SELECT", "DESCRIBE"]
+
+  table {
+    database_name = aws_glue_catalog_database.silver.name
+    wildcard      = true
+  }
+}

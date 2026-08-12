@@ -294,14 +294,23 @@ jobs:
             echo "athena query did not settle" >&2; return 1
           }
 
-          read -r ROWS UNCLOSED LINEAGE RESTATED SUPERSEDED STATUSES <<<"$(athena "
+          # Captured first, so a query that fails stops here with Athena's own reason instead of
+          # feeding empty strings into the assertions below. The previous run reported "the merge
+          # produced no rows" and two `integer expression expected` errors from bash, when what
+          # had actually happened was `COLUMN_NOT_FOUND: ... or requester is not authorized` — a
+          # Lake Formation grant, described as an arithmetic problem.
+          facts=$(athena "
             SELECT COUNT(*),
                    COUNT_IF(closed_at < interval_start + INTERVAL '15' MINUTE),
                    COUNT(DISTINCT lineage_id),
                    COUNT_IF(revision > 0),
                    COUNT_IF(revision > 0 AND supersedes IS NOT NULL),
                    COUNT(DISTINCT watermark_status)
-            FROM ${PROJECT}_silver.meter_interval")"
+            FROM ${PROJECT}_silver.meter_interval") || {
+            echo "::error::the lakehouse could not be queried; the assertions below were not run"
+            exit 1
+          }
+          read -r ROWS UNCLOSED LINEAGE RESTATED SUPERSEDED STATUSES <<<"$facts"
 
           {
             echo "### The lakehouse after the capture"

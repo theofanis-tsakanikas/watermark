@@ -18,8 +18,8 @@ from dataclasses import dataclass
 
 from data import generate as generate_module
 from data.cast import SUBSTATIONS
-from data.generate import generate
-from watermark.core.records import Source
+from data.generate import INTERVALS_PER_DAY, generate, interval_start
+from watermark.core.records import METER_INTERVAL, Source
 from watermark.core.time import Duration, Instant
 
 
@@ -75,8 +75,8 @@ def plan(minutes: int) -> Plan:
     )
 
 
-def _compress_instants(raw: str, origin: int, start: int, compression: int) -> str:
-    """Map every instant in the payload through the same transform as the pacing.
+def _shift_instants(raw: str, by_millis: int) -> str:
+    """Move every instant in the payload by a constant, keeping the day's own shape.
 
     **This is what makes late data late by the right amount.** The publisher already compressed
     *arrival* times into the capture window and left *event* times untouched, so a correction
@@ -85,9 +85,29 @@ def _compress_instants(raw: str, origin: int, start: int, compression: int) -> s
     refused all 288 of them for exactly the reason it should, and doctrine 4 could never be
     demonstrated live.
 
-    Compressing both keeps the *relationship* between event time and arrival, which is the only
-    thing the scenario is about. A reading three days late becomes seconds late; a window that
-    closes and is then corrected still closes and is then corrected.
+    **Shifted, not compressed, and that distinction is the whole of a capture that publishes
+    nothing.** Event times used to be divided by the same factor as the arrival pacing, on the
+    reasoning that the *relationship* between event time and arrival is what the scenario is
+    about. It is — but the window grid is not part of that relationship. A window is fifteen
+    minutes of event time, fixed in `watermark.core.records`, and compressing a four-day span
+    into twenty minutes puts the entire generated day inside one or two grid cells. Almost
+    nothing ever reaches a window end, so almost nothing closes: a live capture produced 101
+    evidence lines, every one of them a watermark status, and not a single published row.
+
+    It looked healthy. The stream flowed, the watermark advanced, `held_back` appeared with the
+    right substation named — and the lakehouse stayed empty, because the thing being compressed
+    was the axis the closing rule measures on.
+
+    So the day keeps its own fifteen-minute intervals and is *moved* to end at the capture,
+    while only the arrival pacing is compressed. The watermark then walks the day as the
+    deliveries arrive, ninety-odd windows close in order, and the head-end's file — whose event
+    times sit inside the same day but whose arrival is three days later — lands inside the
+    four-day allowance and restates rather than being refused. That is the case doctrine 4 is
+    about, and it cannot be shown any other way.
+
+    Moving into the *past* is safe: `normalise` quarantines a device whose clock runs ahead of
+    ingestion, not one whose readings are older than their arrival, which is what every late
+    delivery is by definition.
 
     **And it is `data.generate` that knows how to rewrite an instant, not this file.** The first
     version matched ISO-8601 text with a regex here, on the argument that a timestamp is a
@@ -98,9 +118,7 @@ def _compress_instants(raw: str, origin: int, start: int, compression: int) -> s
     correction for one was past the four-day allowance, and all 164 were refused
     `too_late_for_window` while the run reported success.
     """
-    return generate_module.retimed(
-        raw, lambda instant: Instant(start + (instant.epoch_millis - origin) // compression)
-    )
+    return generate_module.retimed(raw, lambda instant: Instant(instant.epoch_millis + by_millis))
 
 
 def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — needs an estate
@@ -130,11 +148,16 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
     # put the last corrections a fraction past the end of the window and drop them.
     origin = min(delivery.ingest_time.epoch_millis for delivery in deliveries)
 
-    # Where the compressed day lands on the wall clock. The core measures lateness in real
-    # elapsed time, so a scenario replayed months after its seeded date is a scenario in which
-    # everything is months late. Anchoring it to now is what makes the run a replay rather than
-    # an archive.
-    wall_start = int(time.time() * 1000)
+    # Where the day lands on the wall clock. The core measures lateness in real elapsed time,
+    # so a scenario replayed months after its seeded date is a scenario in which everything is
+    # months late. Anchoring it to now is what makes the run a replay rather than an archive.
+    #
+    # The day is moved so that it *ends* at the start of the capture: every interval keeps its
+    # own fifteen minutes, the newest is fresh, and the oldest is a day behind — which is what
+    # lets the watermark walk ninety-odd windows and close them in order. See
+    # `_shift_instants` for what compressing this axis instead did to a live run.
+    day_end = interval_start(INTERVALS_PER_DAY - 1).plus(METER_INTERVAL)
+    event_shift = int(time.time() * 1000) - day_end.epoch_millis
 
     started = time.monotonic()
     published = 0
@@ -153,7 +176,7 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
         # correction claim to be live, so the core refused all 288 as past their window and no
         # restatement was ever produced.
         leaf = "reading" if delivery.source is Source.STREAM else "backfill"
-        payload = _compress_instants(delivery.raw, origin, wall_start, described.compression)
+        payload = _shift_instants(delivery.raw, event_shift)
         # **The substation is in the topic**, because it is what the core declares as a partition
         # and the IoT rule can read nothing else. `delivery.partition` is the substation the
         # generator put the meter on; it used to be dropped here and the meter id was published

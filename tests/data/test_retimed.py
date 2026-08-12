@@ -21,9 +21,9 @@ from __future__ import annotations
 import pytest
 
 from data import cast
-from data.generate import energy_wh, payload_with, retimed
+from data.generate import INTERVALS_PER_DAY, energy_wh, generate, payload_with, retimed
 from watermark.core.normalise import DEFAULT_POLICY, normalise_meter_reading
-from watermark.core.records import Source
+from watermark.core.records import METER_INTERVAL, Source
 from watermark.core.time import Duration, Instant
 
 #: An instant with no relationship to the seeded day, so a payload that comes back unmoved is
@@ -92,3 +92,32 @@ def test_retiming_preserves_the_offset_between_two_readings(firmware: str) -> No
     ]
     gap = read[1].epoch_millis - read[0].epoch_millis
     assert gap == pytest.approx(Duration.of_minutes(1).millis, abs=Duration.of_seconds(1).millis)
+
+
+def test_a_shifted_day_still_spans_many_windows() -> None:
+    """The property a compressed day silently lost.
+
+    A window is fifteen minutes of event time, fixed in the core. Dividing every event time by
+    the same factor as the arrival pacing put a four-day span inside one or two grid cells, so
+    the watermark never reached a window end and a live capture published nothing at all — 101
+    evidence lines, every one a watermark status, and an empty lakehouse.
+
+    Shifting keeps the grid. This asserts the day still covers most of its intervals after the
+    move, which is the difference between a capture that closes windows and one that reports
+    healthy watermarks over an empty table.
+    """
+    shift = Duration.of_days(30).millis
+    starts = set()
+    for delivery in generate():
+        moved = retimed(delivery.raw, lambda i: Instant(i.epoch_millis + shift))
+        reading = normalise_meter_reading(
+            moved, Instant(delivery.ingest_time.epoch_millis + shift), Source.STREAM, DEFAULT_POLICY
+        )
+        if hasattr(reading, "reason"):
+            continue
+        starts.add(reading.event_time.epoch_millis // METER_INTERVAL.millis)
+
+    assert len(starts) >= INTERVALS_PER_DAY - 2, (
+        f"the day collapsed to {len(starts)} windows out of {INTERVALS_PER_DAY}. A capture over "
+        "this stream would close almost nothing, and would look healthy while doing it."
+    )

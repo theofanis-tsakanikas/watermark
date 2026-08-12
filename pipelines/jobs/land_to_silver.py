@@ -274,6 +274,44 @@ else:
     # It now comes off the record, where `streaming/operators.py` puts it. `merged_at` is the merge
     # clock, kept as its own column because dbt's incremental predicate needs to know what this run
     # touched, and that is a different question from when the window closed.
+    # **One row per key reaches the MERGE, and that is not an optimisation.**
+    #
+    # The merge matches on `(meter_id, interval_start)`. A capture that produces a restatement
+    # lands *both* statements about that interval — revision 0 when the window closed and
+    # revision 1 when the head-end's file corrected it — so the source holds two rows for one
+    # key and Spark refuses:
+    #
+    #     The ON search condition of the MERGE statement matched a single row from the target
+    #     table with multiple rows of the source table. This could result in the target row
+    #     being operated on more than once [...] and is not allowed.
+    #
+    # It is right to refuse: applying both in one statement leaves the outcome depending on
+    # which arrived last inside one transaction, which is the shape of bug doctrine 4 exists to
+    # rule out. The answer is the same one `queries/settlement_hourly.sql` already gives — the
+    # newest revision wins — applied before the merge instead of after it.
+    #
+    # This could not have surfaced until restatements did. Every earlier run produced none: the
+    # corrections were refused as too late, so every key appeared exactly once and the merge
+    # looked correct for four captures in a row.
+    #
+    # The tie-break is total, because two rows can share a revision. A `confirmed` says late
+    # data arrived and the number did not move, and it carries the same revision as the
+    # publication it confirms. Ordering by `closed_at` and then `lineage_id` makes the choice
+    # between them deterministic rather than dependent on file order — which claim 2 requires
+    # and a partitioned read would otherwise decide by accident.
+    spark.sql("""
+        CREATE OR REPLACE TEMPORARY VIEW newest AS
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY meter, interval_start
+                ORDER BY revision DESC, closed_at DESC, lineage_id DESC
+            ) AS rank_in_key
+            FROM landed
+            WHERE kind NOT IN ('quarantine', 'watermark') AND meter IS NOT NULL
+        )
+        WHERE rank_in_key = 1
+    """)
+
     spark.sql("""
         CREATE OR REPLACE TEMPORARY VIEW closed AS
         SELECT
@@ -292,12 +330,11 @@ else:
             restatement_cause,
             lineage_id,
             CURRENT_TIMESTAMP()                                AS merged_at
-        FROM landed
-        -- Three kinds share this prefix because one operator produces all three. `published`,
-        -- `restated` and `confirmed` are rows; `quarantine` is a refusal and belongs in its own
-        -- table; `watermark` is a condition report with no meter at all, which is why the second
-        -- clause is not redundant with the first.
-        WHERE kind NOT IN ('quarantine', 'watermark') AND meter IS NOT NULL
+        -- Three kinds share the landing prefix because one operator produces all three.
+        -- `published`, `restated` and `confirmed` are rows; `quarantine` is a refusal and
+        -- belongs in its own table; `watermark` is a condition report with no meter at all,
+        -- which is why the filter in `newest` needs both clauses.
+        FROM newest
     """)
 
     spark.sql(f"""

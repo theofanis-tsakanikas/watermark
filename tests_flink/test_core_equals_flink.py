@@ -21,6 +21,7 @@ import pytest
 
 from data import cast
 from data.generate import generate
+from watermark.core.records import Source
 from watermark.core.time import Duration
 from watermark.runner import Arrival, run
 
@@ -67,9 +68,30 @@ PACING_MILLIS = 2
 
 @pytest.fixture(scope="module")
 def arrivals() -> list[Arrival]:
+    """The live stream only, and the exclusion is a stated limit rather than a convenience.
+
+    **A bounded list cannot reproduce a three-day-late batch.** The deployed adapter stamps
+    arrival with `current_processing_time()`, which is right — at the edge of a stream, when a
+    record arrived *is* processing time. The offline runner uses the generator's `ingest_time`,
+    which encodes "this file came from the head-end three days after the readings in it". Feeding
+    a fixed list to a MiniCluster collapses those three days into the nine seconds the source
+    takes to drain, so the two sides measure lateness against genuinely different ingestion
+    structures and disagree on 283 windows out of 3,584 — every one of them on a
+    `LATE_BATCH_METERS` meter, and neither side wrong.
+
+    Restricting to `STREAM` is what makes the remaining comparison mean something. It still
+    covers what tier two is for: keying, windowing, watermark advance, deduplication of the
+    retrying cohort, the quarantine of the two skewed clocks, and the silent substation. What it
+    does not cover is the restatement path, and the honest place to say so is here rather than in
+    a tolerance that quietly absorbs it.
+
+    That path is not untested — `evals/replay/` drives it over the core and the live capture
+    asserts restatements against the estate, where the three days are real.
+    """
     return [
         Arrival(delivery.raw, delivery.ingest_time, delivery.source, delivery.partition)
         for delivery in generate()
+        if delivery.source is Source.STREAM
     ]
 
 

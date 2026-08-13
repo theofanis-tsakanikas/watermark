@@ -62,6 +62,16 @@ from watermark.core.time import Duration, Instant
 #: stall; short enough that a replay of old data is caught within one settlement period.
 DEFAULT_STALL_AFTER: Final = Duration.of_minutes(30)
 
+#: How long nothing may arrive at all before the stream is starved.
+#:
+#: Five minutes, and it is a *transport* threshold rather than a data one. Every meter in the
+#: fleet reports on a fifteen-minute cadence, but forty thousand of them do not fall silent
+#: together — across the whole fleet something arrives every few seconds, so five minutes of
+#: complete silence is not a quiet period, it is a broken pipe. Set it above the reporting
+#: cadence and a genuinely dead stream looks healthy for a quarter of an hour; that is a quarter
+#: of an hour of decisions taken on a watermark nobody is advancing.
+DEFAULT_SILENT_AFTER: Final = Duration.of_minutes(5)
+
 
 class WatermarkStatus(Enum):
     """What the watermark is currently able to assert."""
@@ -90,22 +100,21 @@ class WatermarkStatus(Enum):
 
     #: Every partition is idle or silent. Nothing is arriving at all.
     #:
-    #: **This detects *relative* silence, not absolute silence, and the difference matters.**
-    #: `idle` means "further behind the leader than `idle_after`", measured in event time. One
-    #: substation going quiet while the others keep reporting is caught, which is the scenario's
-    #: case and claim 1's sharpest one. A stream that stops *entirely* is not: the leader stops
-    #: moving too, every partition stays the same distance from it, nothing becomes idle, and
-    #: the view goes on saying `ADVANCING` about a grid that has said nothing for an hour.
+    #: **Two different silences reach this state, and they used to be one.**
     #:
-    #: That is a real limit of this design and it is written here rather than discovered. What
-    #: protects the system in that case is not this status — it is the freshness gate, claim 4,
-    #: which measures a served value's age against the moment a decision is being taken rather
-    #: than against other event times. A frozen watermark leaves every feature ageing past its
-    #: budget, and the decision falls back and says so.
+    #: *Relative*: every partition has fallen further behind the leader than `idle_after`, in
+    #: event time. That catches one substation going quiet while the others report — the
+    #: scenario's case and claim 1's sharpest.
     #:
-    #: Making absolute silence visible here needs a `silent_after` compared against processing
-    #: time, which means this module reads a clock — and it currently reads none, which is what
-    #: makes replay identical (claim 2). The trade is real and has not been made.
+    #: *Absolute*: nothing has arrived at all for longer than `silent_after`. For a long time
+    #: this was not detected, and the reasoning against detecting it was wrong. The relative test
+    #: cannot see a total stop, because when everything stops the leader stops too, every
+    #: partition stays exactly as far behind it as before, and the view goes on saying
+    #: `ADVANCING` about a grid that has said nothing for an hour. The objection was that
+    #: absolute silence needs a clock and this module reads none — but `observe` is *given* the
+    #: instant it reasons at, so the comparison is arithmetic on two values it already holds. The
+    #: clock stays outside; only the subtraction is here, and claim 2's identical replay is
+    #: untouched.
     STARVED = "starved"
 
     @property
@@ -160,6 +169,26 @@ class WatermarkPolicy:
     #: module stays a pure function of its input and never reads a clock.
     stall_after: Duration = DEFAULT_STALL_AFTER
 
+    #: How long nothing may arrive at all before the stream is called starved.
+    #:
+    #: **This is the absolute-silence threshold, and the module went a long time without one.**
+    #: `idle_after` is relative: a partition is idle when it falls behind the *leader*, which
+    #: catches one substation going quiet while the others report — the scenario's case and
+    #: claim 1's sharpest. It cannot catch the stream stopping, because when everything stops the
+    #: leader stops too, every partition stays exactly as far behind it as before, nothing
+    #: becomes idle, and the view goes on saying `advancing` about a grid that has said nothing
+    #: for an hour. `stall_after` does not catch it either, deliberately: a stall requires
+    #: records to be arriving, because quiet and stuck are different facts.
+    #:
+    #: **And it costs the module nothing, which is why the earlier reasoning against it was
+    #: wrong.** The obvious objection is that absolute silence needs a clock and this module reads
+    #: none — that is what makes claim 2's replay identical. But `observe` is already *given* the
+    #: instant it is reasoning at: the caller supplies `at`, the deployed adapter passes Flink's
+    #: processing time and the offline runner passes ingestion time. Comparing `at` against the
+    #: last arrival is arithmetic on two values the function already holds. The clock stays
+    #: outside; only the comparison is here.
+    silent_after: Duration = DEFAULT_SILENT_AFTER
+
     def __post_init__(self) -> None:
         if self.out_of_orderness.millis < 0:
             raise ValueError("out-of-orderness cannot be negative; it is a delay, not a lead")
@@ -167,6 +196,10 @@ class WatermarkPolicy:
             raise ValueError("idle_after must be positive; zero would idle every partition")
         if not self.stall_after.is_positive:
             raise ValueError("stall_after must be positive; zero calls every batch a stall")
+        if not self.silent_after.is_positive:
+            raise ValueError(
+                "silent_after must be positive; zero calls every quiet moment a famine"
+            )
 
 
 #: Chosen against the scenario rather than by taste. Two minutes of out-of-orderness covers
@@ -193,6 +226,14 @@ class WatermarkState:
     previous_leader: Instant | None = None
     #: The ingestion instant at which the leader last moved. A stall is how long ago that was.
     leader_last_moved_at: Instant | None = None
+    #: The instant at which *anything at all* last arrived.
+    #:
+    #: Distinct from `leader_last_moved_at`, and the distinction is the whole of the difference
+    #: between a stalled stream and a silent one. The leader can sit still while records pour in
+    #: — every meter reporting the same fifteen-minute interval — and that is a stall. Nothing
+    #: arriving is not a stall, it is silence, and the two need different answers because only
+    #: one of them can be diagnosed from the records themselves.
+    last_arrival_at: Instant | None = None
 
     @staticmethod
     def declare(partitions: Iterable[str]) -> WatermarkState:
@@ -283,7 +324,36 @@ def observe(
     )
     stalled_for = at.since(last_moved_at)
 
+    # When anything last arrived, which is not when the leader last moved. A fleet reporting the
+    # same fifteen-minute interval keeps this fresh while the leader sits still — that is a
+    # healthy burst, and calling it silence would fire the alarm on the ordinary case.
+    last_arrival_at = at if batch else (state.last_arrival_at or at)
+    silent_for = at.since(last_arrival_at)
+
     view = _view(highest, policy)
+
+    # **Absolute silence, checked before anything else can call the stream healthy.**
+    #
+    # `_view` reasons entirely in event time and about partitions *relative to each other*, so
+    # when the whole stream stops it keeps returning the last healthy answer for ever: the leader
+    # freezes, every partition stays exactly as far behind it as before, nothing becomes idle.
+    # A grid that has said nothing for an hour went on reporting `advancing`.
+    #
+    # Checked first because it subsumes the others. A stream that is silent is not held back by a
+    # laggard and is not stalled by a stuck leader — it is not delivering, and naming it by any
+    # of the other three would send somebody to look at the wrong thing.
+    if silent_for.millis > policy.silent_after.millis:
+        return (
+            WatermarkState(highest, leader, last_moved_at, last_arrival_at),
+            WatermarkView(
+                WatermarkStatus.STARVED,
+                None,
+                tuple(sorted(highest)),
+                None,
+                Duration.of_millis(0),
+                leader,
+            ),
+        )
     # An empty batch cannot stall anything: quiet and stuck are different facts, and calling a
     # quiet Sunday a stall is how the alarm gets muted before the real one.
     if (
@@ -301,7 +371,12 @@ def observe(
         )
 
     return (
-        WatermarkState(highest=highest, previous_leader=leader, leader_last_moved_at=last_moved_at),
+        WatermarkState(
+            highest=highest,
+            previous_leader=leader,
+            leader_last_moved_at=last_moved_at,
+            last_arrival_at=last_arrival_at,
+        ),
         view,
     )
 

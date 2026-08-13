@@ -191,9 +191,34 @@ class TestStalled:
         assert view.status is not WatermarkStatus.STALLED
 
     def test_an_empty_batch_never_counts_towards_a_stall(self) -> None:
-        """Quiet and stuck are different facts, and an empty batch is the first one."""
+        """Quiet and stuck are different facts, and an empty batch is the first one.
+
+        Sixty empty batches a minute apart is an hour of complete silence, which is now
+        `STARVED` — and the assertion here is that it is *not* `STALLED`. The distinction is the
+        point of the two thresholds: a stall is diagnosable from the records, because records are
+        arriving and the leader is not moving. Silence has no records to diagnose from, and
+        calling it a stall would send somebody to look at a producer that is not sending rather
+        than at a pipe that is not delivering.
+
+        This test asserted `ADVANCING` until the silence threshold existed, and it was asserting
+        the bug: an hour of nothing looked healthy.
+        """
         _, view = drive(["A"], [[("A", at(9, 30))], *([[]] * 60)])
+        assert view.status is WatermarkStatus.STARVED
+        assert view.status is not WatermarkStatus.STALLED
+        assert not view.status.may_close_windows
+
+    def test_a_short_quiet_period_is_still_healthy(self) -> None:
+        """The other side of it, and the one that keeps the threshold usable.
+
+        Two minutes of quiet against a five-minute budget is a gap between upload bursts, not a
+        dead stream. A silence threshold that fired here would fire on every ordinary lull, and a
+        threshold that fires on the healthy case is switched off within a week — the same lesson
+        `stall_after` learned when it counted observations instead of ingestion time.
+        """
+        _, view = drive(["A"], [[("A", at(9, 30))], *([[]] * 2)])
         assert view.status is WatermarkStatus.ADVANCING
+        assert view.status.may_close_windows
 
     def test_a_stalled_stream_closes_nothing(self) -> None:
         _, view = drive(["A"], [[("A", at(11, 0))]] * 40)

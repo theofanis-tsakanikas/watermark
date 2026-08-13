@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from data.cast import DAY_START
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -30,6 +32,21 @@ def seeder():
     return _seeder()
 
 
+def test_the_assignment_history_lands_on_the_day_the_stream_is_on(seeder) -> None:
+    """The seed follows the publisher's shift, and the first version of it did not.
+
+    `data/cast.py` fixes the scenario to 2026-03-14 so the dataset is reproducible;
+    `data/publish.py` moves the whole day forward to end at the moment of the run so a capture is
+    a replay. A seed written at the cast's date describes a day the stream is nowhere near, and
+    every live reading falls on one side of the changeover.
+    """
+    rows = seeder.meter_assignment_rows()
+    assert rows
+    assert not any(str(DAY_START.to_iso()[:10]) in row for row in rows), (
+        "the seed is still on the cast's fixed date rather than the stream's day"
+    )
+
+
 def test_the_meter_that_changes_customer_gets_two_versions(seeder) -> None:
     """SCD-2, not a mapping.
 
@@ -39,8 +56,18 @@ def test_the_meter_that_changes_customer_gets_two_versions(seeder) -> None:
     """
     rows = [row for row in seeder.meter_assignment_rows() if "'M00007'" in row]
     assert len(rows) == 2
-    assert any("'C00007'," in row and "10:00:00'" in row for row in rows)
-    assert any("'C00007-NEW'" in row and "CAST(NULL AS timestamp)" in row for row in rows)
+
+    # The *structure*, not the instant. `data/publish.py` shifts the whole scenario day forward
+    # so it ends at the moment of the run, and the seed follows it — so asserting `10:00:00`
+    # here would pin this test to a wall clock and, worse, would have gone on passing while the
+    # seeded table sat months away from the stream it describes. That is the bug this assertion
+    # missed the first time.
+    closed = [row for row in rows if "CAST(NULL AS timestamp)" not in row]
+    open_ended = [row for row in rows if "CAST(NULL AS timestamp)" in row]
+    assert len(closed) == 1, "the first customer's version must end"
+    assert len(open_ended) == 1, "the second customer's version must still be in force"
+    assert "'C00007'," in closed[0]
+    assert "'C00007-NEW'" in open_ended[0]
 
 
 def test_every_other_meter_has_exactly_one_open_version(seeder) -> None:

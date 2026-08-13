@@ -38,7 +38,28 @@
                   "Next": "ShredFailed"
                 }
               ],
-              "Next": "CryptoShred"
+              "Next": "AlreadyShredded?"
+            },
+            "AlreadyShredded?": {
+              "Type": "Choice",
+              "Comment": "**An erasure must be idempotent, and this one was not.** A second run for the same subject answered `KmsInvalidStateException: key ... is pending deletion` and the whole request refused to certify. In a real deployment that is a person exercising Art. 17 a second time — because they moved, because the first confirmation went to an old address, because they simply asked again — and being handed an error instead of the confirmation they are owed. The key being already scheduled is the leg's promise *kept*, not broken: what the leg guarantees is that the subject's key is gone or going, not that this particular execution is the one that pushed it. So it is confirmed here rather than attempted and failed.",
+              "Choices": [
+                {
+                  "Variable": "$.subject_key.KeyMetadata.KeyState",
+                  "StringEquals": "PendingDeletion",
+                  "Next": "ShredAlreadyDone"
+                }
+              ],
+              "Default": "CryptoShred"
+            },
+            "ShredAlreadyDone": {
+              "Type": "Pass",
+              "Parameters": {
+                "leg": "crypto_shred",
+                "confirmed": true,
+                "note": "The subject key was already scheduled for deletion when this request arrived. The leg's guarantee is that the key is gone or going, and it is."
+              },
+              "End": true
             },
             "CryptoShred": {
               "Type": "Task",

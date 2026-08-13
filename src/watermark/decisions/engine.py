@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -38,6 +39,20 @@ class Unavailable(Enum):
     MODEL_UNAVAILABLE = "model_unavailable"
 
 
+def identity_of(contract_id: str, entity_id: str, at: Instant) -> str:
+    """A decision's identifier: the contract, the subject and the instant, hashed.
+
+    The same shape as `watermark.lineage.identity` mints for readings and results, and for the
+    same reason: **derived, not random.** Claim 2 is that a replay produces identical bytes, and
+    a uuid would make every rerun differ in the one field a decision record is looked up by.
+
+    The contract id is in the material so that two decisions taken about the same meter at the
+    same instant under different contracts — a curtailment and an anomaly flag — do not collide.
+    """
+    material = f"decision|{contract_id}|{entity_id}|{at.epoch_millis}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+
+
 @dataclass(frozen=True, slots=True)
 class Decision:
     """One decision, and everything AI Act Art. 12 asks a record to contain.
@@ -46,6 +61,18 @@ class Decision:
     time describes a decision nobody took.
     """
 
+    #: Unique to *this* decision: the contract, the entity and the instant it was taken at.
+    #:
+    #: **It used to be the contract id**, which meant every decision this platform has ever taken
+    #: about every person carried the identifier `meter_anomaly`. It read as an identifier and
+    #: was a category. The first live run caught it in the worst place available: the oversight
+    #: queue is a mapping keyed on this, so twenty decisions about twenty different people
+    #: collapsed into one entry and nineteen were dropped — silently, from the structure claim 7
+    #: exists to guarantee. It refused to actuate the one that survived, correctly, and the
+    #: other nineteen were never presented to anybody at all.
+    #:
+    #: Derived rather than random, because claim 2 requires a replay to produce identical bytes.
+    #: A uuid here would make every rerun differ in the one field a record is looked up by.
     decision_id: str
     entity_id: str
     at: Instant
@@ -192,7 +219,7 @@ class DecisionEngine:
             if value is not None
         }
         return Decision(
-            decision_id=self.contract.id,
+            decision_id=identity_of(self.contract.id, entity_id, at),
             entity_id=entity_id,
             at=at,
             action=action,

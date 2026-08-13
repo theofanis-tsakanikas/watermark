@@ -681,7 +681,11 @@ jobs:
 
           # The certificate is the artefact, not the exit code. A state machine that succeeded
           # without writing one has satisfied its own control flow and produced no evidence.
-          certificate=$(aws s3 ls "s3://${LAKEHOUSE}/erasure-certificates/${SUBJECT}/" --recursive | wc -l | tr -d ' ')
+          # Braced with `|| true`, because `aws s3 ls` exits non-zero on an empty prefix and
+          # `set -o pipefail` would kill the step there — reporting nothing at all instead of
+          # reporting zero certificates. That exact mistake cost three captures earlier in this
+          # project's history, in a different step, for the same reason.
+          certificate=$( { aws s3 ls "s3://${LAKEHOUSE}/erasure-certificates/${SUBJECT}/" --recursive || true; } | wc -l | tr -d ' ')
           [ "$certificate" -gt 0 ] || {
             echo "::error::the erasure succeeded and wrote no certificate"; exit 1; }
 

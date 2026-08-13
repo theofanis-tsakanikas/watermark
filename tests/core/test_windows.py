@@ -249,3 +249,42 @@ class TestTheHoleInTheTotal:
         result = manager.close(view).published[0]
         assert result.watermark_status is WatermarkStatus.ADVANCING_WITH_IDLE
         assert result.idle_partitions == ("S2",)
+
+
+class TestClosureIsAFactAboutTheWindow:
+    """`closed_at` is when the window closed, and a correction does not move it.
+
+    The column is documented in `sources.yml` as "the watermark that permitted publication — a
+    row whose closed_at precedes its own interval end could not have come from the core". That
+    sentence was false for restatements: every result carried `view.watermark`, and `_closable`
+    deliberately lets a correction through while the stream is stalled, so a restatement stamped
+    a stalled watermark that could be earlier than the window's own start. Two such rows reached
+    a live lakehouse, and the capture's claim 1 assertion caught them.
+    """
+
+    def test_a_restatement_keeps_the_closure_of_the_window_it_revises(self) -> None:
+        manager = WindowManager()
+        manager.admit(reading(100, "2026-03-14T09:17:00Z"))
+        first = manager.close(view_at("2026-03-14T09:35:00Z"))
+        assert first.published
+        original_closure = first.published[0].closed_at
+
+        # A late reading for the same window, resolved against a watermark that has since fallen
+        # behind — which is what a stalled stream, or a three-day-late file, actually looks like.
+        manager.admit(reading(130, "2026-03-14T09:40:00Z"))
+        second = manager.close(view_at("2026-03-14T09:20:00Z"))
+        assert second.restated, "a correction must still restate while the watermark is behind"
+
+        restated = second.restated[0]
+        assert restated.closed_at == original_closure
+        assert restated.closed_at.epoch_millis >= START.plus(Duration.of_minutes(15)).epoch_millis
+
+    def test_a_first_publication_still_carries_the_watermark_that_permitted_it(self) -> None:
+        """The other half. The fix must not quietly change what revision 0 records."""
+        manager = WindowManager()
+        manager.admit(reading(100, "2026-03-14T09:17:00Z"))
+        view = view_at("2026-03-14T09:35:00Z")
+        emission = manager.close(view)
+        # The view's own watermark, which trails the observed instant by `out_of_orderness` —
+        # comparing against the raw instant would assert the bound away.
+        assert emission.published[0].closed_at == view.watermark

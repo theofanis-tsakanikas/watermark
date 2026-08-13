@@ -320,7 +320,28 @@ class WindowManager:
             readings=prior_readings + len(arrivals),
             duplicates_suppressed=prior_duplicates + new_duplicates,
             corrections_absorbed=prior_corrections + len(collapsed.superseded),
-            closed_at=view.watermark,
+            # **The window's closure, not the current watermark**, and the difference only
+            # appears on a revision.
+            #
+            # For a first publication they are the same thing: the watermark that permitted the
+            # close is the watermark now. For a restatement they are not, because
+            # `_closable` deliberately lets a correction through while the stream is stalled —
+            # the three-day-late file advances nothing by construction, so requiring the
+            # watermark's permission would make the restatement path unreachable by the only
+            # data that uses it.
+            #
+            # Stamping the current watermark there wrote a `closed_at` *earlier than the
+            # window's own interval*, on a row whose column is documented as "the watermark that
+            # permitted publication — a row whose closed_at precedes its own interval end could
+            # not have come from the core". Two such rows reached the lakehouse and the capture's
+            # claim 1 assertion caught them, correctly: the record said a number had been
+            # permitted by a watermark that had not reached the window.
+            #
+            # The window closed once. That instant is a fact about the window, it is what claim 1
+            # is checkable against in SQL, and a correction does not move it — doctrine 4 says a
+            # restatement supersedes a value without erasing what was stated, and *when it was
+            # stated* is part of what was stated.
+            closed_at=view.watermark if previous is None else previous.closed_at,
             watermark_status=view.status,
             idle_partitions=view.idle,
             revision=revision,

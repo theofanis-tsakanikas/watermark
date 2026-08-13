@@ -397,8 +397,8 @@ jobs:
             SELECT COUNT(*),
                    COUNT_IF(closed_at < interval_start + INTERVAL '15' MINUTE),
                    COUNT(DISTINCT lineage_id),
-                   COUNT_IF(revision > 0),
-                   COUNT_IF(revision > 0 AND supersedes IS NOT NULL),
+                   COUNT_IF(restatement_cause IS NOT NULL),
+                   COUNT_IF(restatement_cause IS NOT NULL AND supersedes IS NOT NULL),
                    COUNT(DISTINCT watermark_status)
             FROM ${PROJECT}_silver.meter_interval") || {
             echo "::error::the lakehouse could not be queried; the assertions below were not run"
@@ -432,6 +432,20 @@ jobs:
           [ "$UNCLOSED" = "0" ] || { echo "::error::claim 1: $UNCLOSED rows were published with a watermark earlier than their own interval end"; fail=1; }
           [ "$LINEAGE" = "$ROWS" ] || { echo "::error::claim 2: $ROWS rows carry $LINEAGE distinct lineage ids"; fail=1; }
           [ "$RESTATED" -gt 0 ] || { echo "::error::doctrine 4: the late batch restated nothing. Either it never arrived, or a correction overwrote instead of superseding"; fail=1; }
+          # **Counted by `restatement_cause`, not by `revision > 0`**, and the difference is a
+          # third kind of row this assertion did not know about.
+          #
+          # The core emits `published`, `restated` and `confirmed`. A *confirmation* is late data
+          # that arrived and did not change the number — `windows.py` refuses to call that a
+          # revision, because restating a value to itself puts a meaningless row in a settlement
+          # report and trains whoever reads it to skim revisions. It keeps the previous revision
+          # number and carries no `supersedes`, correctly: it superseded nothing.
+          #
+          # Counting `revision > 0` therefore swept up every confirmation of an already-restated
+          # window and demanded it name what it replaced. The live run reported "3464
+          # restatements, only 3409 of which say what they replaced" — fifty-five rows that were
+          # not restatements at all, on an assertion whose failure reads like doctrine 4 being
+          # broken.
           [ "$SUPERSEDED" = "$RESTATED" ] || { echo "::error::doctrine 4: $RESTATED restatements, only $SUPERSEDED of which say what they replaced"; fail=1; }
           exit $fail
 

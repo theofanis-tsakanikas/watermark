@@ -435,6 +435,40 @@ jobs:
           [ "$SUPERSEDED" = "$RESTATED" ] || { echo "::error::doctrine 4: $RESTATED restatements, only $SUPERSEDED of which say what they replaced"; fail=1; }
           exit $fail
 
+      - name: "claim 2 — the same day, delivered twice, publishes the same values"
+        # **What every capture already asserted, and why it was not claim 2.**
+        #
+        # Each run checks that published rows carry lineage ids, that the ids are distinct, and
+        # that restatements name what they replaced. Those are properties of *one* run. Claim 2
+        # is a statement about two: the same events, shuffled, duplicated and delivered late,
+        # produce identical output. No single run can exhibit that however many invariants it
+        # satisfies — and `evals/replay/` proves it over the pure *core*, which leaves exactly
+        # this gap. The core is deterministic by construction; a Kinesis shard, a Flink
+        # checkpoint and an S3 listing are the parts that might not be.
+        #
+        # The first delivery is the one the steps above already drove and landed. This replays
+        # the same generated day a second time and compares what came out. The publisher shifts
+        # the day to end at *now*, so the second delivery lands on different intervals — the
+        # comparison is therefore keyed on the interval each run produced rather than on a shared
+        # timestamp, which is why `replay_live.py` compares values per key and not files.
+        run: |
+          set -euo pipefail
+          mv out/landing out/landing-first
+
+          python -m data.publish --minutes "${{ inputs.minutes }}" --live
+          sleep 180
+
+          mkdir -p out/landing-second
+          aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" out/landing-second \
+            --recursive --exclude "*_tmp_*" --quiet
+          python scripts/replay_live.py --first out/landing-first --second out/landing-second
+
+          # Restored, because the steps after this read `out/landing` and the decision layer in
+          # particular reconstructs its watermark view from it. Pointing them at the first run's
+          # files would make every later assertion a statement about a delivery that is no
+          # longer the newest thing in the bucket.
+          rm -rf out/landing && mv out/landing-second out/landing
+
       - name: build the gold layer, which no capture had ever built
         # **The settlement path, run for the first time.**
         #

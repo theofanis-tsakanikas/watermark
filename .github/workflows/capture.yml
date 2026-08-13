@@ -180,6 +180,26 @@ jobs:
             exit 1
           }
 
+      - name: register who was in that training set
+        # **The register claim 6 deletes from, written by the run that produced the training
+        # set.** `scripts/seed_reference.py` lands the reference tables at deploy time and
+        # deliberately leaves the membership empty: a training-set membership describes a
+        # *training run*, and registering one at deploy time would record a training set nobody
+        # has trained.
+        #
+        # This is that run. The snapshot id is the one the pipeline was given, so the register
+        # says which subjects were in which training set — which is what makes the erasure's
+        # training-set leg a deletion of something rather than a query against an empty table,
+        # and what would let the quarantine leg name the models a subject actually reached.
+        run: |
+          set -euo pipefail
+          python scripts/seed_reference.py \
+            --project "$PROJECT" \
+            --region "$AWS_DEFAULT_REGION" \
+            --warehouse "s3://${LAKEHOUSE}/warehouse" \
+            --snapshot "${{ inputs.snapshot }}" \
+            --labels "${{ inputs.labels }}"
+
       - name: start the endpoint, if there is one
         # The one resource in this estate that bills by the minute for as long as it exists.
         #

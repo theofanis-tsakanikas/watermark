@@ -89,6 +89,23 @@ class WatermarkStatus(Enum):
     STALLED = "stalled"
 
     #: Every partition is idle or silent. Nothing is arriving at all.
+    #:
+    #: **This detects *relative* silence, not absolute silence, and the difference matters.**
+    #: `idle` means "further behind the leader than `idle_after`", measured in event time. One
+    #: substation going quiet while the others keep reporting is caught, which is the scenario's
+    #: case and claim 1's sharpest one. A stream that stops *entirely* is not: the leader stops
+    #: moving too, every partition stays the same distance from it, nothing becomes idle, and
+    #: the view goes on saying `ADVANCING` about a grid that has said nothing for an hour.
+    #:
+    #: That is a real limit of this design and it is written here rather than discovered. What
+    #: protects the system in that case is not this status — it is the freshness gate, claim 4,
+    #: which measures a served value's age against the moment a decision is being taken rather
+    #: than against other event times. A frozen watermark leaves every feature ageing past its
+    #: budget, and the decision falls back and says so.
+    #:
+    #: Making absolute silence visible here needs a `silent_after` compared against processing
+    #: time, which means this module reads a clock — and it currently reads none, which is what
+    #: makes replay identical (claim 2). The trade is real and has not been made.
     STARVED = "starved"
 
     @property

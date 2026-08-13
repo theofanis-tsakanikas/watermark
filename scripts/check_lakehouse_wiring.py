@@ -36,10 +36,16 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
-#: Tables written by something other than this repository's Terraform. The CDC pipeline lands
-#: the SCD-2 reference tables; they are declared here rather than silently tolerated, so that a
-#: typo in a source name is still a failure.
-EXTERNAL = {"meter_assignment_scd2", "customer_scd2", "training_snapshot"}
+#: Tables written by something other than this repository at all.
+#:
+#: **This set used to be three, and two of them were fiction.** `meter_assignment_scd2` and
+#: `training_snapshot` were listed here as "landed by a CDC pipeline outside this repository",
+#: and no such pipeline exists in this account or in the plan. They were catalogue entries with
+#: no metadata location — names describing tables that had never existed — and the first thing
+#: ever to touch them was an erasure request, which is the worst place to find out. Both are now
+#: created and seeded by `scripts/seed_reference.py`, so both leave this set: what remains is
+#: what genuinely has no writer here, and it is a much more useful list for being short.
+EXTERNAL = {"customer_scd2"}
 
 
 def _terraform_tables() -> dict[str, str]:
@@ -86,6 +92,29 @@ def _job_tables() -> dict[str, str]:
             if name and layer:
                 tables[name.group(1)] = layer.group(1)
     return tables
+
+
+def _seeded_tables() -> dict[str, str]:
+    """Tables a script in `scripts/` creates, read from the constant that script declares.
+
+    The fourth creator. A Glue job says what it creates in its Terraform arguments and a dbt
+    model says it in its filename; a script has neither, so it declares a `CREATES` mapping and
+    this reads it.
+
+    Loaded from its path rather than imported by name: `scripts/` is not a package, and making
+    it one to satisfy this check would put an `__init__.py` in a directory of entrypoints. Read
+    as a module all the same rather than pattern-matched — it is Python, and a regex over Python
+    to avoid importing Python is the kind of cleverness that passes while being wrong.
+    """
+    import importlib.util  # noqa: PLC0415
+
+    path = ROOT / "scripts" / "seed_reference.py"
+    spec = importlib.util.spec_from_file_location("seed_reference", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - a missing file is a red check
+        raise FileNotFoundError(path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return dict(module.CREATES)
 
 
 def _dbt_models() -> dict[str, str]:
@@ -146,12 +175,18 @@ def _query_tables() -> dict[str, set[str]]:
 def main() -> int:
     sources, queries = _dbt_sources(), _query_tables()
 
-    # Everything this repository creates, and where. Three creators now rather than one: the
+    # Everything this repository creates, and where. Four creators now rather than one: the
     # catalogue entries Terraform still declares, the tables a Glue job creates as it writes
-    # them, and the tables dbt builds. A table with no creator at all is `EXTERNAL` — landed by
+    # them, the tables dbt builds, and the reference tables a seeding script lands. A table
+    # with no creator at all is `EXTERNAL` — landed by
     # a CDC pipeline that is outside this repository — and is listed by name so that a typo is
     # still a failure rather than a shrug.
-    created: dict[str, str] = {**_terraform_tables(), **_job_tables(), **_dbt_models()}
+    created: dict[str, str] = {
+        **_terraform_tables(),
+        **_job_tables(),
+        **_dbt_models(),
+        **_seeded_tables(),
+    }
     known = set(created) | EXTERNAL
 
     problems = []

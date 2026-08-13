@@ -207,35 +207,6 @@ resource "aws_glue_catalog_table" "inspection_outcome" {
   }
 }
 
-resource "aws_glue_catalog_table" "meter_assignment_scd2" {
-  name          = "meter_assignment_scd2"
-  database_name = aws_glue_catalog_database.gold.name
-  table_type    = "EXTERNAL_TABLE"
-  parameters    = local.iceberg_properties
-
-  storage_descriptor {
-    location = "${local.warehouse}/gold/meter_assignment_scd2"
-
-    columns {
-      name = "meter_id"
-      type = "string"
-    }
-    columns {
-      name = "customer_id"
-      type = "string"
-    }
-    columns {
-      name    = "valid_from"
-      type    = "timestamp"
-      comment = "Half-open interval, matching src/watermark/core/pit.py. Closed on both sides makes two versions valid at a boundary, and which one a query returns becomes a property of its ORDER BY."
-    }
-    columns {
-      name = "valid_to"
-      type = "timestamp"
-    }
-  }
-}
-
 resource "aws_glue_catalog_table" "customer_scd2" {
   name          = "customer_scd2"
   database_name = aws_glue_catalog_database.gold.name
@@ -264,39 +235,6 @@ resource "aws_glue_catalog_table" "customer_scd2" {
     columns {
       name = "valid_to"
       type = "timestamp"
-    }
-  }
-}
-
-resource "aws_glue_catalog_table" "training_snapshot" {
-  name          = "training_snapshot"
-  database_name = aws_glue_catalog_database.gold.name
-  table_type    = "EXTERNAL_TABLE"
-  parameters    = local.iceberg_properties
-
-  storage_descriptor {
-    location = "${local.warehouse}/gold/training_snapshot"
-
-    columns {
-      name    = "customer_id"
-      type    = "string"
-      comment = "Present so that an erasure can issue a row-level DELETE against the training sets. A snapshot keyed only by meter would leave the subject reachable through a reassignment."
-    }
-    columns {
-      name = "meter_id"
-      type = "string"
-    }
-    columns {
-      name = "snapshot_id"
-      type = "string"
-    }
-    columns {
-      name = "features"
-      type = "string"
-    }
-    columns {
-      name = "label"
-      type = "int"
     }
   }
 }

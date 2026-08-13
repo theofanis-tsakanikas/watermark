@@ -144,6 +144,31 @@ data "aws_iam_policy_document" "erasure" {
     resources = [data.aws_s3_bucket.lakehouse.arn]
   }
 
+  # **The warehouse itself, which the DELETE legs need and did not have.**
+  #
+  # The grants above cover Athena's own scratch space, and an erasure that only reads its
+  # results is an erasure that never touched the data. The second live run failed on:
+  #
+  #     not authorized to perform: s3:GetObject on resource:
+  #     ".../warehouse/silver/meter_interval/metadata/00004-....metadata.json"
+  #
+  # An Iceberg `DELETE` is not a deletion in place. It reads the current metadata to find the
+  # manifests, reads the manifests to find the data files, writes new data and delete files, and
+  # commits a new metadata pointer. So the role needs to read and write the table's own prefix,
+  # and `DeleteObject` besides — the compaction and orphan-file jobs that follow are what
+  # actually remove the superseded files, and a subject whose rows survive in an orphaned
+  # Parquet file has not been erased.
+  #
+  # Scoped to `warehouse/*`, not the bucket: this role exists to remove one person's rows, and a
+  # grant wide enough to reach the certificates it writes about itself is a grant wide enough to
+  # rewrite the evidence.
+  statement {
+    sid       = "RewriteTheTablesItDeletesFrom"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${data.aws_s3_bucket.lakehouse.arn}/warehouse/*"]
+  }
+
   # The results are SSE-KMS with the data key, so writing them needs the key as well as the
   # prefix. A grant on the bucket and not the key is a query that fails on encryption.
   statement {

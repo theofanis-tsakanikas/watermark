@@ -331,6 +331,28 @@ jobs:
                 echo "::error::the table-creating run never settled"; exit 1; }
               echo "::endgroup::"
             fi
+
+            # **The gold reference tables, after the layer that grants access to them.**
+            #
+            # Same ADR-0008 reason as the silver table above and a different discovery. `gold`
+            # held five Terraform catalogue entries and not one of them had a metadata location:
+            # names describing tables that had never existed, tolerated as "landed by a CDC
+            # pipeline outside this repository" that is not in this account. The first thing
+            # ever to read them was an erasure request, and it could not resolve a subject id
+            # to the meters it owns because `meter_assignment_scd2` was one of them.
+            #
+            # After `governance`, not after `lakehouse`: the erasure role's Lake Formation
+            # grants on `gold` are applied by that layer, and seeding before them lands tables
+            # the role that needs them cannot see.
+            if [ "$layer" = "governance" ]; then
+              echo "::group::seed the gold reference tables"
+              account=$(aws sts get-caller-identity --query Account --output text)
+              python scripts/seed_reference.py \
+                --project watermark \
+                --region "${{ vars.AWS_REGION }}" \
+                --warehouse "s3://watermark-lakehouse-$account/warehouse"
+              echo "::endgroup::"
+            fi
           done
 
       - name: what exists now, and when it expires

@@ -126,6 +126,12 @@ ignore = [
 # never concatenated. Per-file for the same reason too: ruff attributes it to a multi-line
 # string it cannot be annotated inside.
 "scripts/parity_live.py" = ["S608"]
+# S608 again, and the reason is different enough to be worth its own line. The seeder renders
+# `VALUES` lists rather than binding them, because Athena accepts twenty-five execution
+# parameters and the training population is six hundred rows. What it renders is not input:
+# every value is computed from `data/cast.py` and `data/labels.py` in the same process, and the
+# only argument the script takes into SQL — the snapshot id it checks for — *is* bound.
+"scripts/seed_reference.py" = ["S608"]
 # PLR0917: the parity comparison takes the contract, both mechanisms, the population, the
 # instants and the serving lag. Bundling them into a context object would hide which of the two
 # mechanisms a given line touches, and that visibility is the one thing a reader of this

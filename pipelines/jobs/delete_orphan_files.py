@@ -13,6 +13,7 @@ into a corrupt table.
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime, timedelta
 
 from awsglue.context import GlueContext  # type: ignore[import-not-found]
 from awsglue.utils import getResolvedOptions  # type: ignore[import-not-found]
@@ -27,6 +28,25 @@ TABLES = (
 #: Never go below this, whatever the argument says. An in-flight write is invisible to orphan
 #: detection, and the failure is silent data loss rather than an error.
 MINIMUM_AGE_DAYS = 3
+
+
+#: How the cutoff instant reaches a `CALL`, and why it is computed here rather than in SQL.
+#:
+#: Iceberg's stored-procedure grammar takes **literals only**. `TIMESTAMPADD(DAY, -3,
+#: CURRENT_TIMESTAMP)` — the obvious way to say "three days ago", and valid Spark SQL anywhere
+#: else — is rejected at parse time:
+#:
+#:     AnalysisException: mismatched input '(' expecting STRING
+#:
+#: So the arithmetic happens in Python and a typed literal goes into the statement. That has a
+#: consequence worth naming: the cutoff is the moment the *driver* computed it, not the moment
+#: the procedure runs, and the two differ by however long the job takes to start. Minutes, on a
+#: floor of three days. It would matter if the floor were minutes, and `MINIMUM_AGE_DAYS` is
+#: what stops anyone setting it there.
+def cutoff(days: int) -> str:
+    """A SQL timestamp literal `days` before now, in the form Iceberg's parser accepts."""
+    moment = datetime.now(UTC) - timedelta(days=days)
+    return f"TIMESTAMP '{moment.strftime('%Y-%m-%d %H:%M:%S')}'"
 
 
 def existing(spark, tables):
@@ -75,7 +95,7 @@ def main() -> int:
         result = spark.sql(
             f"CALL glue_catalog.system.remove_orphan_files("
             f"  table => '{database}.{table}',"
-            f"  older_than => TIMESTAMPADD(DAY, -{age}, CURRENT_TIMESTAMP)"
+            f"  older_than => {cutoff(age)}"
             f")"
         ).collect()
         print(f"orphans {database}.{table}: removed {len(result)} files")

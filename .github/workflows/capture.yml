@@ -35,6 +35,11 @@ on:
         type: choice
         options: [dispatch_log, randomised_inspection]
         default: dispatch_log
+      approver:
+        description: "The named human who reviews the consequential decisions this capture takes. Claim 7 is not that nothing actuates — it is that a named person is the only thing that can, and an unnamed one is not oversight. Leave empty to prove only the refusal."
+        required: false
+        type: string
+        default: ""
       confirm:
         description: "Type `capture` to confirm. This starts billable compute."
         required: true
@@ -517,6 +522,48 @@ jobs:
             echo "::notice::no held_back transition in this capture. The gap is eight seconds of wall time at this compression; claim 1 is asserted in SQL above and proved in evals/watermark/."
           fi
           exit $fail
+
+      - name: the decision layer takes decisions, in the cloud, and none of them actuates
+        # **The gap this closes, and it was the largest one left.**
+        #
+        # `src/watermark/decisions/` is the layer this platform is named around — the engine,
+        # the fallback rules, the oversight queue — and nothing in AWS imported it. It was
+        # reached by `gate_proof.py`, by the Annex IV generator, and by no running system.
+        # Claims 1, 4 and 7 are claims *about decisions*, so every one of them was a statement
+        # about a laptop: true, tested, and never once exercised against a watermark a real
+        # stream produced, a feature a real Feature Store served, or a score a real endpoint
+        # returned. Every defect the first live streaming run turned up — a watermark over the
+        # wrong partition key, an adapter dropping five fields, a table that had never existed —
+        # was invisible offline for exactly that reason.
+        #
+        # It runs on the evidence the step above already copied, so the watermark it decides
+        # against is the job's own claim about what it has seen and not this step's opinion of
+        # it. A decision permitted by the decider's own reading of the watermark is the failure
+        # claim 1 is about.
+        #
+        # `--reviewer` is deliberately the *last* thing it does. Every consequential decision is
+        # enqueued and the run first proves that actuating one raises — then, with a named
+        # human, that exactly one does. Claim 7 is not "nothing actuates"; it is that a named
+        # human is the only thing that can, and both halves have to be shown.
+        run: |
+          set -euo pipefail
+          python scripts/decide_live.py \
+            --lakehouse "$LAKEHOUSE" \
+            --feature-group "${PROJECT}-meter-consumption" \
+            --endpoint "$([ "${ENDPOINT_STARTED:-no}" = "yes" ] && echo "${PROJECT}-anomaly" || echo "")" \
+            --region "$AWS_DEFAULT_REGION" \
+            --evidence out/landing \
+            --out out/capture/decisions \
+            --reviewer "${{ inputs.approver }}"
+
+          {
+            echo ""
+            echo "### The decisions, and what refused to actuate"
+            echo ""
+            echo '```'
+            head -3 out/capture/decisions/decisions.jsonl
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: capture the evidence
         run: |

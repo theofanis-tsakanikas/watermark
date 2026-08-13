@@ -49,7 +49,9 @@ def existing(spark, tables):
         # Louder than a clean exit. Every table missing means the catalogue is not what this job
         # was written against, and reporting success would tell an erasure that files were
         # removed when none were examined.
-        raise SystemExit("no table in TABLES exists; refusing to report a maintenance run")
+        raise RuntimeError(
+            "no table in TABLES exists; refusing to report a maintenance run"
+        )
     return present
 
 
@@ -107,5 +109,16 @@ def main() -> int:
     return 0
 
 
+# **`main()`, not `sys.exit(main())`, and the difference is a job Glue calls failed.**
+#
+# Glue treats *any* `SystemExit` as a failure, including `SystemExit(0)`:
+#
+#     ErrorMessage: SystemExit: 0
+#
+# on a run that did exactly what it was asked. `land_to_silver.py` learned this and was rewritten
+# to branch rather than exit; these three never reached the end of a run, so they never got the
+# chance to show it. A zero exit reported as a failure is worse than an ordinary bug here,
+# because the erasure waits on this job synchronously — a successful compaction reported as
+# failed makes the orchestration refuse to certify a deletion that actually happened.
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

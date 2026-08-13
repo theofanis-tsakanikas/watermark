@@ -158,6 +158,17 @@ def model_action(runtime, endpoint: str, value: ServedValue) -> tuple[str | None
     write and the worst: it turns an outage into a stream of confident negative decisions that
     look exactly like model output. `None` is what the engine reads as `MODEL_UNAVAILABLE`, and
     it produces a fallback that says so.
+
+    **The feature vector is not the contract's feature, and that is a real inconsistency rather
+    than a simplification.** `contracts/decisions/meter_anomaly.yaml` declares
+    `meter_consumption_1h`; the model in the registry was fitted on `(score, deprivation_decile)`
+    from `data/labels.py`, which are a precomputed anomaly score and a census attribute. The
+    served value is passed in the first position and a constant in the second, so what this
+    exercises is the *serving path* — the endpoint answers, the score crosses a threshold, the
+    engine treats it as a model action and the oversight queue refuses to actuate it — and not
+    the model's meaning. Closing the gap means a feature contract for each of the two columns and
+    a materialiser for them, which is work rather than a rename; until then a number goes in and
+    a number comes back, and this docstring is the only place that says so.
     """
     try:
         response = runtime.invoke_endpoint(

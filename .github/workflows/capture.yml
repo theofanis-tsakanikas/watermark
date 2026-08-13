@@ -453,21 +453,24 @@ jobs:
         # timestamp, which is why `replay_live.py` compares values per key and not files.
         run: |
           set -euo pipefail
-          mv out/landing out/landing-first
+          # Copied here rather than reused from a previous step. The first version moved
+          # `out/landing`, which the *evidence* step creates — and that step runs after this one,
+          # so the first live run of this comparison died on `mv: cannot stat 'out/landing'`
+          # before publishing anything. A step that depends on a directory another step happens
+          # to leave behind is a step that breaks when somebody reorders them.
+          mkdir -p out/landing-first out/landing-second
+          aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" out/landing-first \
+            --recursive --exclude "*_tmp_*" --quiet
 
           python -m data.publish --minutes "${{ inputs.minutes }}" --live
           sleep 180
 
-          mkdir -p out/landing-second
+          # Everything, including the first run's files. The comparison subtracts them by name,
+          # which is how the two deliveries are separated without clearing a bucket the rest of
+          # the capture is still reading from.
           aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" out/landing-second \
             --recursive --exclude "*_tmp_*" --quiet
-          python scripts/replay_live.py --first out/landing-first --second out/landing-second
-
-          # Restored, because the steps after this read `out/landing` and the decision layer in
-          # particular reconstructs its watermark view from it. Pointing them at the first run's
-          # files would make every later assertion a statement about a delivery that is no
-          # longer the newest thing in the bucket.
-          rm -rf out/landing && mv out/landing-second out/landing
+          python scripts/replay_live.py --first out/landing-first --after out/landing-second
 
       - name: build the gold layer, which no capture had ever built
         # **The settlement path, run for the first time.**

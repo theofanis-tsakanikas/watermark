@@ -63,18 +63,18 @@ NAMED_DISAGREEMENTS: Final = 5
 REVISIONS_WITH_A_RESTATEMENT: Final = 2
 
 
-def published_values(directory: Path) -> dict[tuple[str, int, int], tuple[str, ...]]:
-    """Every published value in a landing directory, keyed by what identifies it.
+def _rows(directory: Path, exclude: set[str] | None = None) -> list[dict[str, Any]]:
+    """Published rows from a landing directory, optionally skipping files seen before.
 
-    Keyed by `(meter, interval_start, revision)` because that triple is what the silver table
-    declares unique — the same key `IsPrimaryKey` asserts in `infra/governance/quality.tf`. Two
-    rows sharing it would be a customer billed twice, so if this mapping loses rows to key
-    collisions the run has found a defect rather than a comparison problem, and
-    `read_landing` reports the count separately for exactly that reason.
+    **The exclusion is how the two runs are separated.** Both deliveries land in the same S3
+    prefix, so a copy taken after the second publish contains the first run's files as well. The
+    file names are unique per part file, so subtracting the ones already seen leaves exactly what
+    the replay produced — no timestamps to reason about and nothing to clear from the bucket.
     """
-    values: dict[tuple[str, int, int], tuple[str, ...]] = {}
+    skip = exclude or set()
+    rows: list[dict[str, Any]] = []
     for path in sorted(directory.rglob("*")):
-        if not path.is_file():
+        if not path.is_file() or path.name in skip:
             continue
         for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
             if not raw.strip().startswith("{"):
@@ -83,10 +83,32 @@ def published_values(directory: Path) -> dict[tuple[str, int, int], tuple[str, .
                 row: dict[str, Any] = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if row.get("kind") not in {"published", "restated", "confirmed"}:
-                continue
-            key = (str(row["meter"]), int(row["interval_start"]), int(row["revision"]))
-            values[key] = tuple(str(row.get(field)) for field in SETTLED_FIELDS)
+            if row.get("kind") in {"published", "restated", "confirmed"}:
+                rows.append(row)
+    return rows
+
+
+def published_values(rows: list[dict[str, Any]]) -> dict[tuple[str, int, int], tuple[str, ...]]:
+    """Every published value, keyed by meter, **interval offset** and revision.
+
+    **The offset, not the instant, and that is not a convenience.** `data/publish.py` moves the
+    whole generated day so that it *ends at the moment of the run* — which is what makes a
+    capture a replay rather than an archive, and what makes two runs land on two different sets
+    of fifteen-minute boundaries. Keyed on the absolute instant, the two deliveries of the same
+    day would share not one key, and the comparison would report every row missing from both
+    sides while nothing at all was wrong.
+    """
+    if not rows:
+        return {}
+    origin = min(int(row["interval_start"]) for row in rows)
+    values: dict[tuple[str, int, int], tuple[str, ...]] = {}
+    for row in rows:
+        key = (
+            str(row["meter"]),
+            int(row["interval_start"]) - origin,
+            int(row["revision"]),
+        )
+        values[key] = tuple(str(row.get(field)) for field in SETTLED_FIELDS)
     return values
 
 
@@ -141,12 +163,15 @@ def compare(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--first", type=Path, required=True, help="Landing files from run one.")
-    parser.add_argument("--second", type=Path, required=True, help="Landing files from run two.")
+    parser.add_argument(
+        "--first", type=Path, required=True, help="Landing files before the replay."
+    )
+    parser.add_argument("--after", type=Path, required=True, help="Landing files after it.")
     arguments = parser.parse_args(argv)
 
-    first = published_values(arguments.first)
-    second = published_values(arguments.second)
+    seen = {path.name for path in arguments.first.rglob("*") if path.is_file()}
+    first = published_values(_rows(arguments.first))
+    second = published_values(_rows(arguments.after, exclude=seen))
     print(f"first run: {len(first)} published values; replay: {len(second)}")
 
     # Louder than a clean exit. Two empty sets agree perfectly, and a harness that reports green

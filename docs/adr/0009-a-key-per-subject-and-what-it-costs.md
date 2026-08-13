@@ -66,6 +66,40 @@ copy", which is a weaker claim and an honest one.
 estate, with a mechanism whose completion AWS confirms. **What is not claimed:** that this
 mechanism is what a 250,000-subject deployment would use.
 
+## The apply that un-erased somebody
+
+Discovered on the deploy after the first successful shred, and it is the half of this design
+that nothing in the literature warns about.
+
+An erasure calls `ScheduleKeyDeletion`. The next `terraform apply` found the key in
+`PendingDeletion`, planned to replace it, and asked to re-point the alias:
+
+```
+AccessDeniedException: not authorized to perform: kms:UpdateAlias on resource:
+arn:aws:kms:eu-central-1:...:alias/watermark-subject-C00007
+```
+
+The obvious reading is a missing permission and the obvious fix is to grant it. **That fix would
+have made every deploy silently un-erase whoever had asked to be forgotten** — a fresh key under
+the same alias, the declaration satisfied, the apply reporting success, and a subject whose
+erasure certificate is sitting in the bucket restored by routine maintenance nobody would think
+to audit.
+
+**Declarative infrastructure and crypto-shredding want opposite things.** Terraform's whole
+purpose is to make reality match the declaration. An erasure's whole purpose is to destroy
+something the declaration says should exist. They cannot both win, and the interesting question
+is which one gives way.
+
+It is the declaration. `deploy.yml` computes the subject list as the cast *minus* every subject
+whose key is already in `PendingDeletion`, so Terraform removes those resources rather than
+resurrecting them and the erasure survives every subsequent apply. The reason this direction is
+right and not merely convenient: an erasure is a legal obligation with a subject on the other end
+of it, and a declaration is a statement of intent by an operator. When they conflict, the party
+who can be harmed is not the operator.
+
+The permission is deliberately **not** granted. A control that depends on remembering not to use
+a permission is not a control; the role cannot re-point a subject alias at all.
+
 ## Alternatives rejected
 
 **Create the subject key lazily, during erasure.** A key created in order to be destroyed shreds

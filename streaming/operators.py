@@ -323,6 +323,11 @@ def build_process_function(operator: MeterWindowOperator):
             # bounds how long a record sits in a buffer, and nothing about it is a claim on
             # event time. The grain is `BATCH_GRAIN` from the core rather than a literal, so the
             # offline runner and this one cannot disagree about how much work a restart repeats.
+            #
+            # Registered here *and* in `on_timer`, and the two are not redundant. This one gets
+            # the first tick going after a key's first record; that one keeps it going when no
+            # record follows. Flink deduplicates timers on the same key and timestamp, so
+            # arming it from both places costs nothing and losing either one is a silence.
             grain = BATCH_GRAIN.millis
             ctx.timer_service().register_processing_time_timer((now // grain + 1) * grain)
 
@@ -347,8 +352,27 @@ def build_process_function(operator: MeterWindowOperator):
                 _EVIDENCE.info(quarantine_line)
                 yield quarantine_line
 
-            if not batch:
-                return
+            # **The tick continues whether or not anything arrived, and the empty batch is the
+            # interesting one.**
+            #
+            # This used to be `if not batch: return`, and the timer was re-armed only in
+            # `process_element`. Both halves broke the same claim. Claim 1 says a stalled or
+            # idle watermark "is detected and fails to a labelled fallback — never starves
+            # silently", and starvation *is* the empty batch: no records arriving is what the
+            # word means. So the one state the claim names by name was the one state this
+            # adapter returned early from, before the condition line below could be emitted —
+            # and with no arrivals there was no next timer either, so the operator went quiet
+            # altogether. A starved stream and a healthy one produced identical output: nothing.
+            #
+            # `README.md` listed `stalled` and `starved` as proved offline and never induced in
+            # the cloud. They could not have been induced. There was no code path that would
+            # have said so.
+            #
+            # Re-armed first, so an exception below cannot stop the heartbeat. A detector that
+            # dies of the condition it detects is worse than no detector.
+            grain = BATCH_GRAIN.millis
+            ctx.timer_service().register_processing_time_timer((timestamp // grain + 1) * grain)
+
             emission, refused, view, lineage = operator.process(batch, Instant(timestamp))
 
             # **The watermark reports its own condition, and not only when it publishes.**

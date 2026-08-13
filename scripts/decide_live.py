@@ -99,16 +99,20 @@ def watermark_view(lines: list[dict[str, Any]]) -> WatermarkView:
             lag=Duration.of_millis(0),
             leader=None,
         )
-    last = max(conditions, key=lambda line: str(line.get("observed_at", "")))
+    # The field names are the ones `streaming/operators.py` actually emits, and they are not the
+    # ones this function first read. `at` and `idle_partitions`, not `observed_at` and `idle`;
+    # `watermark` is epoch milliseconds, not ISO-8601. Every one of those would have read as a
+    # missing key, resolved to a default, and produced a healthy-looking view of a grid that was
+    # holding back — which is claim 1 failing quietly in the reader rather than in the stream.
+    last = max(conditions, key=lambda line: int(line.get("at", 0)))
     watermark = last.get("watermark")
-    leader = last.get("leader") or last.get("highest_seen")
     return WatermarkView(
         status=WatermarkStatus(str(last["status"])),
-        watermark=None if not watermark else Instant.from_iso(str(watermark)),
-        idle=tuple(sorted(str(item) for item in last.get("idle", ()))),
+        watermark=None if watermark is None else Instant(int(watermark)),
+        idle=tuple(sorted(str(item) for item in last.get("idle_partitions", ()))),
         holding_back=last.get("holding_back"),
         lag=Duration.of_millis(int(last.get("lag_millis", 0))),
-        leader=None if not leader else Instant.from_iso(str(leader)),
+        leader=None,
     )
 
 

@@ -235,13 +235,50 @@ jobs:
           # crypto-shredding key; a subject with no key is one whose erasure request cannot be
           # honoured, and the orchestration finds that out at the moment somebody has asked to
           # be forgotten. Reading the cast makes the two impossible to disagree.
-          SUBJECTS=$(python3 -c '
-          import json
+          #
+          # **Minus the ones already shredded, and this is not a convenience.**
+          #
+          # An erasure schedules the subject's key for deletion. The next apply then found a key
+          # in `PendingDeletion`, planned to replace it, and asked to re-point the alias:
+          #
+          #     AccessDeniedException: ... not authorized to perform: kms:UpdateAlias on
+          #     resource: arn:aws:kms:eu-central-1:...:alias/watermark-subject-C00007
+          #
+          # The obvious reading is a missing permission. It is the opposite. **Granting it would
+          # have made every deploy silently un-erase whoever had asked to be forgotten** — a new
+          # key under the same alias, the declaration satisfied, and a subject whose erasure
+          # certificate is still sitting in the bucket restored by a routine apply that reported
+          # success.
+          #
+          # Declarative infrastructure and crypto-shredding want opposite things: Terraform's job
+          # is to make reality match the declaration, and an erasure's job is to destroy
+          # something the declaration says should exist. Something has to give, and it is the
+          # declaration — so the subject list is the cast *minus* the subjects whose keys are
+          # already going. Terraform then removes those resources instead of resurrecting them,
+          # and the erasure survives every subsequent deploy. See ADR-0009.
+          SUBJECTS=$(python3 - <<'SUBJECTS_PY'
+          import json, subprocess
           from data.cast import meter_assignments
-          print(json.dumps(sorted({v.attributes["customer_id"] for v in meter_assignments().versions})))
-          ')
+
+          declared = sorted({v.attributes["customer_id"] for v in meter_assignments().versions})
+          shredded = []
+          for subject in declared:
+              probe = subprocess.run(
+                  ["aws", "kms", "describe-key", "--key-id", f"alias/watermark-subject-{subject}",
+                   "--query", "KeyMetadata.KeyState", "--output", "text"],
+                  capture_output=True, text=True, check=False,
+              )
+              # A missing alias is a subject who has never had a key — the first deploy, or a new
+              # subject. That is a key to create, not one to withhold.
+              if probe.returncode == 0 and probe.stdout.strip() == "PendingDeletion":
+                  shredded.append(subject)
+
+          print(json.dumps([s for s in declared if s not in shredded]))
+          print(f"shredded, and not recreated: {shredded or 'none'}", file=__import__("sys").stderr)
+          SUBJECTS_PY
+          )
           echo "SUBJECTS=$SUBJECTS" >> "$GITHUB_ENV"
-          echo "data subjects from data/cast.py: $(echo "$SUBJECTS" | tr ',' '\n' | wc -l | tr -d ' ') keys"
+          echo "data subjects to key: $(echo "$SUBJECTS" | tr ',' '\n' | wc -l | tr -d ' ')"
 
       - name: stop the Flink application if it is running
         # Managed Flink takes a snapshot before an update, and refuses when the application is

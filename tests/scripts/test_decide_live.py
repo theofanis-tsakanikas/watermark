@@ -71,23 +71,29 @@ def test_no_evidence_is_unstarted_and_not_a_healthy_silence(decider) -> None:
 
 
 def test_the_last_transition_wins(decider) -> None:
+    """And it is read with the field names the operator actually emits.
+
+    `at`, not `observed_at`; `idle_partitions`, not `idle`; epoch milliseconds, not ISO-8601.
+    Every mismatch would read as a missing key, resolve to a default, and present a healthy view
+    of a grid that was holding back — claim 1 failing in the reader rather than in the stream.
+    """
     view = decider.watermark_view(
         [
             {
                 "kind": "watermark",
-                "status": "advanced",
-                "observed_at": "2026-03-14T09:00:00Z",
-                "watermark": "2026-03-14T09:00:00Z",
+                "status": "advancing",
+                "at": 1_000,
+                "watermark": 1_000,
                 "lag_millis": 0,
             },
             {
                 "kind": "watermark",
                 "status": "held_back",
-                "observed_at": "2026-03-14T10:00:00Z",
-                "watermark": "2026-03-14T09:30:00Z",
+                "at": 2_000,
+                "watermark": 1_500,
                 "lag_millis": 1800000,
                 "holding_back": "SUB-01",
-                "idle": ["SUB-02"],
+                "idle_partitions": ["SUB-02"],
             },
             {"kind": "published", "meter_id": "M00001"},
         ]

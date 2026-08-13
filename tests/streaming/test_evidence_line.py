@@ -18,13 +18,18 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from pathlib import Path
 
 import pytest
 
-from streaming.operators import _line
+from data import cast
+from streaming.config import SEMANTICS
+from streaming.operators import MeterWindowOperator, _line
+from watermark.core.normalise import DEFAULT_POLICY as NORMALISATION_POLICY
 from watermark.core.time import Duration, Instant
+from watermark.core.watermarks import DEFAULT_POLICY as WATERMARK_POLICY
 from watermark.core.watermarks import WatermarkStatus, WatermarkView
-from watermark.core.windows import WindowResult
+from watermark.core.windows import WindowPolicy, WindowResult
 
 #: The one field whose name changes on the way out, and why it is allowed to.
 #:
@@ -111,3 +116,43 @@ def test_a_line_without_a_lineage_id_says_so_rather_than_omitting_it(result, vie
     line = json.loads(_line("published", result, view, None))
     assert "lineage_id" in line
     assert line["lineage_id"] is None
+
+
+def test_an_empty_batch_still_produces_a_watermark_view() -> None:
+    """Starvation is the empty batch, and it must still be reportable.
+
+    The adapter used to `return` before reporting anything when nothing had arrived — so the one
+    state claim 1 names by name ("never starves silently") was the one state it could not
+    report. The core has always handled this; what follows is the evidence that it does, so the
+    adapter's job is only to ask.
+    """
+    operator = MeterWindowOperator(
+        normalisation=NORMALISATION_POLICY,
+        watermark=WATERMARK_POLICY,
+        window=WindowPolicy(length=SEMANTICS["window_length"]),
+        partitions=cast.SUBSTATIONS,
+    )
+    _, refused, view, lineage = operator.process([], Instant(0))
+    assert refused == ()
+    assert lineage == {}
+    assert view.status in {WatermarkStatus.UNSTARTED, WatermarkStatus.STARVED}
+    assert not view.status.may_close_windows
+
+
+def test_the_adapter_no_longer_returns_before_reporting() -> None:
+    """A structural check, because the callback cannot be built without a JVM.
+
+    `build_process_function` imports PyFlink, which does not install on every machine this
+    repository is developed on, so the branch above cannot be exercised directly here. What can
+    be checked is that the early return is gone and the timer is re-armed independently of
+    arrivals — the two halves that made a starved stream indistinguishable from a healthy one.
+    """
+    source = Path(__file__).resolve().parents[2].joinpath("streaming/operators.py").read_text()
+    body = source[source.index("def on_timer") :]
+    assert "if not batch:\n                return" not in body, (
+        "the empty batch returns early again, and starvation is the empty batch"
+    )
+    assert "register_processing_time_timer" in body, (
+        "on_timer no longer re-arms the timer; with no arrivals the operator goes silent and "
+        "the condition it exists to report is the condition that stops it reporting"
+    )

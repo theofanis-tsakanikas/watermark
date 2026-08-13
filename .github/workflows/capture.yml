@@ -472,6 +472,23 @@ jobs:
             --recursive --exclude "*_tmp_*" --quiet
           python scripts/replay_live.py --first out/landing-first --after out/landing-second
 
+      - name: renew the credentials before the second half
+        # **The role's maximum session is one hour and this capture is now longer than that.**
+        #
+        # `infra/bootstrap/oidc.tf` sets `max_session_duration = 3600`, so a longer token cannot
+        # be requested — and raising it would mean applying the one layer that applies from a
+        # laptop, to work around a workflow that can simply ask again. Assuming the role a second
+        # time costs one OIDC exchange and leaves the infrastructure alone.
+        #
+        # Placed here because the claim 2 step above publishes the whole day a second time: the
+        # capture went from forty minutes to seventy the moment that landed, and everything after
+        # it began failing on `ExpiredTokenException` — the *assertions* first, and then the
+        # cleanup, which is the half that costs money.
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
       - name: build the gold layer, which no capture had ever built
         # **The settlement path, run for the first time.**
         #
@@ -867,6 +884,24 @@ jobs:
           name: capture
           path: out/capture
 
+      - name: credentials for the cleanup, whatever happened above
+        # **`always()` guarantees a step runs. It does not guarantee the step works**, and that
+        # distinction cost two hours of Managed Flink.
+        #
+        # The stop step below has carried `if: always()` since it was written, with a comment
+        # calling it the most important line in the file. It ran. Every AWS call inside it
+        # answered `ExpiredTokenException`, the step failed, and the application went on
+        # consuming KPUs until somebody looked at the account — which is exactly the accident
+        # that line exists to rule out, arriving through the one door it did not cover.
+        #
+        # So the credentials are renewed first, and this step is `always()` too. A cleanup whose
+        # authorisation expires with the run is not a cleanup.
+        if: always()
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
       - name: stop everything that bills
         # `always()`. This is the most important line in the file: a capture that fails halfway
         # and leaves an endpoint running is precisely the accident the cost posture exists to
@@ -887,16 +922,50 @@ jobs:
           # silent — so it is checked here instead.
           remaining=$(aws sagemaker list-endpoints \
             --name-contains watermark-anomaly --query 'Endpoints[].EndpointName' --output text)
+
+          # **And the Flink application, which this step used to assert without looking.**
+          #
+          # The summary below said "The Flink application is stopped" on the strength of having
+          # issued a `stop-application || true` — and on the run where the credentials had
+          # expired, that call failed, the sentence was printed anyway, and the application went
+          # on consuming KPUs for two hours. A claim about a resource that is not read from the
+          # resource is a claim about an API call.
+          #
+          # Waited on rather than sampled once: `FORCE_STOPPING` is a real state and takes tens
+          # of seconds, so a single read straight after the request reports "still running" on a
+          # stop that is working perfectly.
+          flink="unknown"
+          for _ in $(seq 1 20); do
+            flink=$(aws kinesisanalyticsv2 describe-application --application-name watermark \
+              --query 'ApplicationDetail.ApplicationStatus' --output text 2>/dev/null || echo unreadable)
+            case "$flink" in READY|STOPPING|DELETING|unreadable) break ;; esac
+            sleep 15
+          done
+
           {
             echo "### Stopped"
+            echo ""
+            echo "| resource | state |"
+            echo "|---|---|"
+            echo "| endpoint | ${remaining:-deleted} |"
+            echo "| Flink application | $flink |"
             echo ""
             if [ -n "$remaining" ]; then
               echo ":warning: **an endpoint is still there**: \`$remaining\`. It bills by the"
               echo "minute. The reaper removes it at its expiry, hourly — but do not wait."
-            else
-              echo "The endpoint is deleted. The Flink application is stopped."
+            fi
+            if [ "$flink" != "READY" ] && [ "$flink" != "STOPPING" ] && [ "$flink" != "DELETING" ]; then
+              echo ":warning: **the Flink application is \`$flink\`**, not stopped. KPUs bill"
+              echo "for as long as it runs."
             fi
             echo ""
             echo "The reaper will remove whatever remains at its expiry, hourly."
           } >> "$GITHUB_STEP_SUMMARY"
-          [ -z "$remaining" ]
+
+          fail=0
+          [ -z "$remaining" ] || { echo "::error::an endpoint survived the cleanup: $remaining"; fail=1; }
+          case "$flink" in
+            READY|STOPPING|DELETING) ;;
+            *) echo "::error::the Flink application is $flink after a stop was requested. It bills while it runs"; fail=1 ;;
+          esac
+          exit $fail

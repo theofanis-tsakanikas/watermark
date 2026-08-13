@@ -26,11 +26,12 @@ Store · Lake Formation · Step Functions · Terraform*
 > | rows published with a watermark earlier than their own interval end | **0** — claim 1, checkable after the fact |
 > | distinct lineage ids | **one per row** — claim 2's identity |
 > | restatements that name what they replaced | **all of them** — doctrine 4, no silent overwrite |
-> | watermark condition transitions reported | **36**, two of them `held_back` naming `SUB-01`, and `advancing_with_idle` naming three more |
+> | watermark condition transitions reported | **63**, four of them `held_back` naming `SUB-01`, and `advancing_with_idle` naming three more |
 > | train/serve parity, two mechanisms, no tolerance | **20 agreed, 0 diverged, 0 missing** |
 > | decisions taken by the engine in the cloud | **21, with 21 distinct identifiers** |
 > | consequential decisions awaiting a human | **20 pending, 0 actuated** — actuation raises before any review exists |
 > | an erasure certificate, with the boundary on its face | **written**, and the customer who held the same meter earlier kept every row |
+> | a second erasure request from an already-erased subject | **certified again** — Art. 17 asked twice is answered twice, not with an error |
 >
 > Claim 5 and claim 6 were exercised too: the model registers `PendingManualApproval` and
 > nothing can approve itself, and **an erasure now certifies** — all five legs confirmed, with a

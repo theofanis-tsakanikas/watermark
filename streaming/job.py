@@ -41,11 +41,13 @@ from streaming.operators import (
 )
 from watermark.core.normalise import DEFAULT_POLICY as NORMALISATION_POLICY
 from watermark.core.records import (
+    BATCH_GRAIN,
     LANDING_IDLE,
     LANDING_PART_BYTES,
     LANDING_ROLLOVER,
     WATERMARK_OPERATOR_PARALLELISM,
 )
+from watermark.core.time import Duration
 from watermark.core.watermarks import DEFAULT_POLICY as WATERMARK_POLICY
 from watermark.core.windows import WindowPolicy
 from watermark.runner import Arrival, run
@@ -56,7 +58,7 @@ if TYPE_CHECKING:  # pragma: no cover — import-time only where PyFlink exists
 LOG = logging.getLogger("watermark.streaming")
 
 
-def decide_windows(stream, operator: MeterWindowOperator):
+def decide_windows(stream, operator: MeterWindowOperator, grain: Duration = BATCH_GRAIN):
     """Key, delegate, name, pin. The whole of the semantics, and the seam tier two needs.
 
     **Extracted so that the equivalence test drives the same chain the deployed job does.**
@@ -82,7 +84,7 @@ def decide_windows(stream, operator: MeterWindowOperator):
 
     return (
         stream.key_by(lambda record: record[1])
-        .process(build_process_function(operator), output_type=Types.STRING())
+        .process(build_process_function(operator, grain), output_type=Types.STRING())
         .name("watermark-meter-windows")
         .set_parallelism(WATERMARK_OPERATOR_PARALLELISM)
     )

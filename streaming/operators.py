@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from watermark.core.normalise import NormalisationPolicy, Reason, normalise_meter_reading
 from watermark.core.quarantine import Quarantined
 from watermark.core.records import BATCH_GRAIN, MeterReading, Source
-from watermark.core.time import Instant
+from watermark.core.time import Duration, Instant
 from watermark.core.watermarks import (
     WatermarkPolicy,
     WatermarkState,
@@ -257,15 +257,26 @@ def _line(kind: str, result: WindowResult, view: object, lineage_id: str | None)
 _EVIDENCE = logging.getLogger("watermark.evidence")
 
 
-def build_process_function(operator: MeterWindowOperator):
+def build_process_function(operator: MeterWindowOperator, grain: Duration = BATCH_GRAIN):
     """Wrap the operator in the PyFlink class Flink actually calls.
 
     Built by a factory rather than declared at module scope so that importing this file costs
     nothing without PyFlink installed. The class body is the translation and nothing else: it
     buffers a record, and on a timer it hands the batch to the operator and emits whatever came
     back.
+
+    **`grain` is an argument, and it is transport rather than semantics.** It bounds how long a
+    record sits in a buffer and says nothing about event time — the comment on the timer below
+    is explicit that the batch boundary is not a claim about when a window may close. The
+    deployed job never passes one and gets `BATCH_GRAIN` from the core, which is what keeps the
+    offline runner and this one agreeing about how much work a restart repeats. The equivalence
+    harness in `tests_flink/` passes a smaller one, because a bounded source drains in less than
+    a second and a one-second grain means no timer ever fires: the job finishes, emits nothing,
+    and an equivalence test compares two empty sets and passes.
     """
     from pyflink.datastream import KeyedProcessFunction  # noqa: PLC0415
+
+    grain_millis = grain.millis
 
     class _MeterWindowFunction(KeyedProcessFunction):
         """Buffer, fire on a timer, delegate, emit. No decision of its own."""
@@ -328,8 +339,9 @@ def build_process_function(operator: MeterWindowOperator):
             # the first tick going after a key's first record; that one keeps it going when no
             # record follows. Flink deduplicates timers on the same key and timestamp, so
             # arming it from both places costs nothing and losing either one is a silence.
-            grain = BATCH_GRAIN.millis
-            ctx.timer_service().register_processing_time_timer((now // grain + 1) * grain)
+            ctx.timer_service().register_processing_time_timer(
+                (now // grain_millis + 1) * grain_millis
+            )
 
         def on_timer(self, timestamp, ctx):
             batch, self._buffer = self._buffer, []
@@ -370,8 +382,9 @@ def build_process_function(operator: MeterWindowOperator):
             #
             # Re-armed first, so an exception below cannot stop the heartbeat. A detector that
             # dies of the condition it detects is worse than no detector.
-            grain = BATCH_GRAIN.millis
-            ctx.timer_service().register_processing_time_timer((timestamp // grain + 1) * grain)
+            ctx.timer_service().register_processing_time_timer(
+                (timestamp // grain_millis + 1) * grain_millis
+            )
 
             emission, refused, view, lineage = operator.process(batch, Instant(timestamp))
 

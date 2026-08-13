@@ -21,6 +21,7 @@ import pytest
 
 from data import cast
 from data.generate import generate
+from watermark.core.time import Duration
 from watermark.runner import Arrival, run
 
 pytestmark = pytest.mark.slow
@@ -33,6 +34,29 @@ pytestmark = pytest.mark.slow
 #: The floor is what stops that allowance from covering a real regression: without it, a change
 #: that closed almost nothing would compare its two remaining windows and report equivalence.
 MINIMUM_WINDOWS_CLOSED = 0.95
+
+#: The batch grain the harness runs the operator at, and why it is not the core's.
+#:
+#: `BATCH_GRAIN` is one second, which is right for a stream that never ends. A bounded source
+#: drains in a fraction of that, so the job finishes before a single timer fires — and the first
+#: two runs of this harness demonstrated exactly that non-determinism: one machine was slow
+#: enough to fire some timers and produce results, the next was fast enough to produce **none**
+#: and the test failed on its own empty-result guard rather than on a comparison. A racy
+#: equivalence test is worse than none.
+#:
+#: The grain is transport rather than semantics — `build_process_function` says so where it takes
+#: the argument — so shortening it here changes how often the buffer is drained and nothing about
+#: when a window may close.
+HARNESS_GRAIN = Duration.of_millis(100)
+
+#: Milliseconds of pacing per record, so the run spans many grains rather than one.
+#:
+#: Without it the source drains at whatever speed the JVM manages and the number of timer fires
+#: is a property of the machine. Two milliseconds across the generated day is roughly nine
+#: seconds of wall clock and ninety batches, which puts the unfired tail at about one percent —
+#: comfortably inside the floor above, and stable enough that the same run twice gives the same
+#: answer.
+PACING_MILLIS = 2
 
 
 @pytest.fixture(scope="module")
@@ -211,6 +235,7 @@ def _run_on_mini_cluster(environment, build, arrivals):
     both at once and neither clearly.
     """
     import base64  # noqa: PLC0415
+    import time  # noqa: PLC0415
 
     from pyflink.common.typeinfo import Types  # noqa: PLC0415
 
@@ -235,11 +260,25 @@ def _run_on_mini_cluster(environment, build, arrivals):
         )
         for arrival in sorted(arrivals, key=lambda a: a.ingest_time.epoch_millis)
     ]
-    source = environment.from_collection(
-        rows,
-        type_info=Types.ROW_NAMED(
-            ["raw", "partition", "source"],
-            [Types.STRING(), Types.STRING(), Types.STRING()],
-        ),
+    row_type = Types.ROW_NAMED(
+        ["raw", "partition", "source"],
+        [Types.STRING(), Types.STRING(), Types.STRING()],
     )
-    return list(build(source, operator).execute_and_collect())
+
+    def paced(record):
+        """Slow the source so the operator's timers fire more than once.
+
+        Ugly, and the alternative is worse. `from_collection` hands its whole list over as fast
+        as the JVM manages; with a processing-time timer that means the number of batches is a
+        property of the machine, and the first two runs of this harness produced results and
+        nothing at all respectively on the same input. The pacing is what makes the run
+        reproducible — it is a property of the *harness*, not of the job, which is why it lives
+        in a map here and not in `streaming/`.
+        """
+        time.sleep(PACING_MILLIS / 1000)
+        return record
+
+    source = environment.from_collection(rows, type_info=row_type).map(
+        paced, output_type=row_type
+    )
+    return list(build(source, operator, grain=HARNESS_GRAIN).execute_and_collect())

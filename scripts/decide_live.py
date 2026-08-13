@@ -59,6 +59,13 @@ from watermark.features.online import ServedValue  # noqa: E402
 #: not silently change which decision this script guards.
 CONSEQUENTIAL: Final = "meter_anomaly"
 
+#: How many meters this run decides about.
+#:
+#: Bounded, and the bound is stated rather than silent. Every entity costs one `GetRecord`
+#: and one endpoint invocation, and the properties being asserted are properties of the
+#: decision path — they do not get truer at two hundred meters than at twenty.
+POPULATION: Final = 20
+
 #: The score above which the endpoint's output is read as `queue_for_inspection`.
 #:
 #: Here rather than inline because it is a *policy* number, not an implementation detail: it
@@ -186,6 +193,26 @@ def evidence_lines(directory: Path) -> list[dict[str, Any]]:
     return lines
 
 
+def meters_in(lines: list[dict[str, Any]]) -> list[str]:
+    """The meters that had a window published, in a stable order.
+
+    **`meter`, not `meter_id`.** The emitter calls it `meter` — `streaming/operators.py`'s
+    `_line` — and this function read `meter_id` on its first draft, which found nothing, decided
+    the estate had published nothing, and would have failed a healthy capture with a message
+    about the stream. That is the second field-name mismatch in this one file; the first was the
+    watermark line's. `tests/scripts/test_decide_live.py` now pins both against real `_line`
+    output rather than against a hand-written fixture, because a fixture with the wrong key is
+    the same bug written twice and agreeing with itself.
+    """
+    return sorted(
+        {
+            str(line["meter"])
+            for line in lines
+            if line.get("kind") == "published" and line.get("meter")
+        }
+    )
+
+
 def properties_that_must_hold(rows, view, feature) -> list[str]:
     """Every property the run asserts about the decisions it just took.
 
@@ -256,8 +283,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 — a linear sc
         f"watermark: {view.status.value}, holding_back={view.holding_back}, lag={view.lag.millis}ms"
     )
 
-    published = [line for line in lines if line.get("kind") == "published"]
-    entities = sorted({str(line["meter_id"]) for line in published if line.get("meter_id")})[:20]
+    entities = meters_in(lines)[:POPULATION]
     if not entities:
         print("::error::no published records in the evidence; there is nothing to decide about")
         return 1

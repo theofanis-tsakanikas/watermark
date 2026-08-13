@@ -90,12 +90,31 @@ purpose is to make reality match the declaration. An erasure's whole purpose is 
 something the declaration says should exist. They cannot both win, and the interesting question
 is which one gives way.
 
-It is the declaration. `deploy.yml` computes the subject list as the cast *minus* every subject
-whose key is already in `PendingDeletion`, so Terraform removes those resources rather than
-resurrecting them and the erasure survives every subsequent apply. The reason this direction is
-right and not merely convenient: an erasure is a legal obligation with a subject on the other end
-of it, and a declaration is a statement of intent by an operator. When they conflict, the party
-who can be harmed is not the operator.
+It is the declaration. `deploy.yml` computes the subject list as the cast *minus* the subjects
+already erased, so Terraform removes those resources rather than resurrecting them. The reason
+this direction is right and not merely convenient: an erasure is a legal obligation with a
+subject on the other end of it, and a declaration is a statement of intent by an operator. When
+they conflict, the party who can be harmed is not the operator.
+
+### The first version of that fix was wrong, and the way it was wrong is the useful part
+
+It excluded subjects whose key was in `PendingDeletion`. That held for exactly one apply.
+Terraform then destroyed the shredded subject's alias — correctly; that is what excluding them
+asks for — and the *next* deploy probed the alias, found nothing, read it as a subject who had
+never had a key, and created a fresh one. The erasure was undone one deploy later than before
+rather than prevented. It was caught because the account was checked afterwards rather than
+because the deploy said anything: it reported `shredded, and not recreated: none` and was telling
+the truth about what it could see.
+
+**The exclusion has to rest on a durable record of the erasure, not on a transient state of the
+thing being erased.** A scheduled key lasts seven days. Its alias lasts one apply. The subject is
+forever. Anything derived from the first two is a control with an expiry date that nobody set.
+
+So the state machine writes `erasure-shredded/<subject>.json` the moment `ScheduleKeyDeletion`
+returns, before any other leg has reported, and the deploy reads that prefix. Deliberately **not**
+the certificate: a certificate means the whole erasure completed, and a run that shredded the key
+and then failed its `DELETE` legs has still destroyed something irreversible. The marker records
+the irreversible part on its own, which is the part the next apply must not undo.
 
 The permission is deliberately **not** granted. A control that depends on remembering not to use
 a permission is not a control; the role cannot re-point a subject alias at all.

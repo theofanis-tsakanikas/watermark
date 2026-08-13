@@ -52,6 +52,27 @@
                 "confirmed": true,
                 "deletes_at.$": "$.DeletionDate"
               },
+              "ResultPath": "$.shred",
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "ShredFailed"
+                }
+              ],
+              "Next": "RecordTheShred"
+            },
+            "RecordTheShred": {
+              "Type": "Task",
+              "Comment": "The shred is the irreversible act, so the record of it is written the moment it happens and outlives everything else. Not for the audit trail — for the next deploy. Terraform's job is to make reality match the declaration, and a subject whose key is gone is a subject the declaration still asks for; without a durable marker the next apply creates a fresh key under the same alias and the erasure is quietly undone. The key's own PendingDeletion state is not that marker: it lasts seven days, the alias lasts one apply, and the subject is forever. That was found the hard way, one deploy after the first successful shred.",
+              "Resource": "arn:aws:states:::aws-sdk:s3:putObject",
+              "Parameters": {
+                "Bucket": "${certificate_bucket}",
+                "Key.$": "States.Format('erasure-shredded/{}.json', $.subject_id)",
+                "Body.$": "$.shred",
+                "ServerSideEncryption": "aws:kms"
+              },
+              "ResultSelector": { "leg": "crypto_shred", "confirmed": true },
               "Catch": [
                 {
                   "ErrorEquals": ["States.ALL"],

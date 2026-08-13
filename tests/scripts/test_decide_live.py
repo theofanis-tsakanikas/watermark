@@ -9,6 +9,7 @@ about the decisions that come out. Both are here.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -18,8 +19,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from streaming.operators import _line  # noqa: E402
 from watermark.core.time import Duration, Instant  # noqa: E402
 from watermark.core.watermarks import WatermarkStatus, WatermarkView  # noqa: E402
+from watermark.core.windows import WindowResult  # noqa: E402
 from watermark.decisions.engine import Origin  # noqa: E402
 
 
@@ -163,3 +166,42 @@ def test_a_fallback_on_a_stale_feature_is_the_correct_answer(decider) -> None:
         _view(WatermarkStatus.ADVANCING),
         _Feature(),
     )
+
+
+def test_it_reads_the_field_names_the_emitter_actually_writes(decider) -> None:
+    """Against real `_line` output, not against a fixture.
+
+    Two field-name mismatches have already been found in this one file: the watermark line's
+    (`observed_at` for `at`, `idle` for `idle_partitions`, ISO-8601 for epoch milliseconds) and
+    the published line's (`meter_id` for `meter`). Neither raised. Both read as a missing key,
+    resolved to a default, and produced a confident wrong answer — an empty entity list read as
+    "the estate published nothing", and a healthy view of a grid that was holding back.
+
+    A hand-written fixture cannot catch that: it is the same mistake written twice, agreeing
+    with itself. So this builds the line with the emitter and reads it with the reader.
+    """
+    result = WindowResult(
+        meter_id="M00042",
+        interval_start=Instant.from_iso("2026-03-14T10:00:00Z"),
+        energy_wh=4200,
+        readings=4,
+        duplicates_suppressed=0,
+        corrections_absorbed=0,
+        closed_at=Instant.from_iso("2026-03-14T10:15:00Z"),
+        first_seen_at=Instant.from_iso("2026-03-14T10:00:00Z"),
+        watermark_status=WatermarkStatus.ADVANCING,
+        idle_partitions=(),
+        revision=0,
+        supersedes=None,
+        restatement_cause=None,
+    )
+    view = WatermarkView(
+        status=WatermarkStatus.ADVANCING,
+        watermark=Instant.from_iso("2026-03-14T10:15:00Z"),
+        idle=(),
+        holding_back=None,
+        lag=Duration.of_millis(0),
+        leader=None,
+    )
+    emitted = json.loads(_line("published", result, view, "abc123"))
+    assert decider.meters_in([emitted]) == ["M00042"]

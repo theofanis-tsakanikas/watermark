@@ -115,10 +115,17 @@ data "aws_iam_policy_document" "erasure" {
   }
 
   statement {
-    sid       = "WriteTheCertificate"
-    effect    = "Allow"
-    actions   = ["s3:PutObject"]
-    resources = ["${data.aws_s3_bucket.lakehouse.arn}/erasure-certificates/*"]
+    sid     = "WriteTheCertificate"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${data.aws_s3_bucket.lakehouse.arn}/erasure-certificates/*",
+      # The shred marker, written the moment the key is scheduled and before any other leg has
+      # reported. A certificate says the whole erasure completed; this says the irreversible
+      # part did, which is the fact the next `terraform apply` has to know about whether or not
+      # the rest of the run succeeded.
+      "${data.aws_s3_bucket.lakehouse.arn}/erasure-shredded/*",
+    ]
   }
 
   # Athena writes its results before it will start a query, and refuses with "Unable to

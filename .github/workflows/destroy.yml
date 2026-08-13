@@ -109,8 +109,20 @@ jobs:
           set -euo pipefail
           python3 -c '
           import json
-          from data.cast import SUBSTATIONS
+          from data.cast import SUBSTATIONS, meter_assignments
           print("SUBSTATIONS=" + json.dumps(list(SUBSTATIONS)))
+          # The data subjects, for the same reason and from the same source. A destroy resolves
+          # every variable the layer declares, whether or not the value affects what is torn
+          # down — `infra/governance/` gained `subjects` when the per-subject crypto-shredding
+          # keys landed, `deploy.yml` was wired for it and this file was not, and the first
+          # teardown afterwards failed with `No value for required variable`.
+          #
+          # A teardown that fails on a missing variable is a teardown that leaves the estate
+          # standing and billing, which is the one failure mode this workflow exists to prevent.
+          # It is deliberately the *whole* cast rather than the subjects that still have keys:
+          # Terraform needs a value to plan a destroy against, not an inventory.
+          print("SUBJECTS=" + json.dumps(sorted(
+              {v.attributes["customer_id"] for v in meter_assignments().versions})))
           ' >> "$GITHUB_ENV"
 
       - name: empty the model registry
@@ -182,6 +194,7 @@ jobs:
           # Same reason as `expires_at` above: `substations` has no default, and a destroy that
           # cannot evaluate the streaming configuration cannot tear it down either.
           TF_VAR_substations: ${{ env.SUBSTATIONS }}
+          TF_VAR_subjects: ${{ env.SUBJECTS }}
           # Required by the variable, irrelevant to a destroy: the configuration has to evaluate
           # before Terraform can tear it down. Same reason as `expires_at` above.
           TF_VAR_processing_image_tag: "unused-by-a-destroy"

@@ -27,6 +27,35 @@ TABLES = (
 )
 
 
+def existing(spark, tables):
+    """The subset of `tables` the catalogue actually holds, and a line for each that it does not.
+
+    **A named table that does not exist is a skip, not a failure**, and the distinction is one
+    this repository has now been taught twice. `gold.settlement_hour` is built by dbt, which
+    does not run in any capture yet; `bronze.quarantine` is a Terraform declaration nothing has
+    written. A maintenance run that dies on the first of those never reaches `silver`, which is
+    the table an erasure is waiting on — so one absent aggregate would block a deletion request
+    for a person.
+
+    Skipped tables are printed rather than passed over silently. The certificate cites this run,
+    and "this ran over two of three tables" is a materially different statement from "this ran".
+    """
+    present = []
+    for database, table in tables:
+        try:
+            spark.sql(f"DESCRIBE TABLE glue_catalog.{database}.{table}").collect()
+        except Exception as absent:
+            print(f"skipped {database}.{table}: {type(absent).__name__}")
+            continue
+        present.append((database, table))
+    if not present:
+        # Louder than a clean exit. Every table missing means the catalogue is not what this job
+        # was written against, and reporting success would tell an erasure that files were
+        # removed when none were examined.
+        raise SystemExit("no table in TABLES exists; refusing to report a maintenance run")
+    return present
+
+
 def main() -> int:
     arguments = getResolvedOptions(sys.argv, ["WAREHOUSE", "TARGET_FILE_SIZE_MB"])
     target_bytes = int(arguments["TARGET_FILE_SIZE_MB"]) * 1024 * 1024
@@ -34,7 +63,7 @@ def main() -> int:
     spark = GlueContext(SparkContext.getOrCreate()).spark_session
     spark.conf.set("spark.sql.catalog.glue_catalog.warehouse", arguments["WAREHOUSE"])
 
-    for database, table in TABLES:
+    for database, table in existing(spark, TABLES):
         target = f"glue_catalog.{database}.{table}"
         # `rewrite_data_files` with an explicit target size. Without the size it uses Iceberg's
         # default, which is not the number `infra/lakehouse` configured — and a compaction that

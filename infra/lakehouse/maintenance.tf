@@ -23,6 +23,36 @@
 # It is here rather than inside the streaming job because writing Iceberg from PyFlink means a
 # catalog factory resolved in the driver, a platform that loads one jar, and Hadoop classes for
 # a catalog that is Glue. Glue has native Iceberg and no classpath to assemble.
+# **The Spark config every Iceberg job in this file needs, in one place because three of them
+# did not have it.**
+#
+# `spark.sql.extensions` is a *static* config: it is read before the Spark session exists, so a
+# job that sets it from Python gets a session that cannot parse the statement it was written
+# for. Iceberg's `MERGE` syntax comes from it — and so does `CALL`, which is the entire body of
+# the three maintenance jobs.
+#
+# Only `land_to_silver` had it. `compaction`, `expire_snapshots` and `delete_orphan_files` had
+# `--datalake-formats = "iceberg"` and nothing else, so every `CALL glue_catalog.system.*` they
+# have ever issued failed with:
+#
+#     ParseException:
+#
+# an empty message, because the parser could not name a token it had no grammar for. **None of
+# the three has ever done anything.** They are what the erasure's physical-deletion leg waits
+# on — ADR-0002 kept them precisely so the certificate could cite which run removed which files
+# — and the first thing ever to call one was an erasure request.
+#
+# A `local` rather than four copies: the copies are how three of them came to be missing it.
+locals {
+  iceberg_conf = join(" --conf ", [
+    "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+    "spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog",
+    "spark.sql.catalog.glue_catalog.warehouse=${local.warehouse}",
+    "spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog",
+    "spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO",
+  ])
+}
+
 resource "aws_glue_job" "land_to_silver" {
   name              = "${var.project}-land-to-silver"
   role_arn          = aws_iam_role.maintenance.arn
@@ -50,16 +80,7 @@ resource "aws_glue_job" "land_to_silver" {
     # `scripts/check_lakehouse_wiring.py` is what keeps them the same name.
     "--TABLE" = "meter_interval"
 
-    # The catalog, applied before the Spark session exists. `spark.sql.extensions` is a static
-    # config and Iceberg's MERGE syntax comes from it, so a job that sets it from Python gets a
-    # session that cannot parse the statement it was written for.
-    "--conf" = join(" --conf ", [
-      "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
-      "spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog",
-      "spark.sql.catalog.glue_catalog.warehouse=${local.warehouse}",
-      "spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog",
-      "spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO",
-    ])
+    "--conf" = local.iceberg_conf
   }
 
   execution_property {
@@ -89,6 +110,7 @@ resource "aws_glue_job" "compaction" {
     "--enable-metrics"                   = "true"
     "--enable-continuous-cloudwatch-log" = "true"
     "--datalake-formats"                 = "iceberg"
+    "--conf"                             = local.iceberg_conf
     "--WAREHOUSE"                        = local.warehouse
     "--TARGET_FILE_SIZE_MB"              = "512"
   }
@@ -117,6 +139,7 @@ resource "aws_glue_job" "expire_snapshots" {
 
   default_arguments = {
     "--datalake-formats" = "iceberg"
+    "--conf"             = local.iceberg_conf
     "--WAREHOUSE"        = local.warehouse
     "--MIN_SNAPSHOTS"    = "10"
     "--MAX_AGE_DAYS"     = "30"
@@ -146,6 +169,7 @@ resource "aws_glue_job" "delete_orphan_files" {
 
   default_arguments = {
     "--datalake-formats" = "iceberg"
+    "--conf"             = local.iceberg_conf
     "--WAREHOUSE"        = local.warehouse
     # Three days. Shorter risks deleting a file a long-running write has produced and not yet
     # committed, which turns a slow job into a corrupt table.

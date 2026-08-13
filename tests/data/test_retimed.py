@@ -22,6 +22,7 @@ import pytest
 
 from data import cast
 from data.generate import INTERVALS_PER_DAY, energy_wh, generate, payload_with, retimed
+from data.telemetry import readings
 from watermark.core.normalise import DEFAULT_POLICY, normalise_meter_reading
 from watermark.core.records import METER_INTERVAL, Source
 from watermark.core.time import Duration, Instant
@@ -120,4 +121,41 @@ def test_a_shifted_day_still_spans_many_windows() -> None:
     assert len(starts) >= INTERVALS_PER_DAY - 2, (
         f"the day collapsed to {len(starts)} windows out of {INTERVALS_PER_DAY}. A capture over "
         "this stream would close almost nothing, and would look healthy while doing it."
+    )
+
+
+def test_a_telemetry_payload_is_moved_too() -> None:
+    """The shape that was missed, and the reason this test exists at all.
+
+    `data/telemetry.py` writes `event_time`, which is the name the record class uses and the
+    right name for the field. No pattern in `_TIMESTAMPS` matched it, so `retimed` returned the
+    payload unchanged — deliberately, because a firmware shape that grows a field must not crash
+    the publisher — and every substation measurement arrived in the account stamped five months
+    before the meter readings it was published alongside. Nothing raised. Nothing could.
+
+    A capture would have shown telemetry landing, the decider reading it, and curtailment
+    deciding, all correctly, on measurements from a different March.
+    """
+    sample = readings()[0]
+    moved = retimed(sample.payload(), lambda instant: instant.plus(Duration.of_days(1)))
+    assert moved != sample.payload()
+    assert sample.event_time.plus(Duration.of_days(1)).to_iso() in moved
+
+
+def test_every_published_shape_is_one_some_pattern_moves() -> None:
+    """The general form of the check above, so the next new stream cannot slip through.
+
+    Enumerated from what this repository actually publishes rather than from a list somebody
+    maintains: the meter payloads the generator produces, and the telemetry payloads. A shape
+    that no pattern moves is a stream that will arrive in the account carrying the cast's fixed
+    date, and every downstream instant will be consistent, plausible and months wrong.
+    """
+    a_day = Duration.of_days(1)
+    published = [delivery.raw for delivery in generate()] + [
+        sample.payload() for sample in readings()
+    ]
+    unmoved = [raw for raw in published if retimed(raw, lambda i: i.plus(a_day)) == raw]
+    assert not unmoved, (
+        f"{len(unmoved)} published payload shapes are unmatched by every pattern in "
+        f"`_TIMESTAMPS`, so they publish with the cast's fixed date. First: {unmoved[0][:120]}"
     )

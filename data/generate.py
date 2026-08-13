@@ -241,8 +241,17 @@ _TIMESTAMPS: Final = (
         lambda m, i: f"{m.group(1)}{i.epoch_millis // 1000}",
     ),
     # fw2: {"timestamp":"2026-03-14T10:00:00Z"} and fw3: {"start":"..."}
+    #
+    # `event_time` joins them for substation telemetry, and its absence was a real defect: the
+    # telemetry payload is written by `data/telemetry.py` with the field the record class uses,
+    # no pattern matched it, `retimed` returned it unchanged, and every measurement arrived in
+    # the account stamped five months before the readings it was supposed to be decided
+    # alongside. Nothing raised — a payload no pattern matches comes back untouched, deliberately,
+    # so a firmware shape that grows a field is not a crash. The guard against that silence is
+    # `tests/data/test_retimed.py`, which asserts that every shape this repository *publishes* is
+    # one some pattern moves.
     (
-        re.compile(r'("(?:timestamp|start)":")([^"]+)(")'),
+        re.compile(r'("(?:timestamp|start|event_time)":")([^"]+)(")'),
         lambda m: Instant.from_iso(m.group(2)),
         lambda m, i: f"{m.group(1)}{i.to_iso()}{m.group(3)}",
     ),

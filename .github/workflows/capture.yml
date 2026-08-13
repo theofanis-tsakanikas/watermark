@@ -323,6 +323,20 @@ jobs:
         # total, erasure can delete and a restatement can supersede.
         run: |
           set -euo pipefail
+          # Noted before the merge, so the assertions below can ask about *this* run.
+          #
+          # The silver table accumulates across every capture the estate has ever driven, and the
+          # first version of those assertions queried all of it. That conflates two different
+          # questions — "was this run correct" and "was every run ever correct" — and it answers
+          # the second, which no run can ever make true again once anything has gone wrong. A
+          # defect fixed in the core leaves its rows behind, and the assertion then fails for ever
+          # on history rather than on behaviour.
+          #
+          # `merged_at` is set by the merge job to `CURRENT_TIMESTAMP()`, so a bound taken here
+          # scopes every count to the rows this capture landed. The older rows stay in the table,
+          # which is correct: doctrine 4 says a correction never erases what was previously
+          # stated, and that applies to the record of a defect as much as to a meter reading.
+          echo "MERGE_FROM=$(date -u +%Y-%m-%dT%H:%M:%S)" >> "$GITHUB_ENV"
           run_id=$(aws glue start-job-run --job-name watermark-land-to-silver \
             --query JobRunId --output text)
           echo "land-to-silver $run_id"
@@ -400,7 +414,8 @@ jobs:
                    COUNT_IF(restatement_cause IS NOT NULL),
                    COUNT_IF(restatement_cause IS NOT NULL AND supersedes IS NOT NULL),
                    COUNT(DISTINCT watermark_status)
-            FROM ${PROJECT}_silver.meter_interval") || {
+            FROM ${PROJECT}_silver.meter_interval
+            WHERE merged_at >= TIMESTAMP '${MERGE_FROM/T/ }'") || {
             echo "::error::the lakehouse could not be queried; the assertions below were not run"
             exit 1
           }

@@ -48,6 +48,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from watermark.contracts import load  # noqa: E402
+from watermark.core.records import SubstationTelemetry  # noqa: E402
 from watermark.core.time import Duration, Instant  # noqa: E402
 from watermark.core.watermarks import WatermarkStatus, WatermarkView  # noqa: E402
 from watermark.decisions.engine import DecisionEngine, Origin  # noqa: E402
@@ -65,6 +66,14 @@ CONSEQUENTIAL: Final = "meter_anomaly"
 #: and one endpoint invocation, and the properties being asserted are properties of the
 #: decision path — they do not get truer at two hundred meters than at twenty.
 POPULATION: Final = 20
+
+#: How many telemetry objects to read, newest first.
+#:
+#: One per substation per minute accumulates fast, and the decision needs only the last of
+#: each. Bounded rather than unbounded so a long capture does not turn a decision into a
+#: full-prefix scan — and stated rather than silent, because a cap that nobody can see is a cap
+#: that eventually truncates something that mattered.
+TELEMETRY_SCAN: Final = 200
 
 #: The score above which the endpoint's output is read as `queue_for_inspection`.
 #:
@@ -224,6 +233,45 @@ def meters_in(lines: list[dict[str, Any]]) -> list[str]:
     )
 
 
+def latest_telemetry(client, bucket: str) -> dict[str, SubstationTelemetry]:
+    """The newest load measurement per substation, read from the prefix the IoT rule writes.
+
+    **Newest per substation, not newest overall.** The curtailment fallback is computed from
+    "the last telemetry reading" for the substation it is deciding about, and a global latest
+    would judge three substations against a fourth's measurement. They are separate physical
+    assets with separate limits; conflating them is how a healthy substation gets throttled
+    because a different one is hot.
+
+    Read directly rather than through the lakehouse. That is the contract's requirement, not a
+    shortcut: `uses_features: false` means the fallback must be computable when the feature
+    store is unavailable, and a path that reached Athena would be unavailable in exactly the
+    conditions the primary path is — the one property ADR-0001 requires it not to have.
+    """
+    latest: dict[str, SubstationTelemetry] = {}
+    pages = client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix="telemetry/")
+    keys = [item["Key"] for page in pages for item in page.get("Contents", ())]
+    # Newest first, and bounded. The prefix accumulates one object per substation per minute for
+    # the whole capture; the decision needs the last of each and nothing before it.
+    for key in sorted(keys, reverse=True)[:TELEMETRY_SCAN]:
+        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        try:
+            record = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        substation = str(record.get("substation_id", ""))
+        if not substation or substation in latest:
+            continue
+        moment = Instant.from_iso(str(record["event_time"]))
+        latest[substation] = SubstationTelemetry(
+            substation_id=substation,
+            event_time=moment,
+            ingest_time=moment,
+            load_w=int(record["load_w"]),
+            limit_w=int(record["limit_w"]),
+        )
+    return latest
+
+
 def properties_that_must_hold(rows, view, feature) -> list[str]:
     """Every property the run asserts about the decisions it just took.
 
@@ -341,13 +389,41 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 — a linear sc
         # queue that let the fallback path actuate unreviewed.
         queue.enqueue(decision.decision_id, decision)
 
-    # The curtailment contract, run against the telemetry this estate does not publish. It is
-    # here so that the absence is a recorded result rather than an untested path.
+    # **Curtailment, against real measured load.** The decision with a physical consequence, and
+    # the one that had never been taken: until `data/telemetry.py` existed this engine ran with
+    # `telemetry=None` and withheld every time, which was the correct answer to the wrong
+    # question.
+    #
+    # No model is deployed for it — `curtailment_forecast` is not in the registry — so every one
+    # of these comes out of the **fallback rule**, which is the interesting half. Doctrine 1 says
+    # the safe state on a grid is the conservative deterministic action and not silence, and this
+    # is where that stops being a sentence: a substation over its limit gets a throttle computed
+    # from measured watts, with no model and no feature store, and the fallback marker travels
+    # with it into the record.
     curtailment = DecisionEngine(contract=decisions["curtailment"], features=features)
-    withheld = curtailment.decide(
-        entity_id="SUB-01", at=now, served={}, view=view, model_action=None, telemetry=None
-    )
-    rows.append(withheld.as_row())
+    telemetry = latest_telemetry(boto3.client("s3", region_name=estate.region), estate.lakehouse)
+    print(f"telemetry: {len(telemetry)} substations, latest per substation")
+    for substation_id in sorted(telemetry):
+        measured = telemetry[substation_id]
+        decision = curtailment.decide(
+            entity_id=substation_id,
+            at=now,
+            served={},
+            view=view,
+            model_action=None,
+            telemetry=measured,
+        )
+        over = "over" if measured.headroom_w < 0 else "under"
+        print(
+            f"  {substation_id}: {measured.load_w}W of {measured.limit_w}W ({over}) "
+            f"-> {decision.action} [{decision.origin.value}]"
+        )
+        rows.append(decision.as_row())
+
+    # Curtailment is *not* enqueued for oversight, and the asymmetry is the whole point of
+    # `docs/REGULATORY.md`. Its effect is physical, not significant on a person, so doctrine 3
+    # does not apply and waiting for a human would mean a substation heating up while nobody
+    # decides. The anomaly path above is the opposite case and is queued without exception.
 
     arguments.out.mkdir(parents=True, exist_ok=True)
     (arguments.out / "decisions.jsonl").write_text(

@@ -37,6 +37,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Final
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,22 +70,50 @@ def _rule_topics() -> list[tuple[str, int, int]]:
     return rules
 
 
-def _published_topic() -> list[str]:
-    """The publisher's topic template, split into segments.
+#: Where the family segment sits in an MQTT topic, one-indexed the way `topic()` counts.
+#:
+#: `watermark/meter/SUB-01/M00007/reading` — the project, then what is flowing, then the rest.
+#: Named because two functions read it and a literal `1` in both is how they drift apart.
+FAMILY_SEGMENT: Final = 2
 
-    Read out of the f-string rather than by importing and calling: the publish path needs boto3
+
+def _published_topics() -> dict[str, list[str]]:
+    """Every topic template the publisher writes, keyed by its family segment.
+
+    **Plural, and it used to be singular.** The first version took the first `topic=f"..."` in
+    the file and compared every rule against it. That was correct while the publisher had one
+    stream and became silently wrong the moment substation telemetry was added: the telemetry
+    f-string appears earlier in the file, so the check compared the *meter* rules against the
+    *telemetry* topic, found four segments where it wanted five, and reported that the transport
+    and the core disagreed. They did not. The check did.
+
+    The family is the second segment — `meter`, `telemetry` — which is the one part of an MQTT
+    topic in this system that names what is flowing rather than which device or which substation.
+
+    Read out of the f-strings rather than by importing and calling: the publish path needs boto3
     and an estate, and a check that cannot run offline is a check that does not run.
     """
     text = (ROOT / "data" / "publish.py").read_text(encoding="utf-8")
-    match = re.search(r'topic=f"([^"]+)"', text)
-    if not match:
+    found: dict[str, list[str]] = {}
+    for template in re.findall(r'topic=f"([^"]+)"', text):
+        segments = template.split("/")
+        if len(segments) < FAMILY_SEGMENT:
+            continue
+        found.setdefault(segments[FAMILY_SEGMENT - 1], segments)
+    if not found:
         raise SystemExit("check-partition-vocabulary: no topic= f-string found in data/publish.py")
-    return match.group(1).split("/")
+    return found
+
+
+def _family_of(topic: str) -> str:
+    """The rule's family segment, read the same way as the publisher's."""
+    segments = topic.split("/")
+    return segments[FAMILY_SEGMENT - 1] if len(segments) >= FAMILY_SEGMENT else ""
 
 
 def main() -> int:
     problems = []
-    published = _published_topic()
+    families = _published_topics()
     rules = _rule_topics()
 
     if not rules:
@@ -96,6 +125,15 @@ def main() -> int:
 
     for topic, partition_segment, shard_segment in rules:
         segments = topic.split("/")
+        family = _family_of(topic)
+        published = families.get(family)
+        if published is None:
+            problems.append(
+                f"the rule subscribes to `{topic}`, whose family segment is `{family}`, and the "
+                f"publisher publishes nothing under that name — it writes "
+                f"{sorted(families)}. A rule with no publisher is a rule that never fires."
+            )
+            continue
 
         if len(segments) != len(published):
             problems.append(

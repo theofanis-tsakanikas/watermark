@@ -585,6 +585,37 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # **Curtailment took a decision, and at least one of them was a throttle.**
+          #
+          # The decision `CLAUDE.md` lists first and argues high-risk under Annex III(2), and the
+          # one that had never been taken: with no telemetry stream the engine ran against
+          # `telemetry=None` and withheld every time. `data/telemetry.py` drives SUB-01 past its
+          # declared limit on purpose, so a capture that produces no throttle at all means the
+          # measurements did not reach the decider — not that the grid was healthy.
+          throttles=$(grep -c '"action": "throttle' out/capture/decisions/decisions.jsonl || true)
+          echo "curtailment throttles: $throttles"
+          [ "$throttles" -gt 0 ] || {
+            echo "::error::no throttle in the whole capture. SUB-01 is driven over its limit by design, so this means the telemetry never arrived rather than that nothing needed throttling"
+            exit 1; }
+
+          # And every one of them is marked as a fallback, all the way into the record. Doctrine
+          # 2: a fallback that reaches the record looking like a model decision is worse than an
+          # outage, because it is silent and it trains somebody to trust it.
+          unmarked=$(python3 - <<'PY'
+          import json
+          bad = 0
+          for line in open("out/capture/decisions/decisions.jsonl"):
+              row = json.loads(line)
+              if str(row["action"]).startswith("throttle") and (
+                  row["origin"] != "fallback" or not row["unavailable"]):
+                  bad += 1
+          print(bad)
+          PY
+          )
+          [ "$unmarked" -eq 0 ] || {
+            echo "::error::$unmarked throttles reached the record without a fallback marker and a reason"
+            exit 1; }
+
       - name: an erasure certifies, and takes exactly what it was asked for
         # **Claim 6's positive half, which had never been demonstrated.**
         #

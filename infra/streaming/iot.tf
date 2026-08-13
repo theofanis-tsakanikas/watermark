@@ -215,9 +215,16 @@ data "aws_iam_policy_document" "iot_to_kinesis" {
   }
 
   statement {
-    effect    = "Allow"
-    actions   = ["s3:PutObject"]
-    resources = ["${data.aws_s3_bucket.lakehouse.arn}/quarantine/iot-rule-errors/*"]
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${data.aws_s3_bucket.lakehouse.arn}/quarantine/iot-rule-errors/*",
+      # Substation telemetry, written straight to S3 by the third rule. Separate prefix from the
+      # quarantine so that "measurements this system decided against" and "records it could not
+      # route" are never in the same place — a reader who cannot tell them apart cannot tell a
+      # working grid from a broken pipeline.
+      "${data.aws_s3_bucket.lakehouse.arn}/telemetry/*",
+    ]
   }
 }
 
@@ -225,4 +232,48 @@ resource "aws_iam_role_policy" "iot_to_kinesis" {
   name   = "publish-to-stream"
   role   = aws_iam_role.iot_to_kinesis.id
   policy = data.aws_iam_policy_document.iot_to_kinesis.json
+}
+
+# **The third arrival path, and the one that carries the decision with a physical consequence.**
+#
+# Substation load, once a minute, to S3 and not to Kinesis. That is a deliberate asymmetry and
+# it follows the shape of the two decisions.
+#
+# A meter reading is *windowed*: the whole of claim 1 is about when a fifteen-minute window may
+# close, which needs ordering, keyed state and a watermark — Kinesis and Flink. Substation
+# telemetry is not aggregated at all. `contracts/decisions/curtailment.yaml` says the fallback
+# is computed from "the last telemetry reading and the point-in-time limit and nothing else",
+# and `DecisionEngine.decide` takes it as a separate argument precisely so the fallback path can
+# never reach the feature store. A latest-value-per-substation needs no window, so putting it
+# through a windowing engine would buy nothing and would couple the safety fallback to the
+# availability of the thing it exists to survive.
+#
+# `${timestamp()}` in the key rather than a partition layout: these objects are read newest-first
+# by `scripts/decide_live.py` and are never queried as a table. A layout that implied otherwise
+# would invite somebody to point Athena at them and discover the hard way that they are one JSON
+# document per object.
+resource "aws_iot_topic_rule" "substation_telemetry" {
+  name        = "${replace(var.project, "-", "_")}_substation_telemetry"
+  description = "Substation load to S3. The curtailment fallback reads the latest per substation and nothing else."
+  enabled     = true
+
+  # `topic(3)` is the substation, the same position the meter rules read it from. The payload
+  # carries it too — an S3 object holds a body and not the topic it arrived on, and the decider
+  # reads the body.
+  sql         = "SELECT * FROM '${var.project}/telemetry/+/reading'"
+  sql_version = "2016-03-23"
+
+  s3 {
+    role_arn    = aws_iam_role.iot_to_kinesis.arn
+    bucket_name = data.aws_s3_bucket.lakehouse.id
+    key         = "telemetry/$${topic(3)}/$${timestamp()}.json"
+  }
+
+  error_action {
+    s3 {
+      role_arn    = aws_iam_role.iot_to_kinesis.arn
+      bucket_name = data.aws_s3_bucket.lakehouse.id
+      key         = "quarantine/iot-rule-errors/$${timestamp()}"
+    }
+  }
 }

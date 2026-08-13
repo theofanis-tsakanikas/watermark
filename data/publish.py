@@ -19,8 +19,23 @@ from dataclasses import dataclass
 from data import generate as generate_module
 from data.cast import SUBSTATIONS
 from data.generate import INTERVALS_PER_DAY, generate, interval_start
+from data.telemetry import readings as telemetry_readings
 from watermark.core.records import METER_INTERVAL, Source
 from watermark.core.time import Duration, Instant
+
+
+@dataclass(frozen=True, slots=True)
+class _Telemetry:
+    """One telemetry sample, already shifted and addressed. A publish-shaped thing.
+
+    Held rather than published on sight so that it can be merged into the meter deliveries and
+    the whole run paced from one ordering — two loops would mean two paces, and the decider
+    would see a load curve that never lined up with the readings it was deciding about.
+    """
+
+    due_millis: int
+    topic: str
+    payload: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,8 +160,9 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
 
     # Paced from the first arrival, not from midnight. `DAY_START` is a fixed instant and the
     # generated set does not begin on it, so every offset carried a constant shift — enough to
-    # put the last corrections a fraction past the end of the window and drop them.
-    origin = min(delivery.ingest_time.epoch_millis for delivery in deliveries)
+    # put the last corrections a fraction past the end of the window and drop them. Recomputed
+    # below once the telemetry is merged in, because that stream starts at midnight and the
+    # meter deliveries do not.
 
     # Where the day lands on the wall clock. The core measures lateness in real elapsed time,
     # so a scenario replayed months after its seeded date is a scenario in which everything is
@@ -162,7 +178,40 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
     started = time.monotonic()
     published = 0
 
-    for delivery in deliveries:
+    # **The second stream, interleaved rather than sent first.**
+    #
+    # Substation telemetry is what the curtailment decision is computed from, and until it
+    # existed that decision withheld every time — the one decision in this system with a
+    # physical consequence, never taken. It is merged into the same paced loop rather than
+    # published as a block beforehand, because a block would arrive as a wall of measurements
+    # from a day that had not happened yet, and every one of them would be "the latest" for the
+    # whole of the capture. Interleaved by ingestion time, the decider sees the load rise and
+    # cross the limit in the order a network would produce it.
+    telemetry = [
+        _Telemetry(
+            due_millis=sample.event_time.epoch_millis,
+            topic=f"{topic_prefix}/telemetry/{sample.substation_id}/reading",
+            payload=_shift_instants(sample.payload(), event_shift),
+        )
+        for sample in telemetry_readings()
+    ]
+    queue = sorted(
+        [(d.ingest_time.epoch_millis, "meter", d) for d in deliveries]
+        + [(t.due_millis, "telemetry", t) for t in telemetry],
+        key=lambda item: item[0],
+    )
+    origin = min(item[0] for item in queue)
+
+    for due_millis, kind, item in queue:
+        if kind == "telemetry":
+            due = (due_millis - origin) / 1000 / described.compression
+            behind = due - (time.monotonic() - started)
+            if behind > 0:
+                time.sleep(behind)
+            client.publish(topic=item.topic, qos=1, payload=item.payload.encode("utf-8"))
+            published += 1
+            continue
+        delivery = item
         # Where this delivery sits in the run, compressed into the capture window. Sleeping
         # until then is what reproduces the burst shape rather than the daily average.
         due = (delivery.ingest_time.epoch_millis - origin) / 1000 / described.compression

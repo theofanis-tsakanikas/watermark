@@ -84,12 +84,24 @@ resource "aws_glue_data_quality_ruleset" "meter_interval" {
 # does not exist. Not `DROP`: the erasure removes a subject's rows, and a role that could remove
 # the table would turn the worst kind of bug into the worst kind of outage.
 #
+# **And `ALTER`, which the first run without it explained:**
+#
+#     Insufficient Lake Formation permission(s): Required Alter on meter_interval
+#
+# An Iceberg `DELETE` does not delete in place. It writes new data and delete files and then
+# commits a new metadata pointer, and moving that pointer is an alteration of the table rather
+# than a modification of its rows. So a role that may delete rows and may not alter the table
+# can do neither — the permission model draws its line where Iceberg does not.
+#
+# `ALTER` is not `DROP` and the gap between them is the point: this role can rewrite which files
+# the table consists of, and cannot make the table stop existing.
+#
 # This is the third principal in this estate to need the same lesson — the merge job, the
 # workflow that verifies it, and now the orchestration that erases. Worth naming: an IAM policy
 # that reads correctly is not evidence of access when Lake Formation is in force.
 resource "aws_lakeformation_permissions" "erasure_silver" {
   principal   = aws_iam_role.erasure.arn
-  permissions = ["SELECT", "DELETE", "DESCRIBE"]
+  permissions = ["SELECT", "DELETE", "DESCRIBE", "ALTER"]
 
   table {
     database_name = "${var.project}_silver"
@@ -99,7 +111,7 @@ resource "aws_lakeformation_permissions" "erasure_silver" {
 
 resource "aws_lakeformation_permissions" "erasure_gold" {
   principal   = aws_iam_role.erasure.arn
-  permissions = ["SELECT", "DELETE", "DESCRIBE"]
+  permissions = ["SELECT", "DELETE", "DESCRIBE", "ALTER"]
 
   table {
     database_name = "${var.project}_gold"

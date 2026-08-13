@@ -294,8 +294,16 @@ jobs:
           )
           # An empty prefix returns `None`, and a bucket that does not exist yet returns an
           # error. Both mean nobody has been shredded, which on a first deploy is the truth.
+          # `--output text` prints the literal string `None` for an empty result, not an empty
+          # line, so the first version of this parsed a subject called "None" into the excluded
+          # set. Harmless — no subject is named that — and exactly the sort of harmless that
+          # stops being harmless when somebody reuses the parsing.
           keys = listing.stdout.split() if listing.returncode == 0 else []
-          shredded = {k.removeprefix("erasure-shredded/").removesuffix(".json") for k in keys}
+          shredded = {
+              k.removeprefix("erasure-shredded/").removesuffix(".json")
+              for k in keys
+              if k != "None"
+          }
 
           print(json.dumps([s for s in declared if s not in shredded]))
           print(f"shredded, and not recreated: {sorted(shredded) or 'none'}", file=sys.stderr)

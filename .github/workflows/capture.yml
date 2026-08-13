@@ -211,17 +211,46 @@ jobs:
         #
         # So: absent is a legitimate state and is reported, not an error. Present means someone
         # made a deliberate second deploy after approving a model, and then it is waited for.
+        #
+        # **And a `Failed` endpoint is a third state, which cost a capture to learn.** A deploy
+        # asking for an endpoint against a model artefact that does not exist — a fresh account
+        # after a destroy, with `promoted_model` still filled in from habit — leaves one behind
+        # in `Failed`. It serves nothing and bills nothing, and `describe-endpoint` succeeds on
+        # it, so the branch below read "present" and waited for `InService`, which is a state it
+        # can never reach. `Waiter EndpointInService failed` and the capture stopped four steps
+        # in, on a leftover.
+        #
+        # So the *status* is read rather than the existence. A failed endpoint is removed and the
+        # capture continues without one, which is the honest outcome: there is nothing to serve
+        # from, and refusing to run the pipeline that produces the next candidate would make the
+        # workflow unable to recover from its own earlier failure.
         run: |
           set -euo pipefail
-          if aws sagemaker describe-endpoint --endpoint-name watermark-anomaly >/dev/null 2>&1; then
-            aws sagemaker wait endpoint-in-service --endpoint-name watermark-anomaly
-            echo "ENDPOINT_STARTED=yes" >> "$GITHUB_ENV"
-            aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
-              --query '{status:EndpointStatus,config:EndpointConfigName}' --output json
-          else
-            echo "ENDPOINT_STARTED=no" >> "$GITHUB_ENV"
-            echo "::notice::no endpoint — this capture exercises the pipeline, not serving. Approve a model and redeploy with endpoint_enabled=true to capture inference."
-          fi
+          status=$(aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
+            --query EndpointStatus --output text 2>/dev/null || echo absent)
+          echo "endpoint status: $status"
+
+          case "$status" in
+            absent)
+              echo "ENDPOINT_STARTED=no" >> "$GITHUB_ENV"
+              echo "::notice::no endpoint — this capture exercises the pipeline, not serving. Approve a model and redeploy with promoted_model set to capture inference."
+              ;;
+            InService|Creating|Updating)
+              aws sagemaker wait endpoint-in-service --endpoint-name watermark-anomaly
+              echo "ENDPOINT_STARTED=yes" >> "$GITHUB_ENV"
+              aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
+                --query '{status:EndpointStatus,config:EndpointConfigName}' --output json
+              ;;
+            *)
+              # Failed, OutOfService, RollingBack, Deleting. None of them will become InService,
+              # and the reason is on the endpoint rather than in this workflow.
+              aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
+                --query FailureReason --output text || true
+              echo "::warning::the endpoint is $status, so it is being removed and this capture runs without serving. The reason is printed above; the usual cause is a deploy that asked for an endpoint before a model was approved."
+              aws sagemaker delete-endpoint --endpoint-name watermark-anomaly || true
+              echo "ENDPOINT_STARTED=no" >> "$GITHUB_ENV"
+              ;;
+          esac
 
       - name: the endpoint answers, and the answer is recorded
         # **An endpoint that exists and has never been asked anything is the same shape as a
@@ -988,7 +1017,12 @@ jobs:
         run: |
           # Order matters, and it is by cost per minute descending. The endpoint first: if this
           # step is itself interrupted, the most expensive thing is already gone.
-          if [ "${ENDPOINT_STARTED:-no}" = "yes" ]; then
+          # **Whatever is there, not whatever this run started.** The guard used to be
+          # `ENDPOINT_STARTED = yes`, which is a statement about this workflow's own history
+          # rather than about the account — so an endpoint left behind by a *failed deploy* was
+          # never anybody's to remove, and the check below then reported it as surviving the
+          # cleanup. A teardown that only undoes its own work is not a teardown.
+          if aws sagemaker describe-endpoint --endpoint-name watermark-anomaly >/dev/null 2>&1; then
             aws sagemaker delete-endpoint --endpoint-name watermark-anomaly || true
           fi
           aws sagemaker stop-pipeline-execution \

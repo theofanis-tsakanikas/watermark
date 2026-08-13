@@ -83,8 +83,34 @@ def _quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def day_shift() -> int:
+    """The milliseconds `data/publish.py` adds to every event time, computed the same way.
+
+    **The reference data has to live on the same day as the stream, and it did not.** The cast
+    fixes the scenario to 2026-03-14 — a fixed date rather than "today", because a generator that
+    reads a clock produces a different dataset every day and a golden recording of it is a
+    recording of the afternoon it was captured. The *publisher* then shifts the whole day forward
+    so it ends at the moment of the run, which is what makes a capture a replay rather than an
+    archive.
+
+    Seeding the assignment history unshifted put every live reading after the 10:00 changeover,
+    so the meter that changes customer attributed all of its day to the second customer and none
+    to the first. The bounded `DELETE` was correct and the data it was bounded against was not,
+    which is the harder half of that pair to notice.
+
+    **The two shifts are computed minutes apart** — this at seeding, the publisher's when it
+    starts — so the changeover instant differs by that gap. It is stated rather than hidden: at
+    most one fifteen-minute interval can land on the wrong side of it, and nothing in this
+    repository asserts against the raw instant because of it. `capture.yml` counts through the
+    SCD-2 join instead, so the assertion and the erasure resolve the same way whatever the gap.
+    """
+    from data.cast import DAY_END  # noqa: PLC0415
+
+    return int(time.time() * 1000) - DAY_END.epoch_millis
+
+
 def meter_assignment_rows() -> list[str]:
-    """The SCD-2 assignment history, straight off the cast.
+    """The SCD-2 assignment history, straight off the cast and moved onto the stream's day.
 
     `M00007` changes customer at 10:00 and therefore has two versions — the scenario's *"a meter
     changes customer"*, and the reason this table is SCD-2 rather than a mapping. An erasure for
@@ -93,17 +119,18 @@ def meter_assignment_rows() -> list[str]:
     """
     from data.cast import meter_assignments  # noqa: PLC0415
 
+    shift = day_shift()
     rows = []
     for version in meter_assignments().versions:
         valid_to = (
             "CAST(NULL AS timestamp)"
             if version.valid_to is None
-            else _sql_timestamp(version.valid_to.epoch_millis)
+            else _sql_timestamp(version.valid_to.epoch_millis + shift)
         )
         rows.append(
             f"({_quote(version.entity_id)}, "
             f"{_quote(str(version.attributes['customer_id']))}, "
-            f"{_sql_timestamp(version.valid_from.epoch_millis)}, {valid_to})"
+            f"{_sql_timestamp(version.valid_from.epoch_millis + shift)}, {valid_to})"
         )
     return rows
 
@@ -217,15 +244,23 @@ def main(argv: list[str] | None = None) -> int:
         TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """)
 
-    # Seeded once. A second insert would double every assignment and put two versions of the
-    # same meter in force at the same instant, which is precisely the SCD-2 defect
-    # `src/watermark/core/pit.py` refuses to resolve against.
-    if athena.scalar(f"SELECT count(*) FROM {gold}.meter_assignment_scd2") == "0":
-        rows = meter_assignment_rows()
-        athena.run(f"INSERT INTO {gold}.meter_assignment_scd2 VALUES {', '.join(rows)}")
-        print(f"seed: {len(rows)} meter assignments")
-    else:
-        print("seed: meter assignments already landed")
+    # **Replaced, not appended, and not skipped-if-present.**
+    #
+    # A second insert would double every assignment and put two versions of one meter in force at
+    # the same instant — the SCD-2 defect `src/watermark/core/pit.py` refuses to resolve against.
+    # But skipping when rows exist is wrong too, and that is what the first version did: the
+    # publisher moves the whole scenario day forward to end at the moment of the run, so a
+    # yesterday's seed describes a day the stream is no longer on. Every live reading then fell
+    # after the 10:00 changeover and the meter that changes customer attributed its entire day to
+    # the second customer.
+    #
+    # Safe to replace because this is *reference* data derived from the committed cast — a CRM
+    # export, in the scenario — and not subject data. An erasure removes readings, online
+    # records and training-set membership; nothing it deletes is rebuilt here.
+    rows = meter_assignment_rows()
+    athena.run(f"DELETE FROM {gold}.meter_assignment_scd2")
+    athena.run(f"INSERT INTO {gold}.meter_assignment_scd2 VALUES {', '.join(rows)}")
+    print(f"seed: {len(rows)} meter assignments, on the day the stream is on")
 
     # The table is created either way, empty if no snapshot was named. An erasure that finds no
     # table fails its training-set leg and refuses to certify; an erasure that finds an empty one

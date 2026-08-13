@@ -613,8 +613,8 @@ jobs:
         run: |
           set -euo pipefail
           SUBJECT="C00007-NEW"
+          PREDECESSOR="C00007"
           METER="M00007"
-          CHANGEOVER="2026-03-14 10:00:00"
 
           athena() {
             id=$(aws athena start-query-execution --query-string "$1" \
@@ -637,9 +637,27 @@ jobs:
               --query 'ResultSet.Rows[1].Data[0].VarCharValue' --output text
           }
 
-          before_theirs=$(athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval WHERE meter_id = '${METER}' AND interval_start >= TIMESTAMP '${CHANGEOVER}'")
-          before_others=$(athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval WHERE meter_id = '${METER}' AND interval_start < TIMESTAMP '${CHANGEOVER}'")
-          echo "before: ${before_theirs} rows belong to ${SUBJECT}, ${before_others} to the customer before them"
+          # **Counted through the same SCD-2 join the erasure resolves with, not against a literal
+          # instant.** The publisher shifts the whole scenario day forward so it ends at the
+          # moment of the run — that is what makes a capture a replay rather than an archive —
+          # so a hardcoded changeover names a moment the live data is nowhere near. The first
+          # run of this step reported `116 rows belong to C00007-NEW, 0 to the customer before
+          # them` and was right to refuse: every reading had landed on one side of a boundary
+          # that belonged to a different day.
+          #
+          # Resolving the same way the erasure does means the assertion and the thing it is
+          # asserting about cannot disagree about when the changeover was, whatever the shift.
+          owned() {
+            athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval r
+                    JOIN ${PROJECT}_gold.meter_assignment_scd2 a ON a.meter_id = r.meter_id
+                    WHERE r.meter_id = '${METER}' AND a.customer_id = '$1'
+                      AND r.interval_start >= a.valid_from
+                      AND (a.valid_to IS NULL OR r.interval_start < a.valid_to)"
+          }
+
+          before_theirs=$(owned "$SUBJECT")
+          before_others=$(owned "$PREDECESSOR")
+          echo "before: ${before_theirs} rows belong to ${SUBJECT}, ${before_others} to ${PREDECESSOR}"
 
           # Not asserted as a nicety. With nothing of theirs in the table the erasure would
           # delete nothing, certify, and the assertions below would all pass over an absence —
@@ -648,7 +666,7 @@ jobs:
             echo "::error::${SUBJECT} owns no rows, so this run would certify having erased nothing"
             exit 1; }
           [ "$before_others" -gt 0 ] || {
-            echo "::error::the previous customer owns no rows, so over-deletion could not be detected"
+            echo "::error::${PREDECESSOR} owns no rows, so over-deletion could not be detected. The reference seed and the stream are probably on different days"
             exit 1; }
 
           machine=$(aws stepfunctions list-state-machines \
@@ -689,17 +707,17 @@ jobs:
           [ "$certificate" -gt 0 ] || {
             echo "::error::the erasure succeeded and wrote no certificate"; exit 1; }
 
-          after_theirs=$(athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval WHERE meter_id = '${METER}' AND interval_start >= TIMESTAMP '${CHANGEOVER}'")
-          after_others=$(athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval WHERE meter_id = '${METER}' AND interval_start < TIMESTAMP '${CHANGEOVER}'")
+          after_theirs=$(owned "$SUBJECT")
+          after_others=$(owned "$PREDECESSOR")
 
           {
             echo ""
             echo "### An erasure, and its boundary"
             echo ""
-            echo "| rows on \`${METER}\` | before | after |"
+            echo "| rows on \`${METER}\`, resolved through the SCD-2 join | before | after |"
             echo "|---|---|---|"
-            echo "| belonging to \`${SUBJECT}\` (from 10:00) | ${before_theirs} | ${after_theirs} |"
-            echo "| belonging to the customer before them | ${before_others} | ${after_others} |"
+            echo "| belonging to \`${SUBJECT}\` | ${before_theirs} | ${after_theirs} |"
+            echo "| belonging to \`${PREDECESSOR}\` | ${before_others} | ${after_others} |"
             echo ""
             echo "Certificate objects written: ${certificate}"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -708,7 +726,7 @@ jobs:
           [ "$after_theirs" -eq 0 ] || {
             echo "::error::${after_theirs} of ${SUBJECT}'s rows survived an erasure that certified"; fail=1; }
           [ "$after_others" -eq "$before_others" ] || {
-            echo "::error::the erasure took ${SUBJECT}'s rows and $((before_others - after_others)) belonging to the customer before them. Over-deletion is a breach in the other direction"
+            echo "::error::the erasure took ${SUBJECT}'s rows and $((before_others - after_others)) belonging to ${PREDECESSOR}. Over-deletion is a breach in the other direction"
             fail=1; }
           exit $fail
 

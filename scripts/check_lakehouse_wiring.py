@@ -36,16 +36,17 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
-#: Tables written by something other than this repository at all.
+#: Tables written by something other than this repository at all. **Empty, and that is the point.**
 #:
-#: **This set used to be three, and two of them were fiction.** `meter_assignment_scd2` and
-#: `training_snapshot` were listed here as "landed by a CDC pipeline outside this repository",
-#: and no such pipeline exists in this account or in the plan. They were catalogue entries with
-#: no metadata location — names describing tables that had never existed — and the first thing
-#: ever to touch them was an erasure request, which is the worst place to find out. Both are now
-#: created and seeded by `scripts/seed_reference.py`, so both leave this set: what remains is
-#: what genuinely has no writer here, and it is a much more useful list for being short.
-EXTERNAL = {"customer_scd2"}
+#: This set began as three tables "landed by a CDC pipeline outside this repository" — a pipeline
+#: that does not exist in this account or in the plan. Every one of them was a catalogue entry
+#: with a null metadata location, and the first thing to touch any of them was an erasure
+#: request. They are all seeded now, so the honest value of this set is empty: there is no table
+#: any query names that nothing here creates.
+#:
+#: Kept rather than deleted because it is the declaration that matters. A table added tomorrow
+#: with no writer should land here deliberately, with a name, rather than be tolerated silently.
+EXTERNAL: set[str] = set()
 
 
 def _terraform_tables() -> dict[str, str]:

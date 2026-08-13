@@ -435,6 +435,43 @@ jobs:
           [ "$SUPERSEDED" = "$RESTATED" ] || { echo "::error::doctrine 4: $RESTATED restatements, only $SUPERSEDED of which say what they replaced"; fail=1; }
           exit $fail
 
+      - name: build the gold layer, which no capture had ever built
+        # **The settlement path, run for the first time.**
+        #
+        # `pipelines/dbt/` has held these models since phase 2 — hourly totals per meter, per
+        # balancing group, the unattributed reconciliation — and no capture ever ran dbt. So
+        # `gold.settlement_hour` did not exist, the ruleset that used to name it could not be
+        # applied (`infra/governance/quality.tf` says so in as many words), and two of the three
+        # decisions this platform declares had never produced a number.
+        #
+        # It runs after the merge, because it aggregates what the stream published, and before
+        # the claim harnesses, because `settlement_priced` is where the tariff change becomes a
+        # figure somebody could be billed.
+        #
+        # `dbt build`, not `dbt run`: build runs the tests with the models, so a source that
+        # arrived with a null lineage id or a duplicate meter-interval-revision fails here rather
+        # than being aggregated into a total that looks fine.
+        env:
+          WATERMARK_LAKEHOUSE_BUCKET: ${{ env.LAKEHOUSE }}
+          WATERMARK_REGION: ${{ vars.AWS_REGION }}
+          WATERMARK_PROJECT: ${{ env.PROJECT }}
+          DBT_PROFILES_DIR: pipelines/dbt
+        run: |
+          set -euo pipefail
+          pip install -e ".[dbt]" >/dev/null
+          cd pipelines/dbt
+          dbt deps
+          dbt build --target deployed
+
+          {
+            echo ""
+            echo "### The gold layer"
+            echo ""
+            echo '```'
+            tail -20 logs/dbt.log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo "(no dbt log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: "claim 3 and claim 4 — two mechanisms, one contract, no tolerance"
         # **The claim the README calls the one nothing else in the portfolio proves**, against
         # the estate instead of against a model of it.

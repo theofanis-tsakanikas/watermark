@@ -172,6 +172,64 @@ def meter_assignments() -> History:
     return History.of("meter_assignment", versions)
 
 
+#: How many balancing groups the fleet is split across.
+#:
+#: Market settlement nets within a group, so the number matters to the arithmetic and not only
+#: to the shape: one group makes `settlement_balancing_group` a rename of `settlement_hour` and
+#: proves nothing about the join. Four is enough that a meter changing customer can change group.
+BALANCING_GROUPS: Final = ("BG-NORTH", "BG-SOUTH", "BG-EAST", "BG-WEST")
+
+
+def customers() -> History:
+    """The customer reference data — balancing group and postcode area, SCD-2.
+
+    **What is real here and what is standing in.** The cast fixes which meter belongs to which
+    customer, and that is the fact `meter_assignments` carries. A balancing group and a postcode
+    area are properties of the *customer*, held in an operational CRM this repository does not
+    model — so they are derived deterministically from the customer id rather than invented per
+    run. A generator that produced a different postcode each time would make settlement
+    irreproducible, which is the one thing settlement may not be.
+
+    The postcode area is coarse on purpose. `docs/SCENARIO.md` names proxy discrimination as the
+    live risk in this system, and a full postcode is a location fine enough to identify a
+    household — carrying one into a training set would be building the hazard the bias analysis
+    exists to measure. The area is the first outward segment and nothing more.
+
+    Single-version, with one exception: the customer who takes over `M00007` at 10:00 is a
+    different customer and sits in a different group, so a meter that changes customer also
+    changes balancing group. That is what makes the point-in-time join in
+    `settlement_balancing_group` a join that can be got wrong.
+    """
+    versions = []
+    for index, meter in enumerate(METERS):
+        customer = f"C{meter.meter_id[1:]}"
+        group = BALANCING_GROUPS[index % len(BALANCING_GROUPS)]
+        area = f"AR{index % 17:02d}"
+        versions.append(
+            Version(
+                customer,
+                DAY_START,
+                None,
+                {"balancing_group": group, "postcode_area": area},
+            )
+        )
+        if meter.meter_id == REASSIGNED_METER:
+            # The successor, in a different group deliberately. Same meter, same day, two market
+            # positions — and only a point-in-time resolution puts each hour in the right one.
+            versions.append(
+                Version(
+                    f"{customer}-NEW",
+                    DAY_START,
+                    None,
+                    {
+                        "balancing_group": BALANCING_GROUPS[(index + 1) % len(BALANCING_GROUPS)],
+                        "postcode_area": area,
+                    },
+                )
+            )
+    return History.of("customer", versions)
+
+
 def tariffs() -> History:
     """Tariffs, with one meter changing mid-period.
 

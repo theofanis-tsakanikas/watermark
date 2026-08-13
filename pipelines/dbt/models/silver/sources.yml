@@ -45,3 +45,17 @@ sources:
     tables:
       - name: meter_assignment_scd2
       - name: customer_scd2
+      - name: tariff_scd2
+        description: >
+          Unit price per meter, SCD-2. `M00019` moves from STD-01 to TOU-02 at 14:00 — the
+          scenario's "a tariff changes mid-period", and until `settlement_priced` was written
+          this table had no reader anywhere in the repository.
+        columns:
+          - name: meter_id
+            tests: [not_null]
+          - name: unit_price_cents_per_kwh
+            description: Integer cents. A float price is a settlement figure two engines disagree about in the last place.
+            tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  min_value: 1

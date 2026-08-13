@@ -65,6 +65,8 @@ if str(ROOT) not in sys.path:
 #: in its filename; a script has to say so itself, and this is where.
 CREATES: Final[dict[str, str]] = {
     "meter_assignment_scd2": "gold",
+    "customer_scd2": "gold",
+    "tariff_scd2": "gold",
     "training_snapshot": "gold",
 }
 
@@ -130,6 +132,64 @@ def meter_assignment_rows() -> list[str]:
         rows.append(
             f"({_quote(version.entity_id)}, "
             f"{_quote(str(version.attributes['customer_id']))}, "
+            f"{_sql_timestamp(version.valid_from.epoch_millis + shift)}, {valid_to})"
+        )
+    return rows
+
+
+def customer_rows() -> list[str]:
+    """The customer reference data, shifted onto the stream's day like everything else here.
+
+    `settlement_balancing_group` needs a balancing group per customer and `unattributed_meters`
+    needs to know when there is none. Both models have existed since phase 2 and neither had
+    ever run, because the table they read was a Terraform declaration with no writer.
+    """
+    from data.cast import customers  # noqa: PLC0415
+
+    shift = day_shift()
+    rows = []
+    for version in customers().versions:
+        valid_to = (
+            "CAST(NULL AS timestamp)"
+            if version.valid_to is None
+            else _sql_timestamp(version.valid_to.epoch_millis + shift)
+        )
+        rows.append(
+            f"({_quote(version.entity_id)}, "
+            f"{_quote(str(version.attributes['balancing_group']))}, "
+            f"{_quote(str(version.attributes['postcode_area']))}, "
+            f"{_sql_timestamp(version.valid_from.epoch_millis + shift)}, {valid_to})"
+        )
+    return rows
+
+
+def tariff_rows() -> list[str]:
+    """Tariffs, SCD-2, with `M00019` moving to a time-of-use price at 14:00.
+
+    **This is the scenario case that had no consumer at all.** `docs/SCENARIO.md` declares "a
+    tariff changes mid-period", `data/cast.py` builds the history, and nothing read it — not a
+    query, not a dbt model, not a test. The word `tariff` appeared in this repository only in
+    the docstrings of `pit.py`. A declared case with no consumer is a case that cannot fail,
+    which is worse than one that fails: it looks handled.
+
+    `unit_price_cents_per_kwh` is an integer, and cents rather than euros for the same reason
+    energy is watt-hours: a settlement figure that arrives as a float is a settlement figure two
+    engines disagree about in the last place, which is exactly where money lives.
+    """
+    from data.cast import tariffs  # noqa: PLC0415
+
+    shift = day_shift()
+    rows = []
+    for version in tariffs().versions:
+        valid_to = (
+            "CAST(NULL AS timestamp)"
+            if version.valid_to is None
+            else _sql_timestamp(version.valid_to.epoch_millis + shift)
+        )
+        rows.append(
+            f"({_quote(version.entity_id)}, "
+            f"{_quote(str(version.attributes['tariff_code']))}, "
+            f"{int(version.attributes['unit_price_cents_per_kwh'])}, "
             f"{_sql_timestamp(version.valid_from.epoch_millis + shift)}, {valid_to})"
         )
     return rows
@@ -237,6 +297,20 @@ def main(argv: list[str] | None = None) -> int:
         TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """)
     athena.run(f"""
+        CREATE TABLE IF NOT EXISTS {gold}.customer_scd2 (
+            customer_id string, balancing_group string, postcode_area string,
+            valid_from timestamp, valid_to timestamp)
+        LOCATION '{warehouse}/gold/customer_scd2'
+        TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
+    """)
+    athena.run(f"""
+        CREATE TABLE IF NOT EXISTS {gold}.tariff_scd2 (
+            meter_id string, tariff_code string, unit_price_cents_per_kwh int,
+            valid_from timestamp, valid_to timestamp)
+        LOCATION '{warehouse}/gold/tariff_scd2'
+        TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
+    """)
+    athena.run(f"""
         CREATE TABLE IF NOT EXISTS {gold}.training_snapshot (
             customer_id string, meter_id string, snapshot_id string,
             features string, label int, label_source string)
@@ -257,10 +331,15 @@ def main(argv: list[str] | None = None) -> int:
     # Safe to replace because this is *reference* data derived from the committed cast — a CRM
     # export, in the scenario — and not subject data. An erasure removes readings, online
     # records and training-set membership; nothing it deletes is rebuilt here.
-    rows = meter_assignment_rows()
-    athena.run(f"DELETE FROM {gold}.meter_assignment_scd2")
-    athena.run(f"INSERT INTO {gold}.meter_assignment_scd2 VALUES {', '.join(rows)}")
-    print(f"seed: {len(rows)} meter assignments, on the day the stream is on")
+    for table, builder in (
+        ("meter_assignment_scd2", meter_assignment_rows),
+        ("customer_scd2", customer_rows),
+        ("tariff_scd2", tariff_rows),
+    ):
+        rows = builder()
+        athena.run(f"DELETE FROM {gold}.{table}")
+        athena.run(f"INSERT INTO {gold}.{table} VALUES {', '.join(rows)}")
+        print(f"seed: {len(rows)} rows into {table}, on the day the stream is on")
 
     # The table is created either way, empty if no snapshot was named. An erasure that finds no
     # table fails its training-set leg and refuses to certify; an erasure that finds an empty one

@@ -30,8 +30,25 @@ Store · Lake Formation · Step Functions · Terraform*
 > | restatements that name what they replaced | **597 of 597** — doctrine 4, no silent overwrite |
 >
 > Claim 5 and claim 6 were exercised too: the model registers `PendingManualApproval` and
-> nothing can approve itself, and the erasure state machine **refuses to certify** — the correct
-> answer, live.
+> nothing can approve itself, and **an erasure now certifies** — all five legs confirmed, with a
+> certificate in S3 that states on its face what deletion cannot reach.
+>
+> **Getting there took five refusals, and they are the more interesting result.** The first
+> erasure ever run against a live estate refused, correctly, and so did the next four — for five
+> different correct reasons. Underneath them were nine defects, and every one was in a component
+> that *only the erasure path calls*: no per-subject key had ever been created; `gold` held five
+> catalogue entries and not one was a table, so a subject id could not be resolved to the meters
+> it owns; the `DELETE` was unbounded by the assignment interval and would have erased a second
+> customer's readings; the role could not reach the warehouse prefix an Iceberg rewrite needs;
+> Lake Formation wanted `ALTER`, because an Iceberg `DELETE` is a new metadata pointer rather
+> than a change to rows; three maintenance jobs had no Iceberg Spark extensions and had
+> **therefore never run at all**; Glue reports `SystemExit(0)` as a failure; Iceberg's `CALL`
+> grammar takes literals and not function calls; and `ruff` asked for `datetime.UTC` on a
+> repository targeting 3.12 while Glue 4.0 runs 3.10.
+>
+> None was carelessness — these are among the most carefully commented files here. Every one
+> survived because nothing had ever *executed* it. `make preflight` now carries
+> `check_glue_runtime.py`, and the rest are covered by the capture asserting the certificate.
 >
 > **`held_back` has now been induced in the cloud**, with `holding_back: SUB-01` and
 > `may_close_windows: false` on the record. It is *reported* rather than *required* by the
@@ -40,9 +57,20 @@ Store · Lake Formation · Step Functions · Terraform*
 > falls inside it is alignment rather than behaviour. The guarantee is asserted where it is
 > deterministic — the zero above, and `evals/watermark/` offline.
 >
-> **Still not exercised, and gaps rather than results:** the endpoint and Model Monitor, because
-> both need a model a human has approved and none is; and the `stalled` / `starved` states,
-> which need a stream that stops rather than one that is quiet.
+> **The decision layer now runs in the cloud.** `src/watermark/decisions/` — the engine, the
+> fallback rules, the oversight queue — was reached by `gate_proof.py` and by nothing in AWS, so
+> claims 1, 4 and 7 were claims about a laptop. `scripts/decide_live.py` decides against a
+> watermark reconstructed from the stream's own condition lines and features read back with
+> `GetRecord`, and asserts what comes out: no model decision under a watermark that permits no
+> close, none on a feature past its budget, every fallback carrying its reason into the record,
+> and every consequential decision refusing to actuate without a named human review.
+>
+> **Still gaps rather than results:** curtailment against real telemetry, because substation
+> load is a second stream this estate does not publish — the contract is exercised and comes out
+> *withheld*, which is the honest answer for a decision whose fallback cannot be computed;
+> Model Monitor and Clarify, which AWS has closed to new accounts (`docs/AWS-CONSTRAINTS.md`);
+> the dbt gold layer, which no capture builds; and `starved`, which turns out not to mean what
+> the earlier text implied — see below.
 >
 > The runs are also where the design errors live. Beyond the four in `docs/DECISIONS.md` 17 —
 > PyFlink cannot emit a custom watermark; a green CI run had moved zero records — a second pass
@@ -52,6 +80,19 @@ Store · Lake Formation · Step Functions · Terraform*
 > third of the fleet published its readings five months late because one firmware writes epoch
 > seconds where a regex expected ISO-8601. Each was invisible offline; each is now refused by a
 > check that fails on a laptop.
+>
+> **`starved` does not mean what this README used to imply, and that is a design finding.** The
+> adapter could not report an empty batch at all — `if not batch: return` sat above the line that
+> reports a watermark condition, and starvation *is* the empty batch — so the state was
+> unreachable in the cloud. Fixing that revealed the larger half: `idle` means "further behind
+> the leader than `idle_after`", measured in event time, so **the core detects relative silence
+> and not absolute silence.** One substation going quiet is caught, which is the scenario's case
+> and claim 1's sharpest one. A stream that stops entirely is not: the leader freezes too,
+> nothing becomes idle, and the view goes on saying `advancing`. What protects the system there
+> is claim 4 — a frozen watermark leaves every feature ageing past its budget and every decision
+> falls back. Making absolute silence visible needs the core to read a clock, which is the one
+> thing that would cost claim 2 its identical replay. The trade is stated at the definition and
+> has not been made.
 >
 > **Cost.** The tagged spend for the whole exercise was **USD 12.35**, against a design target
 > of under €100. It undercounts: a cost allocation tag takes up to 24 hours to activate, so the
@@ -113,7 +154,7 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 | **claim 3** · train/serve parity | **5/5** — two independent mechanisms over one contract, compared bitemporally with no tolerance, including the planted future-leakage case |
 | **claim 4** · no decision on a stale feature | **7/7** — the gate is in front of the input, and the fallback marker survives into the record |
 | **claim 5** · no model reaches an endpoint ungated | **12/12** — and **the shipped model is refused**, for the finding in [docs/BIAS-FINDING.md](docs/BIAS-FINDING.md) |
-| **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach |
+| **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach. Proved live in both directions: five refusals for five real defects, then all five legs confirmed and a certificate written |
 | **claim 7** · no automatic decision about a person | **8/8** — the contract does not load and the actuation type cannot be constructed |
 | `make gate-proof` | **22 refused, 0 accepted, 0 stale** |
 | `make policy` | **24 principal-resource pairs** — every reachable set exact and every closed path closed |

@@ -764,6 +764,27 @@ jobs:
             echo "::error::$unmarked throttles reached the record without a fallback marker and a reason"
             exit 1; }
 
+      - name: every case the cast declares is visible in the estate
+        # **The live half of `evals/cases/`, and the reason both exist.**
+        #
+        # That harness drives the generated day through the pure core and proves it sees every
+        # defect the cast declares. This asks whether the *deployed* system does — through IoT
+        # Core's at-least-once delivery, a Kinesis shard, a Flink checkpoint and a file sink.
+        # The difference is not theoretical: every defect this project has found in the cloud was
+        # invisible offline, because the two paths meet only in a running estate.
+        #
+        # Read from the landing evidence rather than from Athena, so the claim is about what the
+        # stream emitted and not about what the merge did with it. And scoped by the part files
+        # that existed before this capture: the prefix accumulates, and a gap in one run is
+        # filled by another run's windows at different intervals — the first ad-hoc run of this
+        # matrix failed the evidence-gap case for exactly that reason, on a check that was right.
+        run: |
+          set -euo pipefail
+          python scripts/cases_live.py \
+            --landing out/landing \
+            --decisions out/capture/decisions/decisions.jsonl \
+            --before out/landing-before.txt
+
       - name: an erasure certifies, and takes exactly what it was asked for
         # **Claim 6's positive half, which had never been demonstrated.**
         #

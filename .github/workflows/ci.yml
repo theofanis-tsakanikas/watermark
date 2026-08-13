@@ -88,6 +88,24 @@ jobs:
         # the system changed.
         run: python scripts/seed_check.py
 
+      - name: every case the cast declares is observed in the generated day
+        # **The other direction from the seven claims below**, and the reason it exists.
+        #
+        # Each claim harness *constructs* the situation it proves — a quiet substation, a stale
+        # feature, a refused promotion — which is right, because a claim is a statement about
+        # behaviour. Nothing was checking the reverse: that the deliberate defects `data/cast.py`
+        # declares are actually observable in the day this repository ships.
+        #
+        # An audit found two that were exercised by **nothing at all**. The evidence gap had no
+        # consumer anywhere; neither did the tariff change. Both had been declared, commented and
+        # never once observed — and a case nothing reads cannot fail, which is worse than one
+        # that does, because it looks handled indefinitely.
+        #
+        # The last case in the harness enumerates the cast's cohorts and fails if one has no
+        # check. A fixed list of tests cannot catch an omission, because the list looks complete
+        # by being the list.
+        run: python -m evals.cases
+
       - name: "claim 1 — no decision from a window that has not closed"
         run: python -m evals.watermark
 

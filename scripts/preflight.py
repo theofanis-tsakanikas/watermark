@@ -158,6 +158,14 @@ CHECKS: list[Check] = [
         "function with itself and reports green forever.",
     ),
     Check(
+        "claims",
+        "the declared cases",
+        [PYTHON, "-m", "evals.cases"],
+        "Every defect the cast declares must be observable in the generated day, and no cohort "
+        "may go unchecked. Two were exercised by nothing at all until an audit found them: a "
+        "case nothing reads cannot fail, which is worse than one that does.",
+    ),
+    Check(
         "deployability",
         "glue runtime",
         [PYTHON, "scripts/check_glue_runtime.py"],

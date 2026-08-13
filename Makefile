@@ -110,6 +110,10 @@ contracts-validate: ## Every entity contract loads and cross-checks
 seed-check: ## The generated day reproduces its recording, exactly
 	$(PY) scripts/seed_check.py
 
+.PHONY: cases
+cases: ## Every synthetic case the cast declares is observed in the generated day
+	$(PY) -m evals.cases
+
 .PHONY: claim-1
 claim-1: ## CLAIM 1 — no decision comes out of a window that has not closed
 	$(PY) -m evals.watermark

@@ -159,6 +159,14 @@ CHECKS: list[Check] = [
     ),
     Check(
         "deployability",
+        "glue runtime",
+        [PYTHON, "scripts/check_glue_runtime.py"],
+        "Glue 4.0 runs Python 3.10 and this repository targets 3.12. A job using a name from "
+        "in between dies on import, thirty seconds into a Spark cluster nobody can refund, "
+        "inside whatever was waiting on it.",
+    ),
+    Check(
+        "deployability",
         "partition vocabulary",
         [PYTHON, "scripts/check_partition_vocabulary.py"],
         "The IoT rule labels each record with the partition the core declares. Different "

@@ -119,7 +119,14 @@ ignore = [
 # constant and integers from Glue's own argument parser — there is no caller and no user input
 # anywhere near them. Spark's `CALL system.rewrite_data_files(...)` takes its table as a string
 # literal, so there is no bound-parameter form to use instead.
-"pipelines/jobs/*.py" = ["S608"]
+#
+# UP017 alongside it, and this one is the rule being right about the wrong interpreter. It asks
+# for `datetime.UTC`, which is the one thing these files must not use: this repository targets
+# 3.12 and **Glue 4.0 runs Python 3.10**, where that name does not exist and the job dies with
+# `ImportError: cannot import name 'UTC' from 'datetime'` after the cluster has been paid for.
+# `timezone.utc` works on both. `scripts/check_glue_runtime.py` enforces the wider boundary;
+# this stops the linter from quietly undoing it.
+"pipelines/jobs/*.py" = ["S608", "UP017"]
 # S608 in the live parity harness, for the same reason as `offline.py`: the interpolated names
 # are contract identifiers already validated against `^[a-z][a-z0-9_]*$`, and the data — the
 # entity id and all three time bounds — goes through Athena's `ExecutionParameters` and is

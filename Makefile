@@ -98,6 +98,10 @@ parity-independent: ## The two feature mechanisms share the contract and nothing
 partition-vocabulary: ## The IoT rule labels records with the partitions the core declares
 	$(PY) scripts/check_partition_vocabulary.py
 
+.PHONY: glue-runtime
+glue-runtime: ## The Glue jobs use no Python newer than the runtime Glue gives them
+	$(PY) scripts/check_glue_runtime.py
+
 .PHONY: contracts-validate
 contracts-validate: ## Every entity contract loads and cross-checks
 	$(PY) scripts/check_contracts.py

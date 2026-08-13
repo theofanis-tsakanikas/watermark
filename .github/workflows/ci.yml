@@ -144,6 +144,15 @@ jobs:
         # topic is where they are compared.
         run: python scripts/check_partition_vocabulary.py
 
+      - name: the Glue jobs run on the Python Glue actually gives them
+        # `ruff`'s UP017 asked for `datetime.UTC` on a repository that targets 3.12; Glue 4.0
+        # runs 3.10, where the name does not exist. The job died on import thirty-three seconds
+        # in, having started a Spark cluster to do it, inside an erasure waiting on it.
+        #
+        # Nothing else looks: these files import `awsglue`, so no test imports them, and the
+        # first execution of any line in them happens in the cloud.
+        run: python scripts/check_glue_runtime.py
+
       - name: the stream core is framework-free and reads no ambient state
         # The precondition for every other claim. The day a boto3 import or a `datetime.now()`
         # appears three levels down inside a windowing function, nothing fails — the suite just

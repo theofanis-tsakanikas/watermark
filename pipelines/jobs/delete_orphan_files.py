@@ -13,7 +13,7 @@ into a corrupt table.
 from __future__ import annotations
 
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from awsglue.context import GlueContext  # type: ignore[import-not-found]
 from awsglue.utils import getResolvedOptions  # type: ignore[import-not-found]
@@ -30,6 +30,15 @@ TABLES = (
 MINIMUM_AGE_DAYS = 3
 
 
+#: `timezone.utc`, not `datetime.UTC`, and the difference is which Python this file runs on.
+#:
+#: This repository targets 3.12. **Glue 4.0 runs 3.10**, where `datetime.UTC` does not exist:
+#:
+#:     ImportError: cannot import name 'UTC' from 'datetime'
+#:
+#: Nothing local catches that — `ruff`, `mypy` and the test suite all read this file with the
+#: interpreter the laptop has. `scripts/check_glue_runtime.py` is what catches it now.
+#:
 #: How the cutoff instant reaches a `CALL`, and why it is computed here rather than in SQL.
 #:
 #: Iceberg's stored-procedure grammar takes **literals only**. `TIMESTAMPADD(DAY, -3,
@@ -45,7 +54,7 @@ MINIMUM_AGE_DAYS = 3
 #: what stops anyone setting it there.
 def cutoff(days: int) -> str:
     """A SQL timestamp literal `days` before now, in the form Iceberg's parser accepts."""
-    moment = datetime.now(UTC) - timedelta(days=days)
+    moment = datetime.now(timezone.utc) - timedelta(days=days)
     return f"TIMESTAMP '{moment.strftime('%Y-%m-%d %H:%M:%S')}'"
 
 

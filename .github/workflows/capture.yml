@@ -585,6 +585,129 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: an erasure certifies, and takes exactly what it was asked for
+        # **Claim 6's positive half, which had never been demonstrated.**
+        #
+        # The first erasure ever run against a live estate refused to certify. That refusal was
+        # the designed behaviour and it was correct — but a claim that has only ever been
+        # observed *failing* is not a claim that has been demonstrated. The guard was proved;
+        # the mechanism was not. Three separate things were wrong underneath it, and each was
+        # invisible to every offline test:
+        #
+        #   * no per-subject key had ever been created, by anything (ADR-0009);
+        #   * `gold` held five Terraform catalogue entries and not one was a table, so a subject
+        #     id could not be resolved to the meters it owns;
+        #   * the erasure role had Lake Formation and Athena but no grant on the warehouse
+        #     prefix, and an Iceberg DELETE rewrites the table's own files.
+        #
+        # **The subject is the one who took over a meter mid-day, and that is the whole point.**
+        # `M00007` changes customer at 10:00 — the scenario's "a meter changes customer".
+        # `C00007-NEW` owns its readings from 10:00 onward and nothing before. So this run
+        # asserts both halves of a correct erasure in one pass: everything of theirs is gone,
+        # and nothing of anybody else's is. The original query said
+        # `WHERE meter_id IN (SELECT meter_id ... WHERE customer_id = ?)` and would have erased
+        # the whole day — one subject's request destroying another's data, with the certificate
+        # reporting that the boundary held. An erasure that over-reaches is a breach in the
+        # opposite direction and the harder one to notice, because nobody complains about being
+        # forgotten too thoroughly.
+        run: |
+          set -euo pipefail
+          SUBJECT="C00007-NEW"
+          METER="M00007"
+          CHANGEOVER="2026-03-14 10:00:00"
+
+          athena() {
+            id=$(aws athena start-query-execution --query-string "$1" \
+              --work-group "$PROJECT" --query QueryExecutionId --output text)
+            settled=""
+            for _ in $(seq 1 60); do
+              state=$(aws athena get-query-execution --query-execution-id "$id" \
+                --query 'QueryExecution.Status.State' --output text)
+              case "$state" in
+                SUCCEEDED) settled="yes"; break ;;
+                FAILED|CANCELLED)
+                  aws athena get-query-execution --query-execution-id "$id" \
+                    --query 'QueryExecution.Status.StateChangeReason' --output text
+                  echo "::error::the counting query $state"; exit 1 ;;
+              esac
+              sleep 3
+            done
+            [ -n "$settled" ] || { echo "::error::the counting query never settled"; exit 1; }
+            aws athena get-query-results --query-execution-id "$id" \
+              --query 'ResultSet.Rows[1].Data[0].VarCharValue' --output text
+          }
+
+          before_theirs=$(athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval WHERE meter_id = '${METER}' AND interval_start >= TIMESTAMP '${CHANGEOVER}'")
+          before_others=$(athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval WHERE meter_id = '${METER}' AND interval_start < TIMESTAMP '${CHANGEOVER}'")
+          echo "before: ${before_theirs} rows belong to ${SUBJECT}, ${before_others} to the customer before them"
+
+          # Not asserted as a nicety. With nothing of theirs in the table the erasure would
+          # delete nothing, certify, and the assertions below would all pass over an absence —
+          # which is the shape of a green test that proves nothing.
+          [ "$before_theirs" -gt 0 ] || {
+            echo "::error::${SUBJECT} owns no rows, so this run would certify having erased nothing"
+            exit 1; }
+          [ "$before_others" -gt 0 ] || {
+            echo "::error::the previous customer owns no rows, so over-deletion could not be detected"
+            exit 1; }
+
+          machine=$(aws stepfunctions list-state-machines \
+            --query "stateMachines[?name=='${PROJECT}-erasure'].stateMachineArn" --output text)
+          execution=$(aws stepfunctions start-execution --state-machine-arn "$machine" \
+            --name "erasure-${GITHUB_RUN_ID}" \
+            --input "{\"subject_id\":\"${SUBJECT}\"}" \
+            --query executionArn --output text)
+
+          settled=""
+          for _ in $(seq 1 80); do
+            status=$(aws stepfunctions describe-execution --execution-arn "$execution" \
+              --query status --output text)
+            case "$status" in
+              SUCCEEDED|FAILED|TIMED_OUT|ABORTED) settled="yes"; break ;;
+            esac
+            sleep 15
+          done
+          [ -n "$settled" ] || { echo "::error::the erasure never settled"; exit 1; }
+
+          if [ "$status" != "SUCCEEDED" ]; then
+            aws stepfunctions describe-execution --execution-arn "$execution" \
+              --query '{error:error,cause:cause}' --output json
+            aws stepfunctions get-execution-history --execution-arn "$execution" \
+              --query 'events[?type==`TaskFailed`].taskFailedEventDetails.cause' --output text \
+              | cut -c1-600
+            echo "::error::the erasure refused to certify. Every leg has to confirm, and one did not"
+            exit 1
+          fi
+
+          # The certificate is the artefact, not the exit code. A state machine that succeeded
+          # without writing one has satisfied its own control flow and produced no evidence.
+          certificate=$(aws s3 ls "s3://${LAKEHOUSE}/erasure-certificates/${SUBJECT}/" --recursive | wc -l | tr -d ' ')
+          [ "$certificate" -gt 0 ] || {
+            echo "::error::the erasure succeeded and wrote no certificate"; exit 1; }
+
+          after_theirs=$(athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval WHERE meter_id = '${METER}' AND interval_start >= TIMESTAMP '${CHANGEOVER}'")
+          after_others=$(athena "SELECT count(*) FROM ${PROJECT}_silver.meter_interval WHERE meter_id = '${METER}' AND interval_start < TIMESTAMP '${CHANGEOVER}'")
+
+          {
+            echo ""
+            echo "### An erasure, and its boundary"
+            echo ""
+            echo "| rows on \`${METER}\` | before | after |"
+            echo "|---|---|---|"
+            echo "| belonging to \`${SUBJECT}\` (from 10:00) | ${before_theirs} | ${after_theirs} |"
+            echo "| belonging to the customer before them | ${before_others} | ${after_others} |"
+            echo ""
+            echo "Certificate objects written: ${certificate}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          fail=0
+          [ "$after_theirs" -eq 0 ] || {
+            echo "::error::${after_theirs} of ${SUBJECT}'s rows survived an erasure that certified"; fail=1; }
+          [ "$after_others" -eq "$before_others" ] || {
+            echo "::error::the erasure took ${SUBJECT}'s rows and $((before_others - after_others)) belonging to the customer before them. Over-deletion is a breach in the other direction"
+            fail=1; }
+          exit $fail
+
       - name: capture the evidence
         run: |
           mkdir -p out/capture

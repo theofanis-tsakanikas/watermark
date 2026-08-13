@@ -33,12 +33,37 @@
               "ResultPath": "$.subject_key",
               "Catch": [
                 {
+                  "Comment": "A missing alias is not automatically a failure and is not automatically a success. Once a subject is shredded the deploy stops declaring their key — that is what keeps a routine apply from resurrecting somebody who asked to be forgotten — so Terraform removes the alias and the *next* request for the same subject finds nothing at all. The question is whether it is missing because they are already gone or because they never had a key, and the two have opposite right answers. `erasure-shredded/` is what tells them apart.",
+                  "ErrorEquals": ["Kms.NotFoundException"],
+                  "ResultPath": "$.error",
+                  "Next": "WasTheKeyAlreadyDestroyed"
+                },
+                {
                   "ErrorEquals": ["States.ALL"],
                   "ResultPath": "$.error",
                   "Next": "ShredFailed"
                 }
               ],
               "Next": "AlreadyShredded?"
+            },
+            "WasTheKeyAlreadyDestroyed": {
+              "Type": "Task",
+              "Comment": "The marker written when the key was scheduled, read back. Its presence is the only evidence that survives both the seven-day deletion window and the apply that removes the alias — which is exactly why it is written at the moment of the shred rather than assembled from the certificate afterwards.",
+              "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+              "Parameters": {
+                "Bucket": "${certificate_bucket}",
+                "Key.$": "States.Format('erasure-shredded/{}.json', $.subject_id)"
+              },
+              "ResultPath": "$.marker",
+              "Catch": [
+                {
+                  "Comment": "No alias and no marker. This subject never had a key, so nothing was ever encrypted under one and there is nothing to shred — which is a failure and not an idempotent success, because certifying here would tell somebody they are gone when the mechanism never covered them.",
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.error",
+                  "Next": "ShredFailed"
+                }
+              ],
+              "Next": "ShredAlreadyDone"
             },
             "AlreadyShredded?": {
               "Type": "Choice",

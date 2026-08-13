@@ -115,8 +115,12 @@ data "aws_iam_policy_document" "erasure" {
   }
 
   statement {
-    sid     = "WriteTheCertificate"
-    effect  = "Allow"
+    sid    = "WriteTheCertificate"
+    effect = "Allow"
+    # `GetObject` as well as `PutObject`, and only on the shred markers: a second erasure request
+    # for the same subject has to be able to *read* whether the first one destroyed the key,
+    # because by then the alias is gone. Not on the certificates — this role writes those and has
+    # no reason to read its own past conclusions.
     actions = ["s3:PutObject"]
     resources = [
       "${data.aws_s3_bucket.lakehouse.arn}/erasure-certificates/*",
@@ -126,6 +130,13 @@ data "aws_iam_policy_document" "erasure" {
       # the rest of the run succeeded.
       "${data.aws_s3_bucket.lakehouse.arn}/erasure-shredded/*",
     ]
+  }
+
+  statement {
+    sid       = "ReadWhetherThisSubjectWasAlreadyShredded"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${data.aws_s3_bucket.lakehouse.arn}/erasure-shredded/*"]
   }
 
   # Athena writes its results before it will start a query, and refuses with "Unable to

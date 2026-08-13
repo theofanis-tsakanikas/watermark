@@ -69,7 +69,7 @@
               "Parameters": {
                 "Bucket": "${certificate_bucket}",
                 "Key.$": "States.Format('erasure-shredded/{}.json', $.subject_id)",
-                "Body.$": "$.shred",
+                "Body.$": "States.JsonToString($.shred)",
                 "ServerSideEncryption": "aws:kms"
               },
               "ResultSelector": { "leg": "crypto_shred", "confirmed": true },
@@ -223,10 +223,11 @@
     "WriteTheCertificate": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:s3:putObject",
+      "Comment": "`States.JsonToString`, not the object. S3's `PutObject` takes a string body and Step Functions does not serialise one for you — an object here fails the task with a type error, which would mean an erasure that completed every leg and then failed to record that it had. Neither PutObject in this file had ever run successfully, so neither had ever been checked.",
       "Parameters": {
         "Bucket": "${certificate_bucket}",
         "Key.$": "States.Format('erasure-certificates/{}/{}.json', $.request.subject_id, $$.Execution.Name)",
-        "Body.$": "$",
+        "Body.$": "States.JsonToString($)",
         "ServerSideEncryption": "aws:kms"
       },
       "End": true

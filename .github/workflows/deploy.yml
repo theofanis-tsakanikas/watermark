@@ -129,7 +129,13 @@ jobs:
         with:
           terraform_version: 1.15.5
 
-      - run: pip install -e ".[dev]"
+      # `[cloud]` as well as `[dev]`, and the reason is one step further down this file. The
+      # gold reference seeder talks to Athena, so it needs boto3 — which is deliberately not a
+      # hard dependency, because the whole suite and every gate must run without it. This job
+      # is the one place in the deploy that speaks to a live estate from Python rather than
+      # through the CLI, and it failed with `ModuleNotFoundError: No module named 'boto3'`
+      # after Terraform had finished and everything was standing.
+      - run: pip install -e ".[dev,cloud]"
 
       - name: build the application packages
         # Before the credentials, deliberately. A packaging failure should stop the deploy while

@@ -56,6 +56,38 @@ if TYPE_CHECKING:  # pragma: no cover — import-time only where PyFlink exists
 LOG = logging.getLogger("watermark.streaming")
 
 
+def decide_windows(stream, operator: MeterWindowOperator):
+    """Key, delegate, name, pin. The whole of the semantics, and the seam tier two needs.
+
+    **Extracted so that the equivalence test drives the same chain the deployed job does.**
+    `build_pipeline` below is unrunnable outside AWS — it opens a Kinesis consumer — so a
+    MiniCluster harness that rebuilt "roughly the same thing" would be comparing the core against
+    a second arrangement of the core, which is a test of the harness. This function is what both
+    call, so what runs on the cluster in `tests_flink/` is what runs in the account.
+
+    Keyed on `record[1]`, the partition. Positional because the deserialiser hands over a `Row`
+    and the harness hands over a tuple, and index 1 is the partition in both — the one place in
+    this package where a positional read is right, and `scripts/check_adapter_is_thin.py`
+    tolerates it here for that reason.
+
+    **One instance.** `WATERMARK_OPERATOR_PARALLELISM` explains itself where it is declared; the
+    short version is that each instance holds a `WatermarkState` declaring every substation, so a
+    second instance is an operator that hears from none of the partitions the first one owns and
+    marks them idle. Flink would normally take the minimum across subtasks and make any
+    parallelism correct — that is the aggregation ADR-0007 gave up when the watermark moved into
+    the core, and this is what replaces it. The source and the sink stay at the application's
+    parallelism; only the operator holding the watermark is pinned.
+    """
+    from pyflink.common.typeinfo import Types  # noqa: PLC0415 — PyFlink is optional
+
+    return (
+        stream.key_by(lambda record: record[1])
+        .process(build_process_function(operator), output_type=Types.STRING())
+        .name("watermark-meter-windows")
+        .set_parallelism(WATERMARK_OPERATOR_PARALLELISM)
+    )
+
+
 def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement) -> None:
     """Wire the sources, the operators and the sinks. No semantics are decided here.
 
@@ -131,13 +163,7 @@ def build_pipeline(environment: StreamExecutionEnvironment, placement: Placement
     #
     # The source and the sink stay at the application's parallelism. Only the operator that
     # holds the watermark is pinned.
-    windows = (
-        environment.add_source(consumer)
-        .key_by(lambda record: record[1])
-        .process(build_process_function(operator), output_type=Types.STRING())
-        .name("watermark-meter-windows")
-        .set_parallelism(WATERMARK_OPERATOR_PARALLELISM)
-    )
+    windows = decide_windows(environment.add_source(consumer), operator)
 
     # The log sink stays. It is the evidence a person reads during a capture and it costs
     # nothing; the Iceberg sink is what the rest of the system depends on.

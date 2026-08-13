@@ -73,9 +73,9 @@
           "States": {
             "DeleteRowsPhysically": {
               "Type": "Task",
+              "Comment": "Bounded by the assignment interval, not by the meter. `IN (SELECT meter_id ...)` erased every reading the meter ever produced, including the readings of whoever held it before or after — `M00007` changes customer at 10:00, so erasing one subject destroyed another's data and the certificate said the boundary held. An erasure that takes more than it was asked for is a breach in the other direction, and it is the harder one to notice because nobody complains that they were forgotten too thoroughly.",
               "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
               "Parameters": {
-                "Comment": "Bounded by the assignment interval, not by the meter. `IN (SELECT meter_id ...)` erased every reading the meter ever produced, including the readings of whoever held it before or after — `M00007` changes customer at 10:00, so erasing one subject destroyed another's data and the certificate said the boundary held. An erasure that takes more than it was asked for is a breach in the other direction, and it is the harder one to notice because nobody complains that they were forgotten too thoroughly.",
                 "QueryString.$": "States.Format('DELETE FROM ${project}_silver.meter_interval WHERE (meter_id, interval_start) IN (SELECT r.meter_id, r.interval_start FROM ${project}_silver.meter_interval r JOIN ${project}_gold.meter_assignment_scd2 a ON a.meter_id = r.meter_id WHERE a.customer_id = \\'{}\\' AND r.interval_start >= a.valid_from AND (a.valid_to IS NULL OR r.interval_start < a.valid_to))', $.subject_id)",
                 "WorkGroup": "${project}"
               },

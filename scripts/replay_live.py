@@ -174,13 +174,27 @@ def compare(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--before",
+        type=Path,
+        required=True,
+        help="A file listing the part files that existed before this capture started.",
+    )
+    parser.add_argument(
         "--first", type=Path, required=True, help="Landing files before the replay."
     )
     parser.add_argument("--after", type=Path, required=True, help="Landing files after it.")
     arguments = parser.parse_args(argv)
 
-    seen = {path.name for path in arguments.first.rglob("*") if path.is_file()}
-    first = published_values(_rows(arguments.first))
+    # Three sets, and each subtraction removes a different thing. `history` is every capture this
+    # estate has ever driven; taking it out of `--first` leaves this run's first delivery. Taking
+    # everything in `--first` out of `--after` leaves the replay.
+    history = {
+        name.strip()
+        for name in arguments.before.read_text(encoding="utf-8").splitlines()
+        if name.strip()
+    }
+    seen = history | {path.name for path in arguments.first.rglob("*") if path.is_file()}
+    first = published_values(_rows(arguments.first, exclude=history))
     second = published_values(_rows(arguments.after, exclude=seen))
     print(f"first run: {len(first)} published values; replay: {len(second)}")
 

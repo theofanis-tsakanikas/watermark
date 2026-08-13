@@ -282,6 +282,31 @@ jobs:
             echo "::error::the endpoint answered and nothing was recorded. Art. 12 asks for the inputs as served, and an inference with no record is one no investigation can reach"
             exit 1; }
 
+      - name: note what the landing prefix already held
+        # **The third set, and the reason claim 2 could not be compared without it.**
+        #
+        # The landing prefix accumulates across every capture this estate has ever driven. The
+        # replay step below takes a copy "before the replay" and one "after", and subtracts the
+        # first from the second — which separates the two deliveries of *this* run perfectly, and
+        # leaves months of history sitting inside the first.
+        #
+        # It reported `first run: 9664 published values; replay: 4062` and named four thousand
+        # rows the replay had supposedly lost. It had lost nothing: 9,664 was every capture ever
+        # run, and the offset normalisation was computed against the oldest interval in the
+        # bucket rather than against this run's own first, which put every key on a different
+        # axis.
+        #
+        # A list of names is enough: part files are uniquely named, so subtracting this from both
+        # sides leaves exactly what each delivery produced. Nothing is deleted — the history is
+        # somebody's evidence, and an assertion that needs the bucket emptied to pass is an
+        # assertion nobody should trust.
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          { aws s3 ls "s3://${LAKEHOUSE}/landing/meter_interval/" --recursive || true; } \
+            | awk '{print $4}' | sed 's#.*/##' | sort -u > out/landing-before.txt
+          echo "landing objects already present: $(wc -l < out/landing-before.txt | tr -d ' ')"
+
       - name: drive the scenario
         # `--live`. Without it `data.publish` prints the plan and touches nothing, which is the
         # right default for a script that can spend money and the wrong one for the workflow
@@ -499,7 +524,10 @@ jobs:
           # the capture is still reading from.
           aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" out/landing-second \
             --recursive --exclude "*_tmp_*" --quiet
-          python scripts/replay_live.py --first out/landing-first --after out/landing-second
+          python scripts/replay_live.py \
+            --before out/landing-before.txt \
+            --first out/landing-first \
+            --after out/landing-second
 
       - name: renew the credentials before the second half
         # **The role's maximum session is one hour and this capture is now longer than that.**

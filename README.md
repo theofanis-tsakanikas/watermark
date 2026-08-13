@@ -158,6 +158,7 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 | **claim 3** · train/serve parity | **5/5** — two independent mechanisms over one contract, compared bitemporally with no tolerance, including the planted future-leakage case |
 | **claim 4** · no decision on a stale feature | **7/7** — the gate is in front of the input, and the fallback marker survives into the record |
 | **claim 5** · no model reaches an endpoint ungated | **12/12** — and **the shipped model is refused**, for the finding in [docs/BIAS-FINDING.md](docs/BIAS-FINDING.md) |
+| **core ≡ Flink** · tier two of ADR-0003 | **green** — the deployed operator chain on a MiniCluster produces the same value for every window it and the pure core both closed. Scoped to the live stream: a bounded list cannot reproduce a three-day-late batch, and the harness says so rather than absorbing it in a tolerance |
 | **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach. Proved live in both directions: five refusals for five real defects, then all five legs confirmed and a certificate written |
 | **claim 7** · no automatic decision about a person | **8/8** — the contract does not load and the actuation type cannot be constructed |
 | `make gate-proof` | **22 refused, 0 accepted, 0 stale** |

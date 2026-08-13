@@ -188,17 +188,17 @@ jobs:
   equivalence:
     name: core equals Flink
     runs-on: ubuntu-latest
-    # `continue-on-error` and the honest reason for it: `apache-flink` will not install on the
-    # machine this repository was written on (macOS/arm64, Python 3.12 — apache-beam has no
-    # wheel and fails to build), so this job has never been observed green anywhere. Marking it
-    # required before anybody has seen it pass would block every pull request on a job whose
-    # failures nobody can reproduce locally.
+    # **The flag is off, and it came off the moment this job was first seen green.**
     #
-    # It is **not** silently skipped: WATERMARK_REQUIRE_FLINK below makes a missing runtime a
-    # hard failure inside the job, so the result is always either a real pass or a real failure
-    # — visible in the checks list, and excluded from the README scoreboard until it is green.
-    # The moment it is, this flag comes off and the row appears.
-    continue-on-error: true
+    # It carried `continue-on-error: true` for as long as tier two was `NotImplementedError`,
+    # with the honest reason written here: `apache-flink` will not install on the machine this
+    # repository is developed on (macOS/arm64 — apache-beam has no wheel and fails to build), so
+    # the job had never been observed passing anywhere, and marking it required before anybody
+    # had seen it pass would have blocked every pull request on failures nobody could reproduce.
+    #
+    # It has now passed. `WATERMARK_REQUIRE_FLINK` below still makes a missing runtime a hard
+    # failure rather than a skip, so a green result means the comparison ran rather than that the
+    # runtime was absent.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

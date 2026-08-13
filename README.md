@@ -69,12 +69,24 @@ Store · Lake Formation · Step Functions · Terraform*
 > close, none on a feature past its budget, every fallback carrying its reason into the record,
 > and every consequential decision refusing to actuate without a named human review.
 >
-> **Still gaps rather than results:** curtailment against real telemetry, because substation
-> load is a second stream this estate does not publish — the contract is exercised and comes out
-> *withheld*, which is the honest answer for a decision whose fallback cannot be computed;
-> Model Monitor and Clarify, which AWS has closed to new accounts (`docs/AWS-CONSTRAINTS.md`);
-> the dbt gold layer, which no capture builds; and `starved`, which turns out not to mean what
-> the earlier text implied — see below.
+> **The three decisions all take a decision now, and two of them could not before.**
+> Curtailment ran against `telemetry=None` and withheld every time, because substation load is a
+> second stream nothing produced — the one decision here with a *physical* consequence, never
+> taken. `data/telemetry.py` produces it, an IoT rule lands it in S3, and the fallback throttles
+> a substation driven past its limit on purpose, marked as a fallback into the record. Settlement
+> had never computed a number at all: the dbt gold layer has existed since phase 2 and no capture
+> ever built it, so `settlement_hour` did not exist and the ruleset naming it had to be removed.
+>
+> **And the tariff change had no consumer anywhere.** `docs/SCENARIO.md` declares it, `data/cast.py`
+> builds the SCD-2 history, and the word `tariff` appeared in this repository only in the
+> docstrings of `pit.py`. A declared case with no consumer cannot fail, which is worse than one
+> that fails: it looks handled, in a document, indefinitely. `gold.settlement_priced` reads it,
+> point-in-time, priced at the interval rather than the hour.
+>
+> **Still gaps rather than results:** Model Monitor and Clarify, which AWS has closed to new
+> accounts (`docs/AWS-CONSTRAINTS.md`); the savepoint-restore drill, which needs a way to hold a
+> MiniCluster job open, cancel it with a savepoint and resume — a harness rather than an
+> assertion, and skipped with that reason rather than half-written.
 >
 > The runs are also where the design errors live. Beyond the four in `docs/DECISIONS.md` 17 —
 > PyFlink cannot emit a custom watermark; a green CI run had moved zero records — a second pass
@@ -85,7 +97,7 @@ Store · Lake Formation · Step Functions · Terraform*
 > seconds where a regex expected ISO-8601. Each was invisible offline; each is now refused by a
 > check that fails on a laptop.
 >
-> **`starved` does not mean what this README used to imply, and that is a design finding.** The
+> **`starved` now means both silences, and getting there corrected an argument of mine.** The
 > adapter could not report an empty batch at all — `if not batch: return` sat above the line that
 > reports a watermark condition, and starvation *is* the empty batch — so the state was
 > unreachable in the cloud. Fixing that revealed the larger half: `idle` means "further behind
@@ -94,9 +106,13 @@ Store · Lake Formation · Step Functions · Terraform*
 > and claim 1's sharpest one. A stream that stops entirely is not: the leader freezes too,
 > nothing becomes idle, and the view goes on saying `advancing`. What protects the system there
 > is claim 4 — a frozen watermark leaves every feature ageing past its budget and every decision
-> falls back. Making absolute silence visible needs the core to read a clock, which is the one
-> thing that would cost claim 2 its identical replay. The trade is stated at the definition and
-> has not been made.
+> falls back. I then wrote that making absolute silence visible would need the core to read a
+> clock, and that this would cost claim 2 its identical replay. **That was wrong, and it was the
+> reason the gap stayed open.** `observe` is *given* the instant it reasons at — the adapter
+> passes Flink's processing time, the offline runner passes ingestion time — so the comparison is
+> arithmetic on two values it already holds. `silent_after` is five minutes, the clock stays
+> outside the module, and the test that asserted an hour of empty batches was `advancing` was
+> asserting the bug.
 >
 > **Cost.** The tagged spend for the whole exercise was **USD 12.35**, against a design target
 > of under €100. It undercounts: a cost allocation tag takes up to 24 hours to activate, so the

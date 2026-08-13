@@ -231,6 +231,18 @@ jobs:
           echo "SUBSTATIONS=$SUBSTATIONS" >> "$GITHUB_ENV"
           echo "substations from data/cast.py: $SUBSTATIONS"
 
+          # The data subjects, from the same source and for the same reason. Each gets a
+          # crypto-shredding key; a subject with no key is one whose erasure request cannot be
+          # honoured, and the orchestration finds that out at the moment somebody has asked to
+          # be forgotten. Reading the cast makes the two impossible to disagree.
+          SUBJECTS=$(python3 -c '
+          import json
+          from data.cast import meter_assignments
+          print(json.dumps(sorted({v.attributes["customer_id"] for v in meter_assignments().versions})))
+          ')
+          echo "SUBJECTS=$SUBJECTS" >> "$GITHUB_ENV"
+          echo "data subjects from data/cast.py: $(echo "$SUBJECTS" | tr ',' '\n' | wc -l | tr -d ' ') keys"
+
       - name: stop the Flink application if it is running
         # Managed Flink takes a snapshot before an update, and refuses when the application is
         # unhealthy: "Failed to take snapshot ... The application is currently experiencing
@@ -268,6 +280,7 @@ jobs:
           # `infra/ml/variables.tf` exists to catch, and it should not be reachable from a form.
           TF_VAR_endpoint_enabled: ${{ inputs.promoted_model != '' }}
           TF_VAR_promoted_model_name: ${{ inputs.promoted_model }}
+          TF_VAR_subjects: ${{ env.SUBJECTS }}
         run: |
           set -euo pipefail
           ORDER="foundation streaming lakehouse ml governance"

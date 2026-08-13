@@ -47,3 +47,23 @@ variable "erasure_residual_days" {
     error_message = "A residual window of zero claims the weights were reached, which they were not."
   }
 }
+
+variable "subjects" {
+  type = list(string)
+
+  description = <<-EOT
+    The data subjects this estate holds, one crypto-shredding key each.
+
+    Supplied by `deploy.yml` from `data/cast.py`, for the same reason the substation list is:
+    a second copy in a settings page is a copy that drifts, and a subject with no key is one
+    whose erasure request cannot be honoured — which the erasure orchestration discovers at the
+    moment somebody has asked to be forgotten.
+
+    No default. An empty list is an estate that holds personal data and can shred none of it.
+  EOT
+
+  validation {
+    condition     = length(var.subjects) > 0
+    error_message = "subjects is empty. Personal data with no per-subject key cannot be erased, and claim 6 would fail at the first request rather than at the plan."
+  }
+}

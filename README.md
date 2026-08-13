@@ -268,6 +268,7 @@ read.
 | [ADR-0006](docs/adr/0006-clarify-runs-but-does-not-vote.md) | Why the standard bias metric is reported and not obeyed — and why it could not run at all |
 | [ADR-0007](docs/adr/0007-the-framework-carries-records-not-semantics.md) | What the live run proved PyFlink cannot do, and why that made the design stronger |
 | [ADR-0008](docs/adr/0008-the-writer-creates-the-iceberg-table.md) | Why Terraform cannot create an Iceberg table, and what owns the schema instead |
+| [ADR-0009](docs/adr/0009-a-key-per-subject-and-what-it-costs.md) | One KMS key per data subject, why it is a master key and not a data key, and the fleet-scale ceiling it has |
 
 ---
 

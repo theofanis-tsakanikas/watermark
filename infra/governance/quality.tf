@@ -67,3 +67,42 @@ resource "aws_glue_data_quality_ruleset" "meter_interval" {
 # invariants it asserted — one row per meter and hour, between one and four intervals in an
 # hour, a lineage id on every row — are checked only by the dbt tests in `pipelines/dbt/tests/`,
 # which is a weaker place because nothing runs them yet either.
+
+# **Lake Formation for the erasure role, and it is the half IAM does not cover.**
+#
+# The first live erasure returned, from two of its five legs:
+#
+#     Access Denied when accessing database watermark_silver, table meter_interval
+#     Access Denied when accessing database watermark_gold, table training_snapshot
+#
+# The role's IAM policy allows `athena:StartQueryExecution` and the S3 and KMS it needs. It ran
+# the queries. Lake Formation refused the tables, because this account grants
+# `CreateTableDefaultPermissions` to nobody and a table's creator is the only principal with
+# rights to it until somebody says otherwise.
+#
+# `DELETE` and `SELECT`, and `DESCRIBE` so a failure names the table rather than pretending it
+# does not exist. Not `DROP`: the erasure removes a subject's rows, and a role that could remove
+# the table would turn the worst kind of bug into the worst kind of outage.
+#
+# This is the third principal in this estate to need the same lesson — the merge job, the
+# workflow that verifies it, and now the orchestration that erases. Worth naming: an IAM policy
+# that reads correctly is not evidence of access when Lake Formation is in force.
+resource "aws_lakeformation_permissions" "erasure_silver" {
+  principal   = aws_iam_role.erasure.arn
+  permissions = ["SELECT", "DELETE", "DESCRIBE"]
+
+  table {
+    database_name = "${var.project}_silver"
+    wildcard      = true
+  }
+}
+
+resource "aws_lakeformation_permissions" "erasure_gold" {
+  principal   = aws_iam_role.erasure.arn
+  permissions = ["SELECT", "DELETE", "DESCRIBE"]
+
+  table {
+    database_name = "${var.project}_gold"
+    wildcard      = true
+  }
+}

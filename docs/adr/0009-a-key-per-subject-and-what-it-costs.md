@@ -1,0 +1,82 @@
+# ADR-0009 — A KMS key per data subject, and the ceiling it has
+
+**Status:** accepted · **Date:** 2026-08-13 · **Serves:** claim 6 · **Refines** `docs/DECISIONS.md` 11
+
+## Context
+
+Decision 11 settled that erasure is crypto-shredding with "a key per subject". `infra/foundation/`
+created the *root* of that hierarchy and described it as the key "every subject key is derived
+under". The erasure state machine resolves `alias/watermark-subject-<subject_id>` and schedules
+that key for deletion.
+
+Between the root and the state machine there was nothing. No per-subject key was ever created,
+by anything. The first erasure ever run against a live estate answered:
+
+```
+Kms.NotFoundException: Alias alias/watermark-subject-C00007 is not found
+```
+
+and the orchestration refused to certify — which is the designed behaviour and, in this case,
+the wrong reason for it. **A claim that has only ever been observed failing is not a claim that
+has been demonstrated.** The refusal proves the guard; it does not prove the mechanism.
+
+## Decision
+
+**One customer master key per data subject, created by `infra/governance/`, one alias each,
+seven-day deletion window.**
+
+The subjects come from `data/cast.py` through `deploy.yml`, the same route the substation list
+takes and for the same reason: a second copy in a settings page is a copy that drifts, and a
+subject with no key is one whose erasure request cannot be honoured — discovered at the moment
+somebody has asked to be forgotten.
+
+**Why a customer master key rather than a data key under the root.** Crypto-shredding needs the
+key material to become unavailable, and *provably* so. A data key wrapped under the root and
+held in a table can be deleted, but proving no plaintext copy survives is a statement about
+every place it was ever unwrapped — every cache, every worker, every log. `ScheduleKeyDeletion`
+on a CMK is a statement AWS makes and can be asked to confirm, and a completeness proof needs
+something it can ask.
+
+**Seven days, not thirty.** The root uses thirty because destroying it ends every subject at
+once, and the window is the only thing between the largest erasure in the system's history and
+the worst accident available in it. A *subject* key is the opposite case: GDPR Art. 12(3) gives
+one month to answer a request, and a key that lingers thirty days spends most of that month in a
+state where the data is still readable. Seven is the shortest AWS allows.
+
+## The ceiling, stated rather than discovered
+
+**This does not scale to the scenario's fleet, and the repository says so here rather than
+finding out in production.**
+
+`docs/SCENARIO.md` describes 250,000 meters. One CMK per subject at that size is:
+
+- **past the default quota.** AWS allows 100,000 customer master keys per account per region by
+  default. 250,000 subjects needs three accounts or a quota conversation.
+- **roughly USD 250,000 a month** in key storage alone, at one dollar per key per month, before
+  a single request.
+
+Forty-one subjects is what this estate holds and what the claim is demonstrated against. A
+production system at fleet scale needs envelope encryption: one root, a data key per subject
+wrapped under it, the wrapped key stored beside the subject, and shredding is the deletion of
+that stored ciphertext. That design trades the provable statement above for a scalable one, and
+the trade is real — it moves "AWS confirms the key is gone" to "we confirm we deleted our only
+copy", which is a weaker claim and an honest one.
+
+**What is claimed here:** crypto-shredding is demonstrated end to end, at the scale of this
+estate, with a mechanism whose completion AWS confirms. **What is not claimed:** that this
+mechanism is what a 250,000-subject deployment would use.
+
+## Alternatives rejected
+
+**Create the subject key lazily, during erasure.** A key created in order to be destroyed shreds
+nothing — the data was never encrypted under it. It would turn the leg green and mean nothing,
+which is worse than the failure it replaces.
+
+**Drop the leg and declare crypto-shredding out of scope.** Claim 6's whole difficulty is that
+deletion has a boundary and the boundary must be provable. Removing the mechanism leaves
+physical row deletion, which Iceberg does well and which says nothing about the copies in
+snapshots, in the offline store's Parquet, or in an old training set.
+
+**Key per substation, or per cohort.** Cheaper by four orders of magnitude and it erases the
+wrong number of people. A cohort key destroyed on one subject's request takes the others with
+it; kept, it erases nobody.

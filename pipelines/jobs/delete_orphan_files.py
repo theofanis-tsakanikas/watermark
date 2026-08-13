@@ -54,9 +54,7 @@ def existing(spark, tables):
         # Louder than a clean exit. Every table missing means the catalogue is not what this job
         # was written against, and reporting success would tell an erasure that files were
         # removed when none were examined.
-        raise RuntimeError(
-            "no table in TABLES exists; refusing to report a maintenance run"
-        )
+        raise RuntimeError("no table in TABLES exists; refusing to report a maintenance run")
     return present
 
 

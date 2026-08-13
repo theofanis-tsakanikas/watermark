@@ -27,6 +27,16 @@ on when the batches happened to fall relative to each other. Two runs closing th
 the same data at different instants is the system working, and asserting on it would make this a
 test of the runner's pacing.
 
+**Three sets, not two — and the live run that showed why.** The landing prefix accumulates across
+every capture the estate has ever driven, so a copy taken "before the replay" contains months of
+history as well as this capture's first delivery. The first live run reported
+`first run: 9664 published values; replay: 4062` and named four thousand rows the replay had
+supposedly lost. It had lost nothing: 9,664 was every capture ever run, and the offset
+normalisation below was computed against the oldest interval in the bucket rather than against
+this run's own first. The caller must therefore pass what existed *before the capture started* as
+well, so history can be subtracted from both sides. `capture.yml` records it at the top of the
+run.
+
 **A run that finds no rows fails.** An empty comparison agrees with itself perfectly, and a
 harness that reports green over nothing is the failure this whole repository is written against.
 """

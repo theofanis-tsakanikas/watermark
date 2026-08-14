@@ -85,14 +85,8 @@ data "aws_iam_policy_document" "logs_key" {
     actions   = ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"]
     resources = ["*"]
     principals {
-      type = "Service"
-      identifiers = [
-        "logs.${var.aws_region}.amazonaws.com",
-        # Budgets encrypts the notification it publishes to the reaper's topic with this key.
-        # Omitting it is invisible until the threshold is crossed, at which point the delivery
-        # fails and the one message the control exists to send is the one nobody receives.
-        "budgets.amazonaws.com",
-      ]
+      type        = "Service"
+      identifiers = ["logs.${var.aws_region}.amazonaws.com"]
     }
     # Without this the key is usable by the logs service for *any* log group in the account.
     condition {

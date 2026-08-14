@@ -214,13 +214,6 @@ data "aws_iam_policy_document" "deploy_layers" {
       # `ListAttachedRolePolicies` — the glob ends in the singular. The first apply that
       # reached AWS died on exactly this, after creating the role it then could not read.
       "iam:ListAttachedRolePolicies", "iam:ListRoleTags", "iam:ListInstanceProfilesForRole",
-      # A *managed* policy, which `iam:*RolePolicy` does not reach — that glob ends in the
-      # singular and matches `PutRolePolicy` and friends, never `CreatePolicy`. The budget
-      # action needs one: `iam_action_definition` takes a policy ARN, and only a managed policy
-      # has one. Attaching it to the deploy role is what freezes creation past the threshold.
-      "iam:CreatePolicy", "iam:DeletePolicy", "iam:GetPolicy", "iam:ListPolicies",
-      "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
-      "iam:ListPolicyVersions", "iam:TagPolicy", "iam:ListEntitiesForPolicy",
     ]
     resources = ["*"]
   }

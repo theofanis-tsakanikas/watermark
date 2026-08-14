@@ -74,7 +74,7 @@ asking the same question a different way: *what does this repository claim that 
 | Two features that could not be served | `substation_telemetry` was a catalogue entry with no writer; `headroom_w` was a column no table had | `check_feature_sources.py`, `land_telemetry.py`, and all three features compared live |
 | A ruleset never evaluated | Six Glue Data Quality rules, applied and attached, never once run against a row | `evaluate_quality.py`, reporting rule by rule |
 | A reaper that deleted nothing | It classified, logged `would delete`, and returned a list — hourly, convincingly | `WATERMARK_REAPER_MODE`, ten tests over every branch that deletes |
-| A budget guard that did not exist | `CLAUDE.md` described it; the account had never had one | `aws_budgets_budget` + an action that denies creation and never deletion |
+| A budget guard I reported missing | It was not missing. `infra/bootstrap/cost.tf` has had it — budget, notifications and the action that detaches the deploy role — since before this phase. I searched `infra/foundation/` and concluded from an absence | The duplicate was reverted. The lesson is in the search, not the code: an absence in one layer is not an absence |
 
 ### Open
 
@@ -82,7 +82,6 @@ asking the same question a different way: *what does this repository claim that 
 |---|---|---|
 | **The five-step sequence, in order** | Steps 3–5 — promote, redeploy with an endpoint, capture again — have each run, but not in sequence with the case matrices present | One run of `deploy → capture → promote → deploy → capture`, green throughout |
 | **Claim 7's second half** | The refusal is proved on every run: 20 pending, 0 actuated. That a *named human* is the only thing that can actuate needs a name on a record | A capture with `approver` set, and the actuated decision carrying it |
-| **The budget action** | It needs `iam:CreatePolicy`, and bootstrap is the one layer that applies from a laptop | A bootstrap apply, then `budget_action_enabled = true` — WV-004 |
 | **The savepoint-restore drill** | A harness rather than an assertion: hold a job open, cancel with a savepoint, resume | A test in `tests_flink/` that survives the break — WV-001 |
 | **Required reviewers** | Removed so a session could iterate without an approval prompt on every one of six runs in a day | Attach one to `deploy` and `destroy` — WV-003 |
 | **Model Monitor and Clarify** | Closed by AWS to accounts of this class. Not a decision this repository made and no work here reopens it | AWS reopening them, or the bias leg moving to a service that is open — WV-002 |
@@ -97,7 +96,7 @@ eighth that restates one of the seven from a different angle would make the tabl
 and prove nothing new.
 
 **It will not close an open item by narrowing it.** The savepoint drill is not closed by
-asserting that savepoints exist; the budget action is not closed by writing that it would work.
+asserting that savepoints exist; a reviewer is not attached by writing that one should be.
 Each of the rows above says what would actually close it, and none of them says "document it".
 
 **It will not leave a gap unwritten.** Every open item is either in the table above or in

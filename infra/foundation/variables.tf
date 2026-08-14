@@ -63,30 +63,3 @@ variable "log_retention_days" {
     error_message = "AI Act Art. 19 sets a floor of six months for a high-risk system's logs."
   }
 }
-
-variable "monthly_budget_usd" {
-  type        = string
-  default     = "150"
-  description = <<-EOT
-    The ceiling the budget action fires at, in USD. Above the €100 a full capture with teardown
-    is designed to cost, because this is a *month* and a month may hold more than one capture —
-    and a threshold that trips on ordinary use is a threshold somebody raises without thinking
-    the second time.
-
-    Not a substitute for `scripts/check_cost_envelope.py`. That refuses a design that could not
-    come in under the target; this catches the estate that was left standing anyway.
-  EOT
-}
-
-variable "budget_action_enabled" {
-  type        = bool
-  default     = false
-  description = <<-EOT
-    Whether the budget's automatic freeze is created. It needs `iam:CreatePolicy` on the deploy
-    role, which arrives with the next bootstrap apply — and bootstrap is the one layer that runs
-    from a laptop, so this cannot be turned on by the same workflow that needs it.
-
-    Off does not mean unwatched: the budget and both notifications exist either way. What is off
-    is the automatic attachment of the deny policy at 100%.
-  EOT
-}

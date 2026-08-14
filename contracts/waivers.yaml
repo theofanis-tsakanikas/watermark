@@ -96,30 +96,3 @@ waivers:
       for a waiver the author both wants and grants. The check below refuses a self-approved
       waiver *unless* this field states why, which is the most an honest single-author project
       can do: it cannot manufacture a second person, so it refuses to let the gap go unwritten.
-
-  - id: WV-004
-    finding: >-
-      The budget's automatic freeze is not created. `aws_budgets_budget_action.freeze` attaches a
-      deny-creation policy to the deploy role at 100% of the monthly budget, and it is behind
-      `budget_action_enabled`, which defaults to false. The budget itself and both notifications
-      are live, so the estate is watched — what is missing is the action that stops it growing.
-    where: infra/foundation/cost.tf
-    claim: cost-controls
-    reason: >-
-      A budget action attaches a *managed* policy, and creating one needs `iam:CreatePolicy`,
-      which the deploy role does not hold. The permission is written into
-      `infra/bootstrap/oidc.tf` — but bootstrap is the one layer in this repository that applies
-      from a laptop rather than from a gated workflow, so the deploy that needs the permission
-      cannot be the deploy that grants it. Shipping it enabled would mean a foundation layer
-      that fails on apply for everyone until somebody happens to re-bootstrap.
-    closes_when: >-
-      `infra/bootstrap/` is applied from a laptop with the managed-policy actions in place, and
-      `budget_action_enabled` is set to true for the foundation layer.
-    requested_by: theofanis-tsakanikas
-    granted_by: theofanis-tsakanikas
-    granted_on: 2026-08-14
-    expires_on: 2026-09-13
-    self_approval_acknowledged: >-
-      One author, and the honest note is that this waiver is short precisely because the author
-      is also the person with the laptop. Nobody is being asked to accept a risk they cannot
-      remove; the work is one command and the date is what makes it happen.

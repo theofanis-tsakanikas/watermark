@@ -88,7 +88,11 @@ jobs:
     name: stand up and drive the day
     runs-on: ubuntu-latest
     environment: deploy
-    timeout-minutes: 60
+    # Ninety, because this job publishes the generated day **twice** — once to drive the
+    # scenario and once for claim 2's replay — and the publisher issues one synchronous
+    # `Publish` per record at about six a second. The first staged run measured 27.6 minutes for
+    # the first pass and was killed at sixty in the middle of the second.
+    timeout-minutes: 90
 
     env:
       PROJECT: watermark

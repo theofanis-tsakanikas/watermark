@@ -17,12 +17,22 @@ comes back `release` and a broken comparison looks identical to a working one. `
 over its declared limit in the afternoon, so a capture contains both answers and the fallback has
 something to be conservative about.
 
-**Sampled once a minute, not once a second.** The record's docstring says once a second and that
-is the scenario's real rate. A day of per-second telemetry across four substations is 345,600
-messages, which at the publisher's 287x compression is seven hundred a second of telemetry alone
-— a rate that would make the capture a test of IoT Core's ingest limits rather than of this
-system's decisions. The period is named here rather than buried, so the difference between what
-the scenario describes and what the capture drives is a number somebody can read.
+**Sampled once every five minutes, not once a second, and the number was moved once already.**
+The record's docstring says once a second and that is the scenario's real rate. A day of
+per-second telemetry across four substations is 345,600 messages — a capture that would test IoT
+Core's ingest limits rather than this system's decisions.
+
+It started at once a minute, which is 5,760 messages, and the first staged capture measured what
+that costs: the publisher issues one synchronous `Publish` per record and manages about six a
+second, so telemetry alone added twenty minutes to a run that was already publishing 4,312 meter
+deliveries. The `drive` job hit its hour and was killed mid-replay.
+
+Five minutes is 1,152 messages. The curtailment decision reads the *latest* value per substation
+and nothing else, so the sampling rate changes how finely the load curve is drawn and not what
+the decision sees — `SUB-01` still crosses its limit, for about eight samples instead of forty.
+
+The number is named here rather than buried, so the distance between what the scenario describes
+and what a capture drives is something somebody can read and argue with.
 """
 
 from __future__ import annotations
@@ -36,7 +46,7 @@ from data import cast
 from watermark.core.time import Duration, Instant
 
 #: How often the generator samples. See the module docstring for why this is not one second.
-TELEMETRY_PERIOD: Final = Duration.of_seconds(60)
+TELEMETRY_PERIOD: Final = Duration.of_minutes(5)
 
 #: The substation driven past its thermal limit, so that a capture contains a `throttle` and not
 #: only a day of `release`. Named for the same reason `SILENT_SUBSTATION` is: a case that only

@@ -166,6 +166,14 @@ CHECKS: list[Check] = [
         "case nothing reads cannot fail, which is worse than one that does.",
     ),
     Check(
+        "claims",
+        "the settlement path",
+        [PYTHON, "-m", "evals.settlement"],
+        "The third decision contract, and doctrine 4 — a correction never erases what was "
+        "previously stated. Its safe state is the inverse of curtailment's, and the contract "
+        "is what says which is which.",
+    ),
+    Check(
         "deployability",
         "glue runtime",
         [PYTHON, "scripts/check_glue_runtime.py"],
@@ -190,6 +198,22 @@ CHECKS: list[Check] = [
         slow=True,
     ),
     # ── Consistency ─────────────────────────────────────────────────────────
+    Check(
+        "consistency",
+        "feature sources",
+        [PYTHON, "scripts/check_feature_sources.py"],
+        "Every feature reads a column that exists, from a table something writes. A declared "
+        "table nobody populates answers every query with zero rows and no error, which is how "
+        "two features sat unservable for the whole life of the lakehouse.",
+    ),
+    Check(
+        "consistency",
+        "waivers",
+        [PYTHON, "scripts/check_waivers.py"],
+        "Doctrine 6 — every exception carries a name and an end date, and an expired one "
+        "brings its finding back. This check goes red on its own schedule, with no commit "
+        "behind it, which is the whole point of it.",
+    ),
     Check(
         "consistency",
         "entity contracts",

@@ -436,6 +436,37 @@ jobs:
             --first out/landing-first \
             --after out/landing-second
 
+      - name: the invariants the stream core guarantees, checked against the deployed table
+        # **The ruleset was declared, applied and never once evaluated.** It has sat attached to
+        # `silver.meter_interval` for the whole life of the lakehouse: six rules, a Terraform
+        # resource, a clean plan, and not a single row ever compared against a single rule.
+        #
+        # It runs here rather than in `deploy` because there is nothing to evaluate until the
+        # merge has landed rows — a ruleset against an empty table passes every rule it has,
+        # which is the shape of green this project spends most of its effort refusing.
+        #
+        # The role is the maintenance role, not the deploy role: Glue assumes it to read the
+        # table, and it is the principal that already holds the Lake Formation grants. Handing
+        # this the deploy role would mean widening the one credential in the estate that can
+        # change infrastructure, in order to read six columns.
+        run: |
+          set -euo pipefail
+
+          status=0
+          python scripts/evaluate_quality.py \
+            --ruleset "${PROJECT}-meter-interval" \
+            --database "${PROJECT}_silver" \
+            --table meter_interval \
+            --role "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${PROJECT}-lakehouse-maintenance" \
+            > quality.md 2>&1 || status=$?
+
+          # The log and the summary both, rather than a redirect into one of them. A failed rule
+          # names the invariant that broke, and reading it should not require opening the run's
+          # summary page.
+          cat quality.md
+          cat quality.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       - uses: actions/upload-artifact@v4
         with:
           name: landing-before
@@ -793,14 +824,42 @@ jobs:
         #
         # It needs the online store, which `deploy` creates only when asked. With it off there
         # is no online side at all, and this step says so rather than passing over an absence.
+        #
+        # **All three features, not one.** For most of this project's life only
+        # `meter_consumption_1h` was compared, and the two substation features were never served
+        # at all — their source table was a Glue catalogue entry with no writer, so an as-of
+        # query over it returned zero rows and reported no error. Claim 3 was true about a third
+        # of the feature set and read as though it were true about all of it.
         run: |
           set -euo pipefail
-          python scripts/parity_live.py \
-            --feature meter_consumption_1h \
-            --feature-group "${PROJECT}-meter-consumption" \
-            --database "${PROJECT}_silver" \
+
+          # Land the telemetry first. The substation features read `gold.substation_telemetry`,
+          # and until this step existed nothing in the repository put a row in it.
+          python scripts/land_telemetry.py \
+            --bucket "$LAKEHOUSE" \
+            --database "${PROJECT}_gold" \
             --workgroup "$PROJECT" \
-            --region "$AWS_DEFAULT_REGION"
+            --since "${{ inputs.snapshot }}"
+
+          # Each feature separately, and the loop does not swallow a failure: a divergence on the
+          # second must fail the step even though the first agreed.
+          fail=0
+          compare() {
+            python scripts/parity_live.py \
+              --feature "$1" \
+              --feature-group "${PROJECT}-$2" \
+              --database "${PROJECT}_$3" \
+              --workgroup "$PROJECT" \
+              --region "$AWS_DEFAULT_REGION" || fail=1
+          }
+
+          compare meter_consumption_1h    meter-consumption silver
+          compare substation_load_15m     substation-load   gold
+          compare substation_headroom_15m substation-load   gold
+
+          [ "$fail" -eq 0 ] || {
+            echo "::error::claim 3 does not hold for every feature the contracts declare"
+            exit 1; }
 
       - name: the silent substation held the watermark back, and said so
         # **Claim 1's edge case, and the one the README listed as never induced in the cloud.**
@@ -1176,6 +1235,36 @@ jobs:
             echo "::error::the erasure took ${SUBJECT}'s rows and $((before_others - after_others)) belonging to ${PREDECESSOR}. Over-deletion is a breach in the other direction"
             fail=1; }
           exit $fail
+
+      # Everything above checks one leg — the lakehouse rows — and takes the other five on the
+      # state machine's word. A certificate that verifies its own legs is a signature on a blank
+      # page, so this asks the estate the same questions through different services: the shred
+      # through KMS, the online store through GetRecord, the training sets through Athena.
+      #
+      # It is a separate step so that a failure here reads as "the certificate is wrong" rather
+      # than as "the erasure failed". They are different findings and the second is much less
+      # serious: an erasure that fails loudly is a retry, and a certificate that lies is a
+      # statement made to a data subject that was not true.
+      - name: every leg, checked against the estate rather than against the certificate
+        run: |
+          set -euo pipefail
+
+          # Written to a file and appended afterwards rather than piped through `tee`. The
+          # default shell here is `bash -e`, not `bash -e -o pipefail`, so a pipe would hand the
+          # step `tee`'s exit code and a contradicted leg would pass silently — which is the
+          # precise failure this whole step exists to make impossible.
+          status=0
+          python scripts/erasure_legs_live.py \
+            --subject "C00007-NEW" \
+            --meters "M00007" \
+            --project "$PROJECT" \
+            --bucket "$LAKEHOUSE" \
+            --workgroup "$PROJECT" > legs.md 2>&1 || status=$?
+
+          cat legs.md
+          { echo ""; echo "### Every leg, checked independently"; echo ""; cat legs.md; } \
+            >> "$GITHUB_STEP_SUMMARY"
+          exit $status
 
 
   stop:

@@ -137,6 +137,16 @@ resource "aws_lambda_function" "reaper" {
   environment {
     variables = {
       WATERMARK_PROJECT = var.project
+
+      # `destroy`, explicitly. The function defaults to `report` when this is absent, and it
+      # spent most of this project's life doing exactly that without anybody choosing it: it
+      # classified every expired resource, logged `would delete`, and returned the list. The
+      # schedule fired hourly and the log filled with lines that read like work.
+      #
+      # The default in the code stays `report` because the two mistakes are not symmetric. A
+      # deployment that loses this variable under-deletes, which costs money; the other default
+      # over-deletes, and there is no undo for that.
+      WATERMARK_REAPER_MODE = "destroy"
     }
   }
 
@@ -175,4 +185,191 @@ resource "aws_lambda_permission" "reaper" {
   function_name = aws_lambda_function.reaper.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.reaper.arn
+}
+
+# ── The budget action, and the trap in the obvious version ───────────────────
+#
+# `CLAUDE.md` says an AWS Budget action disables the deploy role at its threshold. **It did not
+# exist.** Not a stub, not a disabled resource — the sentence described a control the estate had
+# never had, which is the same failure as the reaper's and arrived the same way: the reasoning
+# was written down, and nothing was checking that the reasoning had been implemented.
+#
+# **The obvious implementation is a trap and it is worth naming.** Attaching a blanket deny to
+# the deploy role at the threshold locks out `destroy.yml` as well as `deploy.yml` — so the
+# moment spending crosses the line, the estate becomes impossible to tear down and bills for
+# every hour somebody spends unpicking the policy by hand. The control designed to stop the
+# spending would be the thing guaranteeing it continues.
+#
+# So the policy denies *creation* and leaves deletion alone. Past the threshold this account can
+# still be emptied and cannot be filled, which is the shape the control was actually for.
+
+# Budgets publishes to SNS as a service principal, so IAM on the *subscriber* is not enough:
+# the topic has to accept it, and the key it is encrypted with has to let it encrypt. Both are
+# below. Without either, `terraform apply` succeeds, the budget exists, the threshold is crossed
+# and nothing is ever delivered — a control that fails in exactly the silence it was built for.
+resource "aws_sns_topic_policy" "budget_notifications" {
+  arn = aws_sns_topic.reaper_failures.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AccountOwnerAdministers"
+        Effect    = "Allow"
+        Principal = { AWS = data.aws_caller_identity.current.account_id }
+        Action    = ["SNS:Publish", "SNS:Subscribe", "SNS:GetTopicAttributes"]
+        Resource  = aws_sns_topic.reaper_failures.arn
+      },
+      {
+        Sid       = "BudgetsMayNotify"
+        Effect    = "Allow"
+        Principal = { Service = "budgets.amazonaws.com" }
+        Action    = "SNS:Publish"
+        Resource  = aws_sns_topic.reaper_failures.arn
+        Condition = {
+          StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_budgets_budget" "estate" {
+  name         = "${var.project}-estate"
+  budget_type  = "COST"
+  limit_amount = var.monthly_budget_usd
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
+
+  # `format`, not interpolation. AWS wants `user:<key>$<value>` and `$${` in HCL is the escape
+  # for a literal `${` — so the obvious spelling produces the string `user:watermark:project`
+  # followed by the four characters of a variable reference, and a budget filtered on a tag
+  # nothing carries is a budget over an empty account that never fires.
+  cost_filter {
+    name   = "TagKeyValue"
+    values = [format("user:watermark:project$%s", var.project)]
+  }
+
+  # Two notifications before the action, because a control that only speaks when it acts gives
+  # nobody the chance to decide. Forecast first: it is the one that arrives while there is still
+  # something to do about it.
+  notification {
+    comparison_operator       = "GREATER_THAN"
+    threshold                 = 80
+    threshold_type            = "PERCENTAGE"
+    notification_type         = "FORECASTED"
+    subscriber_sns_topic_arns = [aws_sns_topic.reaper_failures.arn]
+  }
+
+  notification {
+    comparison_operator       = "GREATER_THAN"
+    threshold                 = 100
+    threshold_type            = "PERCENTAGE"
+    notification_type         = "ACTUAL"
+    subscriber_sns_topic_arns = [aws_sns_topic.reaper_failures.arn]
+  }
+}
+
+data "aws_iam_policy_document" "over_budget" {
+  # Deny what creates and what costs. `Delete*`, `Stop*` and `Destroy*` are deliberately absent:
+  # see the note above. Read actions stay too — an account nobody can describe is an account
+  # nobody can tear down either.
+  statement {
+    sid    = "NothingNewPastTheThreshold"
+    effect = "Deny"
+    actions = [
+      "kinesisanalyticsv2:CreateApplication",
+      "kinesisanalyticsv2:StartApplication",
+      "kinesisanalyticsv2:UpdateApplication",
+      "sagemaker:CreateEndpoint",
+      "sagemaker:CreateEndpointConfig",
+      "sagemaker:UpdateEndpoint",
+      "sagemaker:CreateFeatureGroup",
+      "sagemaker:CreateTrainingJob",
+      "sagemaker:CreateProcessingJob",
+      "kinesis:CreateStream",
+      "kinesis:IncreaseStreamRetentionPeriod",
+      "kinesis:UpdateShardCount",
+      "glue:StartJobRun",
+      "glue:CreateJob",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_policy" "over_budget" {
+  # **Gated, and the gate is a laptop.** A managed policy needs `iam:CreatePolicy`, which the
+  # deploy role does not hold — the glob it has ends in the singular and reaches only the
+  # inline-policy calls. The permission is now written into `infra/bootstrap/oidc.tf`, and that
+  # layer is the one thing in this repository that applies from a laptop rather than from a
+  # gated workflow, so it takes effect on the next bootstrap apply and not before.
+  #
+  # Until then this is off rather than broken: the budget and both notifications still exist and
+  # still fire, so the estate is watched. What is missing is the *automatic* freeze. That gap is
+  # WV-004 in `contracts/waivers.yaml`, with a date on it, because a control that is described
+  # and switched off is the exact failure the register exists to make impossible to forget.
+  count = var.budget_action_enabled ? 1 : 0
+
+  name        = "${var.project}-over-budget"
+  description = "Attached by the budget action at its threshold. Denies creation, never deletion."
+  policy      = data.aws_iam_policy_document.over_budget.json
+}
+
+resource "aws_iam_role" "budget_action" {
+  count = var.budget_action_enabled ? 1 : 0
+
+  name = "${var.project}-budget-action"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "budgets.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+data "aws_iam_policy_document" "budget_action" {
+  statement {
+    sid       = "AttachTheDenyPolicy"
+    effect    = "Allow"
+    actions   = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-deploy"]
+  }
+}
+
+resource "aws_iam_role_policy" "budget_action" {
+  count = var.budget_action_enabled ? 1 : 0
+
+  name   = "attach-the-deny-policy"
+  role   = aws_iam_role.budget_action[0].id
+  policy = data.aws_iam_policy_document.budget_action.json
+}
+
+resource "aws_budgets_budget_action" "freeze" {
+  count = var.budget_action_enabled ? 1 : 0
+
+  budget_name        = aws_budgets_budget.estate.name
+  action_type        = "APPLY_IAM_POLICY"
+  approval_model     = "AUTOMATIC"
+  notification_type  = "ACTUAL"
+  execution_role_arn = aws_iam_role.budget_action[0].arn
+
+  action_threshold {
+    action_threshold_type  = "PERCENTAGE"
+    action_threshold_value = 100
+  }
+
+  definition {
+    iam_action_definition {
+      policy_arn = aws_iam_policy.over_budget[0].arn
+      roles      = ["${var.project}-deploy"]
+    }
+  }
+
+  subscriber {
+    address           = aws_sns_topic.reaper_failures.arn
+    subscription_type = "SNS"
+  }
 }

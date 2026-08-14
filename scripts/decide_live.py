@@ -47,6 +47,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from data.cast import SUBSTATIONS  # noqa: E402
 from watermark.contracts import load  # noqa: E402
 from watermark.core.records import SubstationTelemetry  # noqa: E402
 from watermark.core.time import Duration, Instant  # noqa: E402
@@ -66,14 +67,6 @@ CONSEQUENTIAL: Final = "meter_anomaly"
 #: and one endpoint invocation, and the properties being asserted are properties of the
 #: decision path — they do not get truer at two hundred meters than at twenty.
 POPULATION: Final = 20
-
-#: How many telemetry objects to read, newest first.
-#:
-#: One per substation per minute accumulates fast, and the decision needs only the last of
-#: each. Bounded rather than unbounded so a long capture does not turn a decision into a
-#: full-prefix scan — and stated rather than silent, because a cap that nobody can see is a cap
-#: that eventually truncates something that mattered.
-TELEMETRY_SCAN: Final = 200
 
 #: The score above which the endpoint's output is read as `queue_for_inspection`.
 #:
@@ -236,34 +229,49 @@ def meters_in(lines: list[dict[str, Any]]) -> list[str]:
 def latest_telemetry(client, bucket: str) -> dict[str, SubstationTelemetry]:
     """The newest load measurement per substation, read from the prefix the IoT rule writes.
 
-    **Newest per substation, not newest overall.** The curtailment fallback is computed from
-    "the last telemetry reading" for the substation it is deciding about, and a global latest
-    would judge three substations against a fourth's measurement. They are separate physical
-    assets with separate limits; conflating them is how a healthy substation gets throttled
-    because a different one is hot.
+    **Listed per substation, and the first version listed them all at once.** It paginated the
+    whole `telemetry/` prefix, sorted the keys in reverse and took the newest two hundred — which
+    reads as "the most recent measurements" and is not. The keys are `telemetry/<substation>/…`,
+    so a reverse sort orders by substation first: the newest two hundred were two hundred
+    consecutive `SUB-04` objects, and `SUB-01` — the one driven past its limit on purpose — was
+    never in the window at all.
+    #
+    The capture reported `no throttle in the whole capture`, which is the assertion doing its job
+    on a decider that had been handed three healthy substations and told nothing about the fourth.
+
+    Listing under each substation's own prefix asks the question that was meant: the newest
+    measurement *for this substation*. It is one call per substation instead of one for the
+    bucket, and it cannot be skewed by how many objects a neighbour happens to have.
+
+    **Newest per substation, not newest overall**, for the same reason it was always meant to be:
+    these are separate physical assets with separate limits, and judging one against another's
+    measurement is how a healthy substation gets throttled because a different one is hot.
 
     Read directly rather than through the lakehouse. That is the contract's requirement, not a
-    shortcut: `uses_features: false` means the fallback must be computable when the feature
-    store is unavailable, and a path that reached Athena would be unavailable in exactly the
-    conditions the primary path is — the one property ADR-0001 requires it not to have.
+    shortcut: `uses_features: false` means the fallback must be computable when the feature store
+    is unavailable, and a path that reached Athena would be unavailable in exactly the conditions
+    the primary path is — the one property ADR-0001 requires it not to have.
     """
     latest: dict[str, SubstationTelemetry] = {}
-    pages = client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix="telemetry/")
-    keys = [item["Key"] for page in pages for item in page.get("Contents", ())]
-    # Newest first, and bounded. The prefix accumulates one object per substation per minute for
-    # the whole capture; the decision needs the last of each and nothing before it.
-    for key in sorted(keys, reverse=True)[:TELEMETRY_SCAN]:
-        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+    for substation in SUBSTATIONS:
+        pages = client.get_paginator("list_objects_v2").paginate(
+            Bucket=bucket, Prefix=f"telemetry/{substation}/"
+        )
+        newest = None
+        for page in pages:
+            for item in page.get("Contents", ()):
+                if newest is None or item["LastModified"] > newest["LastModified"]:
+                    newest = item
+        if newest is None:
+            continue
+        body = client.get_object(Bucket=bucket, Key=newest["Key"])["Body"].read()
         try:
             record = json.loads(body)
         except json.JSONDecodeError:
             continue
-        substation = str(record.get("substation_id", ""))
-        if not substation or substation in latest:
-            continue
         moment = Instant.from_iso(str(record["event_time"]))
         latest[substation] = SubstationTelemetry(
-            substation_id=substation,
+            substation_id=str(record.get("substation_id", substation)),
             event_time=moment,
             ingest_time=moment,
             load_w=int(record["load_w"]),

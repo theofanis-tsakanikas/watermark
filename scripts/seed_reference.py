@@ -111,6 +111,31 @@ def day_shift() -> int:
     return int(time.time() * 1000) - DAY_END.epoch_millis
 
 
+#: Where an SCD-2 history begins, for the version that is in force at the start of the cast's day.
+#:
+#: **Not the shifted `DAY_START`, and the first live build of the gold layer showed why.** The
+#: cast's day is a window into a longer history: a customer had a tariff before the day being
+#: settled, and a CRM export would say so. Seeding the earliest version at the day's own start
+#: makes every reading from *before* that instant unpriced — and the silver table accumulates
+#: across captures, so it holds readings from days the current seed has never heard of.
+#:
+#: `settlement_priced` inner-joins the tariff deliberately rather than defaulting to zero, so
+#: those rows were absent rather than free: 1,357 settled hours against 961 priced, and the test
+#: written to catch exactly that reported 396. The test was right; the history was too short.
+#:
+#: Only the *opening* version moves. The changeovers — `M00007`'s customer at 10:00, `M00019`'s
+#: tariff at 14:00 — stay on the stream's day, because those are the point-in-time cases and
+#: moving them would erase what they exist to prove.
+HISTORY_BEGINS: Final = "2000-01-01 00:00:00"
+
+
+def _valid_from(epoch_millis: int, shift: int, day_start_millis: int) -> str:
+    """The opening version reaches back; every later one sits on the stream's day."""
+    if epoch_millis == day_start_millis:
+        return f"TIMESTAMP '{HISTORY_BEGINS}'"
+    return _sql_timestamp(epoch_millis + shift)
+
+
 def meter_assignment_rows() -> list[str]:
     """The SCD-2 assignment history, straight off the cast and moved onto the stream's day.
 
@@ -119,9 +144,10 @@ def meter_assignment_rows() -> list[str]:
     the customer who held the meter before 10:00 must reach the readings from before 10:00 and
     not the ones after, and a flat map cannot express the difference.
     """
-    from data.cast import meter_assignments  # noqa: PLC0415
+    from data.cast import DAY_START, meter_assignments  # noqa: PLC0415
 
     shift = day_shift()
+    day_start = DAY_START.epoch_millis
     rows = []
     for version in meter_assignments().versions:
         valid_to = (
@@ -132,7 +158,7 @@ def meter_assignment_rows() -> list[str]:
         rows.append(
             f"({_quote(version.entity_id)}, "
             f"{_quote(str(version.attributes['customer_id']))}, "
-            f"{_sql_timestamp(version.valid_from.epoch_millis + shift)}, {valid_to})"
+            f"{_valid_from(version.valid_from.epoch_millis, shift, day_start)}, {valid_to})"
         )
     return rows
 
@@ -144,9 +170,10 @@ def customer_rows() -> list[str]:
     needs to know when there is none. Both models have existed since phase 2 and neither had
     ever run, because the table they read was a Terraform declaration with no writer.
     """
-    from data.cast import customers  # noqa: PLC0415
+    from data.cast import DAY_START, customers  # noqa: PLC0415
 
     shift = day_shift()
+    day_start = DAY_START.epoch_millis
     rows = []
     for version in customers().versions:
         valid_to = (
@@ -158,7 +185,7 @@ def customer_rows() -> list[str]:
             f"({_quote(version.entity_id)}, "
             f"{_quote(str(version.attributes['balancing_group']))}, "
             f"{_quote(str(version.attributes['postcode_area']))}, "
-            f"{_sql_timestamp(version.valid_from.epoch_millis + shift)}, {valid_to})"
+            f"{_valid_from(version.valid_from.epoch_millis, shift, day_start)}, {valid_to})"
         )
     return rows
 
@@ -176,9 +203,10 @@ def tariff_rows() -> list[str]:
     energy is watt-hours: a settlement figure that arrives as a float is a settlement figure two
     engines disagree about in the last place, which is exactly where money lives.
     """
-    from data.cast import tariffs  # noqa: PLC0415
+    from data.cast import DAY_START, tariffs  # noqa: PLC0415
 
     shift = day_shift()
+    day_start = DAY_START.epoch_millis
     rows = []
     for version in tariffs().versions:
         valid_to = (
@@ -190,7 +218,7 @@ def tariff_rows() -> list[str]:
             f"({_quote(version.entity_id)}, "
             f"{_quote(str(version.attributes['tariff_code']))}, "
             f"{int(version.attributes['unit_price_cents_per_kwh'])}, "
-            f"{_sql_timestamp(version.valid_from.epoch_millis + shift)}, {valid_to})"
+            f"{_valid_from(version.valid_from.epoch_millis, shift, day_start)}, {valid_to})"
         )
     return rows
 

@@ -41,7 +41,25 @@ CLAIMS = {f"claim-{number}" for number in range(1, 8)}
 #: shape. `deploy-inputs` is the rule that no value the account can be asked for may be
 #: transcribed into a settings page, which is a control precisely because its failure mode is
 #: silent and lives outside the repository.
-WIRING = {"deploy-inputs", "partition-vocabulary"}
+WIRING = {
+    "deploy-inputs",
+    "partition-vocabulary",
+    "waivers",
+    "settlement",
+    "feature-sources",
+    "contract-coverage",
+    "oidc-subjects",
+    "vpc-endpoints",
+    "lakehouse-wiring",
+    "model-pins-agree",
+    "flink-versions-agree",
+    "cost-envelope",
+    "glue-runtime",
+    "evals-cases",
+    "cases-live",
+    "decide-live",
+    "seed-reference",
+}
 #: `partition-vocabulary` is the rule that the field the IoT topic rule calls `partition`
 #: carries what `WATERMARK_PARTITIONS` declares. Wiring rather than a gate for the same
 #: reason: the two sides are HCL and a Python constant, they meet only in a running
@@ -84,3 +102,29 @@ def test_every_mutation_states_why_it_is_plausible() -> None:
     The rationale is where the author has to argue that somebody could actually do this."""
     for mutation in _load_gate_proof().MUTATIONS:
         assert len(mutation.rationale) > 40, mutation.name
+
+
+def test_every_check_script_is_run_by_a_mutation() -> None:
+    """The general form of the rule, so the list above never has to be audited again.
+
+    `test_every_gate_module_is_attacked` covers `src/watermark/gates/`, and for a long time that
+    was the whole of it — which read as complete while eleven checks under `scripts/` had no
+    mutation against any of them. A check is a gate; where its code lives is an implementation
+    detail. Matching on the *command* rather than on the declared module means a mutation counts
+    only if it actually runs the check, and a new check ships red until one does.
+    """
+    commands = {
+        token
+        for mutation in _load_gate_proof().MUTATIONS
+        for token in mutation.command
+        if token.startswith("scripts/check_")
+    }
+    checks = {f"scripts/{path.name}" for path in (REPOSITORY / "scripts").glob("check_*.py")}
+    assert checks <= commands, f"checks no mutation runs: {sorted(checks - commands)}"
+
+
+def test_every_mutation_declares_a_command_that_could_refuse_it() -> None:
+    """A mutation whose command is `true` would pass the harness for ever."""
+    for mutation in _load_gate_proof().MUTATIONS:
+        assert mutation.command, mutation.name
+        assert mutation.expect.strip(), mutation.name

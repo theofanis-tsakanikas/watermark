@@ -400,7 +400,343 @@ def _let_the_transport_send_the_meter_as_the_partition(root: Path) -> bool:
     )
 
 
+def _stop_generating_a_declared_defect(root: Path) -> bool:
+    return _replace(root / "data/cast.py", "_GAP_POSITION: Final = 5", "_GAP_POSITION: Final = -1")
+
+
+def _let_a_live_case_pass_whatever_it_is_given(root: Path) -> bool:
+    return _replace(
+        root / "scripts/cases_live.py",
+        'return "" if condition else message',
+        'return ""  # noqa: ARG001',
+    )
+
+
+def _round_the_replay_offset_onto_the_interval_grid(root: Path) -> bool:
+    return _replace(
+        root / "scripts/replay_live.py",
+        "        offset = centre + step * grid",
+        "        offset = round((centre + step * grid) / grid) * grid",
+    )
+
+
+def _list_the_whole_telemetry_prefix_at_once(root: Path) -> bool:
+    return _replace(
+        root / "scripts/decide_live.py",
+        'Bucket=bucket, Prefix=f"telemetry/{substation}/"',
+        'Bucket=bucket, Prefix="telemetry/"',
+    )
+
+
+def _open_the_reference_history_on_the_day_of_the_run(root: Path) -> bool:
+    return _replace(
+        root / "scripts/seed_reference.py",
+        'HISTORY_BEGINS: Final = "2000-01-01 00:00:00"',
+        'HISTORY_BEGINS: Final = "2026-03-14 00:00:00"',
+    )
+
+
+def _use_a_python_311_builtin_in_a_glue_job(root: Path) -> bool:
+    return _replace(
+        root / "pipelines/jobs/delete_orphan_files.py",
+        "from datetime import datetime, timedelta, timezone",
+        "from datetime import UTC, datetime, timedelta, timezone",
+    )
+
+
+def _point_a_feature_at_a_column_no_table_has(root: Path) -> bool:
+    return _replace(
+        root / "contracts/features/substation_load_15m.yaml",
+        "source_column: load_w",
+        "source_column: load_kw",
+    )
+
+
+def _let_the_settlement_fallback_publish_a_provisional_number(root: Path) -> bool:
+    return _replace(
+        root / "contracts/decisions/settlement_publication.yaml",
+        "  permitted_actions:\n    - restate\n",
+        "  permitted_actions:\n    - restate\n    - publish\n",
+    )
+
+
+def _stop_naming_the_contract_the_harness_holds_the_code_to(root: Path) -> bool:
+    return _replace(
+        root / "evals/settlement/__init__.py",
+        'CONTRACT = "settlement_publication"',
+        "CONTRACT = load().decisions and next(iter(sorted(load().decisions)))",
+    )
+
+
+def _read_an_unaskable_question_as_an_empty_answer(root: Path) -> bool:
+    return _replace(
+        root / "src/watermark/erasure/verify.py",
+        "    if observation.rows is None:",
+        "    if False:",
+    )
+
+
+def _let_an_exception_outlive_its_grant(root: Path) -> bool:
+    return _replace(
+        root / "contracts/waivers.yaml", "    expires_on: 2026-09-13", "    expires_on: 2026-06-30"
+    )
+
+
+def _trust_every_branch_in_the_repository(root: Path) -> bool:
+    return _replace(
+        root / "infra/bootstrap/oidc.tf",
+        '    "repo:${var.github_owner}/${var.github_repo}:environment:deploy",',
+        '    "repo:${var.github_owner}/${var.github_repo}:*",',
+    )
+
+
+def _drop_an_endpoint_the_estate_reaches_through(root: Path) -> bool:
+    # Kinesis, deliberately: it is granted by the streaming layer's IAM policy, so removing its
+    # endpoint is the shape the check exists for. `secretsmanager` was the first choice and it
+    # proved nothing — no policy grants it, so the check was right to stay quiet and the
+    # mutation reported a gate that had accepted a violation nobody had committed.
+    return _replace(root / "infra/foundation/network.tf", '    "kinesis-streams",\n', "")
+
+
+def _rename_a_lakehouse_table_in_one_of_its_three_descriptions(root: Path) -> bool:
+    return _replace(
+        root / "pipelines/dbt/models/silver/sources.yml",
+        "      - name: meter_interval",
+        "      - name: meter_intervals",
+    )
+
+
+def _change_the_seed_on_one_side_of_the_experiment(root: Path) -> bool:
+    return _replace(
+        root / "infra/ml/pipeline.tf", 'seed        = "20260810"', 'seed        = "20260811"'
+    )
+
+
+def _run_the_equivalence_tier_against_a_different_flink(root: Path) -> bool:
+    return _replace(root / "pyproject.toml", '"apache-flink>=1.20"', '"apache-flink>=1.19"')
+
+
+def _leave_the_expensive_things_standing_overnight(root: Path) -> bool:
+    return _replace(
+        root / "scripts/check_cost_envelope.py",
+        "CAPTURE_HOURS = 1",
+        "CAPTURE_HOURS = 168",
+    )
+
+
 MUTATIONS: tuple[Mutation, ...] = (
+    Mutation(
+        "point a feature at a column no table has",
+        "feature sources",
+        "feature-sources",
+        ["scripts/check_feature_sources.py"],
+        "has no such column",
+        _point_a_feature_at_a_column_no_table_has,
+        "A unit rename is the most ordinary edit in this domain — watts to kilowatts, and "
+        "somebody updates the contract. Nothing refuses it: the contract validates, the "
+        "resolver builds a query naming a column that is not there, and the failure arrives at "
+        "the first serve rather than at the commit. Two features in this repository spent the "
+        "whole life of the lakehouse in exactly that state and nothing ever said so.",
+    ),
+    Mutation(
+        "let the settlement fallback publish a provisional number",
+        "the settlement path",
+        "settlement",
+        ["python", "-m", "evals.settlement", "-q"],
+        "A fallback that publishes",
+        _let_the_settlement_fallback_publish_a_provisional_number,
+        "It reads as the helpful thing to do — the head-end is late, publish what we have and "
+        "correct it later. On this path publishing *is* invoicing, so the fallback would create "
+        "the correction it exists to avoid, and it would do it under the marker that tells "
+        "everyone downstream the number was not model-derived. Curtailment's fallback acts for "
+        "exactly the opposite reason, which is why neither engine may decide this at runtime.",
+    ),
+    Mutation(
+        "stop naming the contract the settlement harness holds the code to",
+        "every decision contract is exercised",
+        "contract-coverage",
+        ["python", "-m", "pytest", "tests/test_every_contract_is_exercised.py", "-q"],
+        "decision contracts nothing checks",
+        _stop_naming_the_contract_the_harness_holds_the_code_to,
+        "Deriving the id instead of writing it is the kind of tidy-up that looks like removing "
+        "a hard-coded string. The harness keeps passing, so nothing anywhere reports a problem "
+        "— and the coverage guard, which can only see literal names, goes quiet about the one "
+        "contract that spent months as a document nobody read.",
+    ),
+    Mutation(
+        "read a question nobody could ask as an answer of zero",
+        "claim 6 — erasure is complete to a declared boundary",
+        "claim-6",
+        ["python", "-m", "pytest", "tests/test_erasure_verify.py", "-q"],
+        "count_that_was_never_taken",
+        _read_an_unaskable_question_as_an_empty_answer,
+        "`None` and `0` are one keystroke apart and mean opposite things, and every path that "
+        "produces `None` here is a path where the estate could not be asked: a table that does "
+        "not exist, a query that failed, a feature group nobody created. Collapsing them turns "
+        "the legs nobody could check into the legs that passed — on a certificate whose entire "
+        "purpose is to refuse to say 'erased' until every leg confirms.",
+    ),
+    Mutation(
+        "let an exception outlive the grant that made it one",
+        "waivers",
+        "waivers",
+        ["scripts/check_waivers.py"],
+        "EXPIRED on",
+        _let_an_exception_outlive_its_grant,
+        "Nothing is edited to make this happen — that is what makes it the one control in the "
+        "doctrine a clock has to enforce. The date passes on an ordinary morning, with no commit "
+        "behind it, and the reason the exception was granted stopped being true some weeks "
+        "earlier without anybody being present for the moment. Moving the date back is how the "
+        "mutation reproduces a Tuesday.",
+    ),
+    Mutation(
+        "trust every branch and pull request in the repository",
+        "oidc subjects",
+        "oidc-subjects",
+        ["scripts/check_oidc_subjects.py"],
+        "trusts every branch and every pull request",
+        _trust_every_branch_in_the_repository,
+        "The single most consequential line in the bootstrap layer, and the mutation is what "
+        "somebody writes on the afternoon a deploy will not run from a branch. checkov's "
+        "CKV_AWS_358 reads only the first value of the condition list, so a scanner-green "
+        "estate can hand its deploy role to a pull request a stranger opens against a fork.",
+    ),
+    Mutation(
+        "remove an endpoint the estate reaches a service through",
+        "vpc endpoints",
+        "vpc-endpoints",
+        ["scripts/check_vpc_endpoints.py"],
+        "with no way out of the VPC",
+        _drop_an_endpoint_the_estate_reaches_through,
+        "There is no NAT gateway, on purpose — so a service with no endpoint does not fail, it "
+        "waits. The SDK retries, the socket times out in its own time, and the control plane "
+        "reports the application healthy throughout. Trimming an endpoint that looks unused is "
+        "an ordinary cost saving, and it has cost hours in the sibling project twice.",
+    ),
+    Mutation(
+        "rename a lakehouse table in one of its three descriptions",
+        "lakehouse wiring",
+        "lakehouse-wiring",
+        ["scripts/check_lakehouse_wiring.py"],
+        "the descriptions disagree",
+        _rename_a_lakehouse_table_in_one_of_its_three_descriptions,
+        "Terraform, dbt and the queries describe one lakehouse three times, and only one of them "
+        "is checked against a catalogue. `dbt parse` resolves a source against `sources.yml`, so "
+        "a table that exists in no warehouse compiles perfectly — and a resolver pointed at an "
+        "empty table reads zero rows and calls it zero watt-hours, which is a settlement.",
+    ),
+    Mutation(
+        "change the seed on one side of the experiment",
+        "model pins agree",
+        "model-pins-agree",
+        ["scripts/check_model_pins_agree.py"],
+        "gradient.py says",
+        _change_the_seed_on_one_side_of_the_experiment,
+        "ADR-0005 promises the same snapshot, image and seed yield the same metrics, and the "
+        "promise is void the moment the two sides disagree about what the seed is. Both runs "
+        "still succeed and both still report metrics; the metrics differ for a reason nobody "
+        "looks for, because the obvious explanation is always the data.",
+    ),
+    Mutation(
+        "run the equivalence tier against a different Flink than the deployment",
+        "flink versions agree",
+        "flink-versions-agree",
+        ["scripts/check_flink_versions_agree.py"],
+        "Equivalence with a Flink nobody is running",
+        _run_the_equivalence_tier_against_a_different_flink,
+        "Lowering a floor to make an install resolve is a five-second edit with no visible "
+        "consequence: the tier still runs, still passes, and still prints that the adapter "
+        "matches the core. It now says so about a Flink nobody has deployed, which is worse "
+        "than no tier at all because it occupies the place where the evidence should be.",
+    ),
+    Mutation(
+        "leave the three expensive things standing for a week",
+        "cost envelope",
+        "cost-envelope",
+        ["scripts/check_cost_envelope.py"],
+        "The design is wrong before the budget is",
+        _leave_the_expensive_things_standing_overnight,
+        "The estimate is dominated by how long the estate stands, not by its shape — €1.17 for "
+        "the hour a capture takes, €196 for a week — so the plausible way past the ceiling is "
+        "not a bigger cluster, it is an unattended soak. Somebody wants a week of drift data, "
+        "or leaves the endpoint up between sessions. CLAUDE.md says the three expensive things "
+        "are never left standing, and this is the arithmetic that refuses to let them be.",
+    ),
+    Mutation(
+        "stop generating one of the defects the cast declares",
+        "every declared cohort is checked",
+        "evals-cases",
+        ["python", "-m", "evals.cases"],
+        "contains no meter",
+        _stop_generating_a_declared_defect,
+        "A fixed list of cases cannot catch its own omission — it looks complete by being the "
+        "list. Two of the cast's declared defects were exercised by nothing at all until an "
+        "audit found them, and this is the shape of that: the generator quietly stops emitting "
+        "a cohort, every case still passes, and the matrix reports green over a hole.",
+    ),
+    Mutation(
+        "let a live case pass whatever the estate hands it",
+        "the live case matrix",
+        "cases-live",
+        ["python", "-m", "pytest", "tests/scripts/test_cases_live.py", "-q"],
+        "an_empty_run_fails_every_case",
+        _let_a_live_case_pass_whatever_it_is_given,
+        "The plausible version of this is not sabotage, it is a refactor: `_require` reads like a "
+        "formatting helper, and a run that produced no evidence at all satisfies every assertion "
+        "written as 'nothing in the landing prefix contradicts us'. The matrix that watches the "
+        "deployed estate is the one that would report seven of seven over an empty bucket.",
+    ),
+    Mutation(
+        "round the replay's measured offset onto the interval grid",
+        "claim 2 — replay is identical",
+        "claim-2",
+        ["python", "-m", "pytest", "tests/scripts/test_replay_live.py", "-q"],
+        "different_offset_is_identical",
+        _round_the_replay_offset_onto_the_interval_grid,
+        "This was the code, and rounding to the grid is the obvious tidy-up: the windows are "
+        "fifteen minutes, so the offset between two runs of them ought to be too. It is not — "
+        "`data/publish.py` shifts by `now - day_end`, so the two days sit on parallel grids of "
+        "their own — and the rounding moved the offset off the answer by up to seven minutes. "
+        "Claim 2 then reported thousands of disagreements on a run where nothing was wrong, "
+        "which is the failure that makes a green harness worth less than no harness.",
+    ),
+    Mutation(
+        "bound the telemetry read over the whole prefix instead of per substation",
+        "the curtailment decision reads every substation",
+        "decide-live",
+        ["python", "-m", "pytest", "tests/scripts/test_decide_live.py", "-q"],
+        "when_one_of_them_dominates_the_prefix",
+        _list_the_whole_telemetry_prefix_at_once,
+        "The bug this repository shipped, and it printed nothing while doing it. One listing, "
+        "newest two hundred keys — and because the prefix holds every capture the estate has "
+        "driven, all two hundred came from a single substation. Three of the four were reported "
+        "as having no telemetry on an estate that was emitting for all of them, so the one "
+        "decision with a physical consequence was taken over a quarter of the network.",
+    ),
+    Mutation(
+        "open the reference history on the day of the run",
+        "point-in-time joins resolve for historical rows",
+        "seed-reference",
+        ["python", "-m", "pytest", "tests/scripts/test_seed_reference.py", "-q"],
+        "reaches_back_before_the_stream_day",
+        _open_the_reference_history_on_the_day_of_the_run,
+        "Dating the opening SCD-2 version to the day being seeded is the reading of 'this is the "
+        "day the scenario is on', and it is wrong in the direction that hides: `valid_from <= t` "
+        "matches nothing earlier, so every row from an earlier capture resolves to no tariff and "
+        "no customer. Those rows do not appear as wrong in the settlement. They do not appear.",
+    ),
+    Mutation(
+        "import a 3.11 builtin into a job that runs on Glue 4.0",
+        "glue runtime",
+        "glue-runtime",
+        ["scripts/check_glue_runtime.py"],
+        "3.11+",
+        _use_a_python_311_builtin_in_a_glue_job,
+        "`datetime.UTC` is what every modern editor and every local test run accepts, because the "
+        "laptop is on 3.12. Glue 4.0 is on 3.10. Three maintenance jobs were written this way, "
+        "and the failure arrives as an ImportError in a cloud log nobody reads on the day the "
+        "reaper is supposed to run.",
+    ),
     Mutation(
         "let the transport send the meter id as the record's partition",
         "partition vocabulary",

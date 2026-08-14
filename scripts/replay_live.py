@@ -59,7 +59,25 @@ if str(ROOT) not in sys.path:
 #: Named as a constant rather than inlined, because the interesting half of this harness is the
 #: choice of what to compare — and a choice buried in a dict comprehension is a choice nobody
 #: revisits. See the module docstring for what is excluded and why.
-SETTLED_FIELDS: Final = ("energy_wh", "readings", "duplicates_suppressed", "corrections_absorbed")
+#: **The energy, and nothing else — a lesson `evals/replay/` had already learned.**
+#:
+#: This began as four fields: the energy, the reading count, the duplicates suppressed and the
+#: corrections absorbed. Against a live estate it reported 3,767 windows in disagreement, and
+#: every single one of them agreed on the energy. What differed was `readings` 1 against 2 and
+#: `corrections_absorbed` 0 against 1.
+#:
+#: The reason is that a second delivery into a *running* stream is not an independent run. Its
+#: records land in windows the first delivery already closed, and the system absorbs them as
+#: corrections — which is at-least-once delivery being handled exactly as claim 2 says it must
+#: be. The counts moved because there genuinely were more deliveries.
+#:
+#: `value_fingerprint` in `evals/replay/` says this in as many words, and has since a failing
+#: case forced it: "a harness that hashed the counts too would have reported claim 2 broken by
+#: at-least-once delivery working correctly, and the fix would have been to stop counting". The
+#: offline harness was right and this file did not carry the lesson across.
+#:
+#: What must not move is the number a customer is billed.
+SETTLED_FIELDS: Final = ("energy_wh",)
 
 #: How many disagreements to name individually before summarising the rest.
 #:

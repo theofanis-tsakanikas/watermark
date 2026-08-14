@@ -106,46 +106,55 @@ def _rows(directory: Path, exclude: set[str] | None = None) -> list[dict[str, An
     return rows
 
 
-def published_values(rows: list[dict[str, Any]]) -> dict[tuple[str, int, int], tuple[str, ...]]:
-    """Every published value, keyed by meter, **interval offset** and revision.
+def published_values(rows: list[dict[str, Any]]) -> dict[tuple[str, int], tuple[str, ...]]:
+    """The final value of each window, keyed by meter and by the window's position in that
+    meter's own day.
 
-    **The offset, not the instant, and that is not a convenience.** `data/publish.py` moves the
-    whole generated day so that it *ends at the moment of the run* — which is what makes a
-    capture a replay rather than an archive, and what makes two runs land on two different sets
-    of fifteen-minute boundaries. Keyed on the absolute instant, the two deliveries of the same
-    day would share not one key, and the comparison would report every row missing from both
-    sides while nothing at all was wrong.
+    **Three anchors were tried and the first two were wrong in instructive ways.**
+
+    *The absolute instant.* `data/publish.py` moves the whole generated day so that it ends at the
+    moment of the run — which is what makes a capture a replay rather than an archive — so two
+    deliveries land on two different sets of fifteen-minute boundaries and share not one key. The
+    comparison reported every row missing from both sides while nothing was wrong.
+
+    *The run's earliest interval.* Subtracting a per-run anchor recovers a comparable position,
+    and the minimum is the fragile choice: one window closed at the edge by one run and not the
+    other moves that run's minimum by a whole interval and displaces every key. Two runs two
+    windows apart reported four thousand missing. The median over rows is no better — it is
+    weighted by how many meters published at each instant, so it moves for a different reason.
+
+    *The window's position within its own meter's day*, which is what this uses. Windows close in
+    order and what a compressed day loses is the tail, so ranks align from the front and a missing
+    last window costs one key rather than shifting all of them. It assumes losses are at the end;
+    the overlap floor in `main` is what catches the case where they are not.
+
+    **Revisions collapse to the final value.** How many times a total was restated is a fact about
+    where the batch boundaries fell — the same conclusion `tests_flink/` reached comparing the
+    core against Flink. What the meter measured is the last word, and it is what settlement reads.
     """
     if not rows:
         return {}
-    # **Anchored on the median interval, not on the minimum.**
-    #
-    # Both runs publish the same generated day shifted by a different constant, so subtracting a
-    # per-run anchor recovers a comparable position. The minimum looks like the obvious anchor
-    # and is the fragile one: the two runs closed 4,064 and 4,062 windows, and a single window
-    # closed at one edge by one run and not the other moves that run's minimum by a whole
-    # interval — which displaces *every* key by 900,000 and reports four thousand rows missing
-    # from both sides on a replay that was two windows different.
-    #
-    # The median is unmoved by a handful of windows at either end, which is exactly where the
-    # difference between two runs lives: the tail of a compressed day is where a window does or
-    # does not get its last batch before the publisher stops.
-    intervals = sorted(int(row["interval_start"]) for row in rows)
-    origin = intervals[len(intervals) // 2]
-    values: dict[tuple[str, int, int], tuple[str, ...]] = {}
+
+    by_meter: dict[str, dict[int, tuple[int, tuple[str, ...]]]] = {}
     for row in rows:
-        key = (
-            str(row["meter"]),
-            int(row["interval_start"]) - origin,
-            int(row["revision"]),
-        )
-        values[key] = tuple(str(row.get(field)) for field in SETTLED_FIELDS)
-    return values
+        meter = str(row["meter"])
+        interval = int(row["interval_start"])
+        revision = int(row["revision"])
+        values = tuple(str(row.get(field)) for field in SETTLED_FIELDS)
+        seen = by_meter.setdefault(meter, {})
+        if interval not in seen or revision > seen[interval][0]:
+            seen[interval] = (revision, values)
+
+    final: dict[tuple[str, int], tuple[str, ...]] = {}
+    for meter, intervals in by_meter.items():
+        for rank, interval in enumerate(sorted(intervals)):
+            final[(meter, rank)] = intervals[interval][1]
+    return final
 
 
 def compare(
-    first: dict[tuple[str, int, int], tuple[str, ...]],
-    second: dict[tuple[str, int, int], tuple[str, ...]],
+    first: dict[tuple[str, int], tuple[str, ...]],
+    second: dict[tuple[str, int], tuple[str, ...]],
 ) -> list[str]:
     """Every way two runs can disagree, reported as sentences rather than as a diff.
 
@@ -159,35 +168,27 @@ def compare(
 
     # Only the windows both runs closed. What each closed and the other did not is reported by
     # the overlap floor in `main`, as a proportion rather than as four thousand individual lines.
-    missing: list[tuple[str, int, int]] = []
-    extra: list[tuple[str, int, int]] = []
-    for meter, interval, revision in missing[:NAMED_DISAGREEMENTS]:
-        problems.append(
-            f"{meter} interval {interval} revision {revision} was published by the first run "
-            f"and not by the replay"
-        )
+    missing: list[tuple[str, int]] = []
+    extra: list[tuple[str, int]] = []
+    for meter, rank in missing[:NAMED_DISAGREEMENTS]:
+        problems.append(f"{meter} window {rank} was published by the first run and not the replay")
     if len(missing) > NAMED_DISAGREEMENTS:
         problems.append(
             f"...and {len(missing) - NAMED_DISAGREEMENTS} more the replay did not publish"
         )
-    for meter, interval, revision in extra[:NAMED_DISAGREEMENTS]:
-        problems.append(
-            f"{meter} interval {interval} revision {revision} was published by the replay and "
-            f"not by the first run"
-        )
+    for meter, rank in extra[:NAMED_DISAGREEMENTS]:
+        problems.append(f"{meter} window {rank} was published by the replay and not the first run")
     if len(extra) > NAMED_DISAGREEMENTS:
         problems.append(
             f"...and {len(extra) - NAMED_DISAGREEMENTS} more the first run did not publish"
         )
 
     disagreed = [key for key in set(first) & set(second) if first[key] != second[key]]
-    for meter, interval, revision in sorted(disagreed)[:NAMED_DISAGREEMENTS]:
-        key = (meter, interval, revision)
+    for meter, rank in sorted(disagreed)[:NAMED_DISAGREEMENTS]:
+        key = (meter, rank)
         before = dict(zip(SETTLED_FIELDS, first[key], strict=True))
         after = dict(zip(SETTLED_FIELDS, second[key], strict=True))
-        problems.append(
-            f"{meter} interval {interval} revision {revision}: first run {before}, replay {after}"
-        )
+        problems.append(f"{meter} window {rank}: first run {before}, replay {after}")
     if len(disagreed) > NAMED_DISAGREEMENTS:
         problems.append(f"...and {len(disagreed) - NAMED_DISAGREEMENTS} more values that disagree")
 
@@ -247,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     problems = compare(first, second)
-    revisions = Counter(revision for _, _, revision in first)
+    revisions = Counter(int(row["revision"]) for row in _rows(arguments.first, exclude=history))
     print(f"revisions in the first run: {dict(sorted(revisions.items()))}")
     if len(revisions) < REVISIONS_WITH_A_RESTATEMENT:
         # A day with no restatement in it is a day that never exercised the interesting half.

@@ -112,3 +112,21 @@ def test_the_tables_it_declares_are_the_tables_it_creates(seeder) -> None:
     for table, layer in seeder.CREATES.items():
         assert f"CREATE TABLE IF NOT EXISTS {{gold}}.{table}" in source
         assert layer == "gold"
+
+
+def test_the_opening_version_reaches_back_before_the_stream_day(seeder) -> None:
+    """Every SCD-2 opening version begins at the start of history, not at the start of the day.
+
+    The lakehouse holds rows from earlier captures. A point-in-time join is `valid_from <= t <
+    valid_to`, so an opening version dated to *this* run's day matches nothing before it, and
+    every historical row resolves to no tariff and no customer — priced at nothing, owned by
+    nobody, and silently absent from the settlement rather than wrong in it.
+    """
+    for rows in (seeder.meter_assignment_rows(), seeder.customer_rows(), seeder.tariff_rows()):
+        assert rows
+        opening = [row for row in rows if seeder.HISTORY_BEGINS in row]
+        assert opening, "no version reaches back before the stream's day"
+
+    assert seeder.HISTORY_BEGINS < "2020", (
+        "the opening version must predate anything the lakehouse could already hold"
+    )

@@ -205,3 +205,87 @@ def test_it_reads_the_field_names_the_emitter_actually_writes(decider) -> None:
     )
     emitted = json.loads(_line("published", result, view, "abc123"))
     assert decider.meters_in([emitted]) == ["M00042"]
+
+
+class _FakeS3:
+    """Enough of the S3 client for `telemetry_stream`, and no more.
+
+    The defect this stands in for is not a parsing error — it is a *listing* error, so the fake
+    has to model the one thing that matters: the prefix holds every capture the estate ever drove,
+    and the keys of one substation can outnumber the bound on their own.
+    """
+
+    def __init__(self, keys: list[tuple[str, int]]) -> None:
+        #: (key, last-modified rank). Written newest-last, as S3 would.
+        self._keys = keys
+
+    def get_paginator(self, _name: str):
+        client = self
+
+        class _Paginator:
+            def paginate(self, *, Bucket: str, Prefix: str):
+                del Bucket
+                yield {
+                    "Contents": [
+                        {"Key": key, "LastModified": rank}
+                        for key, rank in client._keys
+                        if key.startswith(Prefix)
+                    ]
+                }
+
+        return _Paginator()
+
+    def get_object(self, *, Bucket: str, Key: str):
+        del Bucket
+        substation = Key.split("/")[1]
+        index = int(Key.rsplit("-", 1)[1])
+        record = {
+            "substation_id": substation,
+            "event_time": Instant.from_epoch_millis(1_700_000_000_000 + index * 300_000).to_iso(),
+            "load_w": 100,
+            "limit_w": 1_000,
+        }
+        return {"Body": _Body(json.dumps(record).encode("utf-8"))}
+
+
+class _Body:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return self._payload
+
+
+def test_every_substation_is_read_even_when_one_of_them_dominates_the_prefix(decider) -> None:
+    """The bug that made three substations invisible, and it printed nothing while doing it.
+
+    The first version listed the whole `telemetry/` prefix, sorted the keys in reverse and took
+    the newest two hundred. `SUB-04` sorts last, so all two hundred were `SUB-04` — and the run
+    reported three substations as having no telemetry at all, on an estate that was emitting for
+    every one of them. Listing under each substation's own prefix asks the question meant.
+    """
+    keys = [
+        (f"telemetry/SUB-04/x-{index}", index) for index in range(decider.TELEMETRY_TAIL * 2)
+    ] + [(f"telemetry/SUB-0{n}/x-{index}", index) for n in (1, 2, 3) for index in range(5)]
+    stream = decider.telemetry_stream(_FakeS3(keys), "bucket")
+
+    assert set(stream) == {"SUB-01", "SUB-02", "SUB-03", "SUB-04"}
+    # On the *contents*, not on the keys. `stream` is keyed by the substation being asked about,
+    # so a listing that returned another substation's telemetry would still fill all four slots
+    # and still be a decision taken over the wrong network.
+    for substation, samples in stream.items():
+        reported = {sample.substation_id for sample in samples}
+        assert reported == {substation}, f"{substation} was decided on {sorted(reported)}"
+    assert len(stream["SUB-04"]) == decider.TELEMETRY_TAIL, "the bound is per substation"
+
+
+def test_the_tail_is_the_newest_samples_put_back_into_event_order(decider) -> None:
+    """Bounded by write time, decided in event order. Reversing one without the other silently
+    curtails on the oldest samples in the prefix."""
+    keys = [(f"telemetry/SUB-01/x-{index}", index) for index in range(decider.TELEMETRY_TAIL + 30)]
+    samples = decider.telemetry_stream(_FakeS3(keys), "bucket")["SUB-01"]
+
+    times = [sample.event_time.epoch_millis for sample in samples]
+    assert times == sorted(times)
+    assert len(times) == decider.TELEMETRY_TAIL
+    assert times[-1] == 1_700_000_000_000 + (decider.TELEMETRY_TAIL + 29) * 300_000

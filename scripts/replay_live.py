@@ -223,32 +223,20 @@ def compare(
     first: dict[tuple[str, int], tuple[str, ...]],
     second: dict[tuple[str, int], tuple[str, ...]],
 ) -> list[str]:
-    """Every way two runs can disagree, reported as sentences rather than as a diff.
+    """The serious disagreement: the same events, the same window, two answers.
 
-    Three kinds, and they mean different things. A key only the first run produced is a window
-    the replay failed to close. A key only the second produced is a window the *first* failed to
-    close, which is the same defect seen from the other side and is worth naming separately so
-    nobody reads a one-sided report as "the replay lost data". A key both produced with different
-    values is the serious one: the same events, the same window, two answers.
+    **Only the windows both runs closed.** A window one run closed and the other did not is a
+    real difference, but it is a difference of *coverage*, and reporting it here would have meant
+    four thousand individual lines every time a batch boundary fell a window earlier. It is
+    checked in `main` instead, as a proportion against `MINIMUM_OVERLAP`, before this is called —
+    which is a stricter test than naming the first few would have been, because it refuses on the
+    total rather than on a sample of it.
+
+    That division of labour used to be stated here and not implemented: this function declared
+    the two one-sided lists, never appended to either, and looped over them anyway. Twenty lines
+    that read as a check and could not fail. The overlap floor was doing the work the whole time.
     """
     problems: list[str] = []
-
-    # Only the windows both runs closed. What each closed and the other did not is reported by
-    # the overlap floor in `main`, as a proportion rather than as four thousand individual lines.
-    missing: list[tuple[str, int]] = []
-    extra: list[tuple[str, int]] = []
-    for meter, interval in missing[:NAMED_DISAGREEMENTS]:
-        problems.append(f"{meter} at {interval} was published by the first run and not the replay")
-    if len(missing) > NAMED_DISAGREEMENTS:
-        problems.append(
-            f"...and {len(missing) - NAMED_DISAGREEMENTS} more the replay did not publish"
-        )
-    for meter, interval in extra[:NAMED_DISAGREEMENTS]:
-        problems.append(f"{meter} at {interval} was published by the replay and not the first run")
-    if len(extra) > NAMED_DISAGREEMENTS:
-        problems.append(
-            f"...and {len(extra) - NAMED_DISAGREEMENTS} more the first run did not publish"
-        )
 
     disagreed = [key for key in set(first) & set(second) if first[key] != second[key]]
     for meter, interval in sorted(disagreed)[:NAMED_DISAGREEMENTS]:

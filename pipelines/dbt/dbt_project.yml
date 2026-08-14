@@ -25,15 +25,29 @@ models:
   watermark:
     +materialized: table
     gold:
-      +schema: gold
+      # **No `+schema:` here, and the first live run of dbt explained why.**
+      #
+      # `profiles.yml` already targets `{{ env_var('WATERMARK_PROJECT') }}_gold`, which *is* the
+      # gold schema. dbt's default `generate_schema_name` appends a model's custom schema to the
+      # target's, so `+schema: gold` on top of it produced `watermark_gold_gold` — a database
+      # nothing creates, named in every error the run emitted.
+      #
       # Iceberg, so every gold table has the same erasure surface as the rest of the lakehouse.
       # A Hive-format gold table would be a set of files claim 6 could only reach by rewriting
       # a prefix, and it would be the one table nobody remembers.
       +table_type: iceberg
       +format: parquet
+      # **Table properties are interpolated into `WITH (...)` unquoted**, so a key containing a
+      # dot is parsed as a qualified name and Athena answers `mismatched input '.'. Expecting:
+      # '='`. `write.delete.mode` and `write.update.mode` were set here to ask for merge-on-read
+      # and never reached a table — the models failed at DDL, so the properties they were
+      # arguing about had no effect either way.
+      #
+      # `format_version` is the one dbt's own Athena documentation recommends setting explicitly:
+      # it keeps tables written here compatible with the same tables read by Spark, which in this
+      # repository is `pipelines/jobs/` doing compaction and orphan-file removal on them.
       +table_properties:
-        write.delete.mode: merge-on-read
-        write.update.mode: merge-on-read
+        format_version: '2' 
 
 vars:
   # Bound at run time by the orchestration, never interpolated into SQL by hand. A settlement

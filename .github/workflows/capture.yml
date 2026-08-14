@@ -12,6 +12,36 @@
 
 name: capture
 
+# **Six jobs rather than one, and the reason is the cost of being wrong.**
+#
+# This was a single job with twenty-six steps. A failure at step thirteen meant re-running the
+# twelve above it — Flink start, a SageMaker pipeline, six minutes of publishing, a merge — and
+# the day this was split, that had happened six times in a row for four different reasons, each
+# costing about fifty minutes.
+#
+# Split into jobs, GitHub's own "Re-run failed jobs" re-runs only what broke. The estate is the
+# shared state: the landing prefix and the silver table persist between jobs, so a later stage
+# reads what an earlier one produced from S3 rather than from a runner's disk. What cannot travel
+# that way — the list of part files that existed before the run, and the decision records — goes
+# through artifacts, which is also what makes the dependency visible in the file.
+#
+#   drive ─┐
+#          ├─ aggregate ─┐
+#   train ─┼─ decide ────┼─ stop  (always)
+#          └─ erase ─────┘
+#
+# `drive` and `train` do not depend on each other and now run in parallel, which removes about
+# twelve minutes from a clean run. Three jobs then fan out from `drive`.
+#
+# **`stop` needs every other job and runs `if: always()`.** With one job that was a step with the
+# same condition; with six it has to be stated as a dependency or a failure in the middle would
+# leave Managed Flink running. That is not hypothetical — it happened, for two hours, when an
+# expired token made the cleanup step fail while `always()` was faithfully running it.
+#
+# Each job assumes the role itself, which is a second benefit: no job now approaches the role's
+# one-hour session limit, and the credential renewals that were added to work around that inside
+# a seventy-minute job are no longer load-bearing.
+
 on:
   workflow_dispatch:
     inputs:
@@ -54,19 +84,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  capture:
-    name: stand up, drive, capture, stop
+  drive:
+    name: stand up and drive the day
     runs-on: ubuntu-latest
     environment: deploy
-    # A hard ceiling above the requested duration. If the workflow itself hangs, the runner
-    # kills it — and the `always()` stop step still runs.
-    timeout-minutes: 120
+    timeout-minutes: 60
 
     env:
-      # The project name, which is `var.project`'s default and the prefix every resource in this
-      # estate carries. Written out here the same way `watermark-anomaly` and the application
-      # name already are: this workflow runs no Terraform, so it has no outputs to read, and a
-      # name it composes is a name it can be wrong about in exactly one place rather than six.
       PROJECT: watermark
       LAKEHOUSE: watermark-lakehouse-${{ vars.AWS_ACCOUNT_ID }}
       AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
@@ -137,179 +161,6 @@ jobs:
           done
           echo "flink application: $status"
           [ "$status" = "RUNNING" ]
-
-      - name: run the training pipeline and wait for it
-        # Before the endpoint, deliberately. The endpoint serves a model a *human* approved, so
-        # the pipeline that produces the candidate has to have finished — and a pipeline that
-        # fails should fail while nothing is serving and nothing is billing by the minute.
-        run: |
-          set -euo pipefail
-          execution=$(aws sagemaker start-pipeline-execution \
-            --pipeline-name watermark-anomaly-training \
-            --pipeline-parameters \
-              Name=SnapshotId,Value="${{ inputs.snapshot }}" \
-              Name=AsOfInstant,Value="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              Name=Threshold,Value="${{ inputs.threshold }}" \
-              Name=LabelSource,Value="${{ inputs.labels }}" \
-            --query PipelineExecutionArn --output text)
-          echo "PIPELINE_EXECUTION=$execution" >> "$GITHUB_ENV"
-          echo "waiting on $execution"
-
-          # **A loop that runs out is a failure, not a pass.** This waited thirty minutes for
-          # `Succeeded`, and if the pipeline was still `Executing` at the end the loop simply
-          # ended and the step reported success — so a pipeline that hung produced a green
-          # capture, an endpoint step that found no model, and a run whose summary said
-          # everything worked. That is the same shape as the publisher that sent nothing and
-          # exited zero, which is the failure `docs/DECISIONS.md` 17 names.
-          settled=""
-          for _ in $(seq 1 60); do
-            status=$(aws sagemaker describe-pipeline-execution \
-              --pipeline-execution-arn "$execution" \
-              --query PipelineExecutionStatus --output text)
-            echo "  $status"
-            case "$status" in
-              Succeeded) settled="yes"; break ;;
-              Failed|Stopped) echo "::error::pipeline $status"; exit 1 ;;
-            esac
-            sleep 30
-          done
-          [ -n "$settled" ] || {
-            aws sagemaker list-pipeline-execution-steps --pipeline-execution-arn "$execution" \
-              --query 'PipelineExecutionSteps[].[StepName,StepStatus]' --output text
-            echo "::error::the pipeline was still running after thirty minutes. Not treating that as a pass"
-            exit 1
-          }
-
-      - name: register who was in that training set
-        # **The register claim 6 deletes from, written by the run that produced the training
-        # set.** `scripts/seed_reference.py` lands the reference tables at deploy time and
-        # deliberately leaves the membership empty: a training-set membership describes a
-        # *training run*, and registering one at deploy time would record a training set nobody
-        # has trained.
-        #
-        # This is that run. The snapshot id is the one the pipeline was given, so the register
-        # says which subjects were in which training set — which is what makes the erasure's
-        # training-set leg a deletion of something rather than a query against an empty table,
-        # and what would let the quarantine leg name the models a subject actually reached.
-        run: |
-          set -euo pipefail
-          python scripts/seed_reference.py \
-            --project "$PROJECT" \
-            --region "$AWS_DEFAULT_REGION" \
-            --warehouse "s3://${LAKEHOUSE}/warehouse" \
-            --snapshot "${{ inputs.snapshot }}" \
-            --labels "${{ inputs.labels }}"
-
-      - name: start the endpoint, if there is one
-        # The one resource in this estate that bills by the minute for as long as it exists.
-        #
-        # **There is deliberately none on a first capture.** The endpoint serves a model a human
-        # approved, and on the first run through this workflow no model has been registered yet,
-        # let alone approved — so `deploy.yml` was applied with `endpoint_enabled = false` and
-        # this step has nothing to start. Failing here would be the workflow refusing to run the
-        # very pipeline that produces the first candidate.
-        #
-        # So: absent is a legitimate state and is reported, not an error. Present means someone
-        # made a deliberate second deploy after approving a model, and then it is waited for.
-        #
-        # **And a `Failed` endpoint is a third state, which cost a capture to learn.** A deploy
-        # asking for an endpoint against a model artefact that does not exist — a fresh account
-        # after a destroy, with `promoted_model` still filled in from habit — leaves one behind
-        # in `Failed`. It serves nothing and bills nothing, and `describe-endpoint` succeeds on
-        # it, so the branch below read "present" and waited for `InService`, which is a state it
-        # can never reach. `Waiter EndpointInService failed` and the capture stopped four steps
-        # in, on a leftover.
-        #
-        # So the *status* is read rather than the existence. A failed endpoint is removed and the
-        # capture continues without one, which is the honest outcome: there is nothing to serve
-        # from, and refusing to run the pipeline that produces the next candidate would make the
-        # workflow unable to recover from its own earlier failure.
-        run: |
-          set -euo pipefail
-          status=$(aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
-            --query EndpointStatus --output text 2>/dev/null || echo absent)
-          echo "endpoint status: $status"
-
-          case "$status" in
-            absent)
-              echo "ENDPOINT_STARTED=no" >> "$GITHUB_ENV"
-              echo "::notice::no endpoint — this capture exercises the pipeline, not serving. Approve a model and redeploy with promoted_model set to capture inference."
-              ;;
-            InService|Creating|Updating)
-              aws sagemaker wait endpoint-in-service --endpoint-name watermark-anomaly
-              echo "ENDPOINT_STARTED=yes" >> "$GITHUB_ENV"
-              aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
-                --query '{status:EndpointStatus,config:EndpointConfigName}' --output json
-              ;;
-            *)
-              # Failed, OutOfService, RollingBack, Deleting. None of them will become InService,
-              # and the reason is on the endpoint rather than in this workflow.
-              aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
-                --query FailureReason --output text || true
-              echo "::warning::the endpoint is $status, so it is being removed and this capture runs without serving. The reason is printed above; the usual cause is a deploy that asked for an endpoint before a model was approved."
-              aws sagemaker delete-endpoint --endpoint-name watermark-anomaly || true
-              echo "ENDPOINT_STARTED=no" >> "$GITHUB_ENV"
-              ;;
-          esac
-
-      - name: the endpoint answers, and the answer is recorded
-        # **An endpoint that exists and has never been asked anything is the same shape as a
-        # green run that moved no records.** `deploy` creates it, `describe-endpoint` says
-        # `InService`, and none of that establishes that it serves.
-        #
-        # Two features, in the order the training channel was written: `score` then
-        # `deprivation_decile`, label-first and headerless, which is what the built-in XGBoost
-        # image reads. A payload in the wrong shape gets an answer anyway — the container will
-        # score whatever it is handed — so the order is taken from the training data rather
-        # than assumed.
-        #
-        # The response is checked for being a probability, not for being non-empty. And the
-        # *capture* is checked separately: `data_capture_config` writes the request and the
-        # response to `model-capture/anomaly`, which is what AI Act Art. 12 asks for, and a
-        # serving path whose audit trail is empty is one no investigation can reach.
-        if: env.ENDPOINT_STARTED == 'yes'
-        run: |
-          set -euo pipefail
-          mkdir -p out/capture
-          printf '820,0' > out/capture/payload.csv
-          aws sagemaker-runtime invoke-endpoint \
-            --endpoint-name "${PROJECT}-anomaly" \
-            --content-type text/csv \
-            --body fileb://out/capture/payload.csv \
-            out/capture/inference.txt > out/capture/invoke.json
-          score=$(cat out/capture/inference.txt)
-          echo "the endpoint scored $score for score=820, decile=0"
-
-          python3 -c "
-          import sys
-          value = float(open('out/capture/inference.txt').read().strip())
-          if not 0.0 <= value <= 1.0:
-              sys.exit(f'::error::the endpoint answered {value}, which is not a probability')
-          print(f'a probability: {value}')
-          "
-
-          # Written asynchronously, and SageMaker buffers before flushing. Five minutes with a
-          # poll rather than one flat sleep: a fixed wait that is too short reports a permissions
-          # problem and a timing problem identically, which cost a run to find out.
-          # **`aws s3 ls` exits 1 on an empty prefix**, and with `set -o pipefail` that status
-          # survives the pipe into `wc -l`, so the assignment fails and `set -e` ends the step —
-          # before the echo below, which is why the log showed the inference succeeding and then
-          # nothing at all. The capture had landed sixty-eight seconds later; the run reported
-          # its absence, and the absence was the shell's.
-          #
-          # `|| true` inside the substitution, so an empty listing is the zero it means rather
-          # than an error. The check that the count is greater than zero is two lines down and
-          # is where an empty prefix is supposed to be caught.
-          captured=0
-          for _ in $(seq 1 20); do
-            captured=$( { aws s3 ls "s3://${LAKEHOUSE}/model-capture/" --recursive || true; } | wc -l )
-            if [ "$captured" -gt 0 ]; then break; fi
-            sleep 15
-          done
-          echo "capture objects: $captured"
-          [ "$captured" -gt 0 ] || {
-            echo "::error::the endpoint answered and nothing was recorded. Art. 12 asks for the inputs as served, and an inference with no record is one no investigation can reach"
-            exit 1; }
 
       - name: note what the landing prefix already held
         # **The third set, and the reason claim 2 could not be compared without it.**
@@ -581,6 +432,148 @@ jobs:
             --first out/landing-first \
             --after out/landing-second
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landing-before
+          path: out/landing-before.txt
+          if-no-files-found: error
+
+
+  train:
+    name: train a candidate and register who was in it
+    runs-on: ubuntu-latest
+    environment: deploy
+    timeout-minutes: 45
+
+    env:
+      PROJECT: watermark
+      LAKEHOUSE: watermark-lakehouse-${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - name: the confirmation word
+        run: |
+          if [ "${{ inputs.confirm }}" != "capture" ]; then
+            echo "::error::Type 'capture' in the confirm field."
+            exit 1
+          fi
+          if [ "${{ inputs.minutes }}" -gt 60 ]; then
+            echo "::error::More than an hour is not a capture, it is an environment."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `data.publish` imports `watermark.core` to normalise what it sends. The workflow drove
+      # a checkout and never installed it, so the scenario step died on
+      # `No module named 'watermark'` — after the pipeline had succeeded and the endpoint was
+      # standing, which is the expensive place to discover a missing pip install.
+      - run: pip install -e ".[cloud]"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Composed from the account id and the name bootstrap chose. See deploy.yml.
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: run the training pipeline and wait for it
+        # Before the endpoint, deliberately. The endpoint serves a model a *human* approved, so
+        # the pipeline that produces the candidate has to have finished — and a pipeline that
+        # fails should fail while nothing is serving and nothing is billing by the minute.
+        run: |
+          set -euo pipefail
+          execution=$(aws sagemaker start-pipeline-execution \
+            --pipeline-name watermark-anomaly-training \
+            --pipeline-parameters \
+              Name=SnapshotId,Value="${{ inputs.snapshot }}" \
+              Name=AsOfInstant,Value="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              Name=Threshold,Value="${{ inputs.threshold }}" \
+              Name=LabelSource,Value="${{ inputs.labels }}" \
+            --query PipelineExecutionArn --output text)
+          echo "PIPELINE_EXECUTION=$execution" >> "$GITHUB_ENV"
+          echo "waiting on $execution"
+
+          # **A loop that runs out is a failure, not a pass.** This waited thirty minutes for
+          # `Succeeded`, and if the pipeline was still `Executing` at the end the loop simply
+          # ended and the step reported success — so a pipeline that hung produced a green
+          # capture, an endpoint step that found no model, and a run whose summary said
+          # everything worked. That is the same shape as the publisher that sent nothing and
+          # exited zero, which is the failure `docs/DECISIONS.md` 17 names.
+          settled=""
+          for _ in $(seq 1 60); do
+            status=$(aws sagemaker describe-pipeline-execution \
+              --pipeline-execution-arn "$execution" \
+              --query PipelineExecutionStatus --output text)
+            echo "  $status"
+            case "$status" in
+              Succeeded) settled="yes"; break ;;
+              Failed|Stopped) echo "::error::pipeline $status"; exit 1 ;;
+            esac
+            sleep 30
+          done
+          [ -n "$settled" ] || {
+            aws sagemaker list-pipeline-execution-steps --pipeline-execution-arn "$execution" \
+              --query 'PipelineExecutionSteps[].[StepName,StepStatus]' --output text
+            echo "::error::the pipeline was still running after thirty minutes. Not treating that as a pass"
+            exit 1
+          }
+
+      - name: register who was in that training set
+        # **The register claim 6 deletes from, written by the run that produced the training
+        # set.** `scripts/seed_reference.py` lands the reference tables at deploy time and
+        # deliberately leaves the membership empty: a training-set membership describes a
+        # *training run*, and registering one at deploy time would record a training set nobody
+        # has trained.
+        #
+        # This is that run. The snapshot id is the one the pipeline was given, so the register
+        # says which subjects were in which training set — which is what makes the erasure's
+        # training-set leg a deletion of something rather than a query against an empty table,
+        # and what would let the quarantine leg name the models a subject actually reached.
+        run: |
+          set -euo pipefail
+          python scripts/seed_reference.py \
+            --project "$PROJECT" \
+            --region "$AWS_DEFAULT_REGION" \
+            --warehouse "s3://${LAKEHOUSE}/warehouse" \
+            --snapshot "${{ inputs.snapshot }}" \
+            --labels "${{ inputs.labels }}"
+
+
+  aggregate:
+    name: build the gold layer
+    needs: [drive]
+    runs-on: ubuntu-latest
+    environment: deploy
+    timeout-minutes: 30
+
+    env:
+      PROJECT: watermark
+      LAKEHOUSE: watermark-lakehouse-${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `data.publish` imports `watermark.core` to normalise what it sends. The workflow drove
+      # a checkout and never installed it, so the scenario step died on
+      # `No module named 'watermark'` — after the pipeline had succeeded and the endpoint was
+      # standing, which is the expensive place to discover a missing pip install.
+      - run: pip install -e ".[cloud]"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Composed from the account id and the name bootstrap chose. See deploy.yml.
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
       - name: build the gold layer, which no capture had ever built
         # **The settlement path, run for the first time.**
         #
@@ -620,6 +613,154 @@ jobs:
             tail -20 logs/dbt.log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo "(no dbt log)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+
+  decide:
+    name: serve, compare and decide
+    needs: [drive, train]
+    runs-on: ubuntu-latest
+    environment: deploy
+    timeout-minutes: 45
+
+    env:
+      PROJECT: watermark
+      LAKEHOUSE: watermark-lakehouse-${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `data.publish` imports `watermark.core` to normalise what it sends. The workflow drove
+      # a checkout and never installed it, so the scenario step died on
+      # `No module named 'watermark'` — after the pipeline had succeeded and the endpoint was
+      # standing, which is the expensive place to discover a missing pip install.
+      - run: pip install -e ".[cloud]"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Composed from the account id and the name bootstrap chose. See deploy.yml.
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: landing-before
+          path: out
+
+      - name: start the endpoint, if there is one
+        # The one resource in this estate that bills by the minute for as long as it exists.
+        #
+        # **There is deliberately none on a first capture.** The endpoint serves a model a human
+        # approved, and on the first run through this workflow no model has been registered yet,
+        # let alone approved — so `deploy.yml` was applied with `endpoint_enabled = false` and
+        # this step has nothing to start. Failing here would be the workflow refusing to run the
+        # very pipeline that produces the first candidate.
+        #
+        # So: absent is a legitimate state and is reported, not an error. Present means someone
+        # made a deliberate second deploy after approving a model, and then it is waited for.
+        #
+        # **And a `Failed` endpoint is a third state, which cost a capture to learn.** A deploy
+        # asking for an endpoint against a model artefact that does not exist — a fresh account
+        # after a destroy, with `promoted_model` still filled in from habit — leaves one behind
+        # in `Failed`. It serves nothing and bills nothing, and `describe-endpoint` succeeds on
+        # it, so the branch below read "present" and waited for `InService`, which is a state it
+        # can never reach. `Waiter EndpointInService failed` and the capture stopped four steps
+        # in, on a leftover.
+        #
+        # So the *status* is read rather than the existence. A failed endpoint is removed and the
+        # capture continues without one, which is the honest outcome: there is nothing to serve
+        # from, and refusing to run the pipeline that produces the next candidate would make the
+        # workflow unable to recover from its own earlier failure.
+        run: |
+          set -euo pipefail
+          status=$(aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
+            --query EndpointStatus --output text 2>/dev/null || echo absent)
+          echo "endpoint status: $status"
+
+          case "$status" in
+            absent)
+              echo "ENDPOINT_STARTED=no" >> "$GITHUB_ENV"
+              echo "::notice::no endpoint — this capture exercises the pipeline, not serving. Approve a model and redeploy with promoted_model set to capture inference."
+              ;;
+            InService|Creating|Updating)
+              aws sagemaker wait endpoint-in-service --endpoint-name watermark-anomaly
+              echo "ENDPOINT_STARTED=yes" >> "$GITHUB_ENV"
+              aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
+                --query '{status:EndpointStatus,config:EndpointConfigName}' --output json
+              ;;
+            *)
+              # Failed, OutOfService, RollingBack, Deleting. None of them will become InService,
+              # and the reason is on the endpoint rather than in this workflow.
+              aws sagemaker describe-endpoint --endpoint-name watermark-anomaly \
+                --query FailureReason --output text || true
+              echo "::warning::the endpoint is $status, so it is being removed and this capture runs without serving. The reason is printed above; the usual cause is a deploy that asked for an endpoint before a model was approved."
+              aws sagemaker delete-endpoint --endpoint-name watermark-anomaly || true
+              echo "ENDPOINT_STARTED=no" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: the endpoint answers, and the answer is recorded
+        # **An endpoint that exists and has never been asked anything is the same shape as a
+        # green run that moved no records.** `deploy` creates it, `describe-endpoint` says
+        # `InService`, and none of that establishes that it serves.
+        #
+        # Two features, in the order the training channel was written: `score` then
+        # `deprivation_decile`, label-first and headerless, which is what the built-in XGBoost
+        # image reads. A payload in the wrong shape gets an answer anyway — the container will
+        # score whatever it is handed — so the order is taken from the training data rather
+        # than assumed.
+        #
+        # The response is checked for being a probability, not for being non-empty. And the
+        # *capture* is checked separately: `data_capture_config` writes the request and the
+        # response to `model-capture/anomaly`, which is what AI Act Art. 12 asks for, and a
+        # serving path whose audit trail is empty is one no investigation can reach.
+        if: env.ENDPOINT_STARTED == 'yes'
+        run: |
+          set -euo pipefail
+          mkdir -p out/capture
+          printf '820,0' > out/capture/payload.csv
+          aws sagemaker-runtime invoke-endpoint \
+            --endpoint-name "${PROJECT}-anomaly" \
+            --content-type text/csv \
+            --body fileb://out/capture/payload.csv \
+            out/capture/inference.txt > out/capture/invoke.json
+          score=$(cat out/capture/inference.txt)
+          echo "the endpoint scored $score for score=820, decile=0"
+
+          python3 -c "
+          import sys
+          value = float(open('out/capture/inference.txt').read().strip())
+          if not 0.0 <= value <= 1.0:
+              sys.exit(f'::error::the endpoint answered {value}, which is not a probability')
+          print(f'a probability: {value}')
+          "
+
+          # Written asynchronously, and SageMaker buffers before flushing. Five minutes with a
+          # poll rather than one flat sleep: a fixed wait that is too short reports a permissions
+          # problem and a timing problem identically, which cost a run to find out.
+          # **`aws s3 ls` exits 1 on an empty prefix**, and with `set -o pipefail` that status
+          # survives the pipe into `wc -l`, so the assignment fails and `set -e` ends the step —
+          # before the echo below, which is why the log showed the inference succeeding and then
+          # nothing at all. The capture had landed sixty-eight seconds later; the run reported
+          # its absence, and the absence was the shell's.
+          #
+          # `|| true` inside the substitution, so an empty listing is the zero it means rather
+          # than an error. The check that the count is greater than zero is two lines down and
+          # is where an empty prefix is supposed to be caught.
+          captured=0
+          for _ in $(seq 1 20); do
+            captured=$( { aws s3 ls "s3://${LAKEHOUSE}/model-capture/" --recursive || true; } | wc -l )
+            if [ "$captured" -gt 0 ]; then break; fi
+            sleep 15
+          done
+          echo "capture objects: $captured"
+          [ "$captured" -gt 0 ] || {
+            echo "::error::the endpoint answered and nothing was recorded. Art. 12 asks for the inputs as served, and an inference with no record is one no investigation can reach"
+            exit 1; }
 
       - name: "claim 3 and claim 4 — two mechanisms, one contract, no tolerance"
         # **The claim the README calls the one nothing else in the portfolio proves**, against
@@ -823,6 +964,44 @@ jobs:
             --decisions out/capture/decisions/decisions.jsonl \
             --before out/landing-before.txt
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decisions
+          path: out/capture/decisions/decisions.jsonl
+          if-no-files-found: error
+
+
+  erase:
+    name: an erasure certifies
+    needs: [drive]
+    runs-on: ubuntu-latest
+    environment: deploy
+    timeout-minutes: 40
+
+    env:
+      PROJECT: watermark
+      LAKEHOUSE: watermark-lakehouse-${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `data.publish` imports `watermark.core` to normalise what it sends. The workflow drove
+      # a checkout and never installed it, so the scenario step died on
+      # `No module named 'watermark'` — after the pipeline had succeeded and the endpoint was
+      # standing, which is the expensive place to discover a missing pip install.
+      - run: pip install -e ".[cloud]"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Composed from the account id and the name bootstrap chose. See deploy.yml.
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
       - name: an erasure certifies, and takes exactly what it was asked for
         # **Claim 6's positive half, which had never been demonstrated.**
         #
@@ -968,6 +1147,39 @@ jobs:
             fail=1; }
           exit $fail
 
+
+  stop:
+    name: stop everything that bills
+    needs: [drive, train, aggregate, decide, erase]
+    if: always()
+    runs-on: ubuntu-latest
+    environment: deploy
+    timeout-minutes: 30
+
+    env:
+      PROJECT: watermark
+      LAKEHOUSE: watermark-lakehouse-${{ vars.AWS_ACCOUNT_ID }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `data.publish` imports `watermark.core` to normalise what it sends. The workflow drove
+      # a checkout and never installed it, so the scenario step died on
+      # `No module named 'watermark'` — after the pipeline had succeeded and the endpoint was
+      # standing, which is the expensive place to discover a missing pip install.
+      - run: pip install -e ".[cloud]"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Composed from the account id and the name bootstrap chose. See deploy.yml.
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
       - name: capture the evidence
         run: |
           mkdir -p out/capture
@@ -1000,24 +1212,6 @@ jobs:
           name: capture
           path: out/capture
 
-      - name: credentials for the cleanup, whatever happened above
-        # **`always()` guarantees a step runs. It does not guarantee the step works**, and that
-        # distinction cost two hours of Managed Flink.
-        #
-        # The stop step below has carried `if: always()` since it was written, with a comment
-        # calling it the most important line in the file. It ran. Every AWS call inside it
-        # answered `ExpiredTokenException`, the step failed, and the application went on
-        # consuming KPUs until somebody looked at the account — which is exactly the accident
-        # that line exists to rule out, arriving through the one door it did not cover.
-        #
-        # So the credentials are renewed first, and this step is `always()` too. A cleanup whose
-        # authorisation expires with the run is not a cleanup.
-        if: always()
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
-          aws-region: ${{ vars.AWS_REGION }}
-
       - name: stop everything that bills
         # `always()`. This is the most important line in the file: a capture that fails halfway
         # and leaves an endpoint running is precisely the accident the cost posture exists to
@@ -1034,8 +1228,24 @@ jobs:
           if aws sagemaker describe-endpoint --endpoint-name watermark-anomaly >/dev/null 2>&1; then
             aws sagemaker delete-endpoint --endpoint-name watermark-anomaly || true
           fi
-          aws sagemaker stop-pipeline-execution \
-            --pipeline-execution-arn "${PIPELINE_EXECUTION:-none}" || true
+          # **Whatever is executing, not whatever this run remembers starting.**
+          #
+          # This read `PIPELINE_EXECUTION`, an environment variable the training step sets. That
+          # worked while the capture was one job and stopped working the moment it became six:
+          # a variable exported in `train` does not exist in `stop`, so the command ran against
+          # the literal string `none` and did nothing — quietly, behind a `|| true`.
+          #
+          # Asking SageMaker which executions are running is both correct across jobs and more
+          # correct in general, for the same reason the endpoint deletion below no longer checks
+          # whether *this* run started it: a teardown that only undoes its own work is not a
+          # teardown.
+          for execution in $(aws sagemaker list-pipeline-executions \
+            --pipeline-name "${PROJECT}-anomaly-training" \
+            --query "PipelineExecutionSummaries[?PipelineExecutionStatus=='Executing'].PipelineExecutionArn" \
+            --output text 2>/dev/null || true); do
+            echo "stopping pipeline execution $execution"
+            aws sagemaker stop-pipeline-execution --pipeline-execution-arn "$execution" || true
+          done
           aws kinesisanalyticsv2 stop-application --application-name watermark --force || true
 
           # Report what is actually gone rather than what was asked for. `|| true` above keeps
@@ -1090,3 +1300,4 @@ jobs:
             *) echo "::error::the Flink application is $flink after a stop was requested. It bills while it runs"; fail=1 ;;
           esac
           exit $fail
+

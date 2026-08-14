@@ -27,11 +27,17 @@ locals {
       record_identifier = "substation_id"
       description       = "Short-horizon load features per substation, for the curtailment forecast"
       personal_data     = false
+      # The value columns this group serves, one per feature contract that reads it. Declared
+      # per group rather than once for all of them: the first version gave every group a single
+      # `energy_wh`, which is the meter's column — so the two substation features had nowhere to
+      # be written and `parity_live.py` could not have compared them if anybody had asked it to.
+      values = ["load_w", "headroom_w"]
     }
     meter_consumption = {
       record_identifier = "meter_id"
       description       = "Consumption features per meter, for the anomaly classifier"
       personal_data     = true
+      values            = ["energy_wh"]
     }
   }
 }
@@ -58,12 +64,16 @@ resource "aws_sagemaker_feature_group" "features" {
     feature_type = "String"
   }
 
-  feature_definition {
-    feature_name = "energy_wh"
-    # Integral. There is no decimal type, and a double compared against `decimal(18,3)` in
-    # Iceberg differs in the last bits by construction — which is why ADR-0004 forbids a
-    # tolerance and requires a declared scale instead.
-    feature_type = "Integral"
+  # Integral, every one of them. There is no decimal type, and a double compared against
+  # `decimal(18,3)` in Iceberg differs in the last bits by construction — which is why ADR-0004
+  # forbids a tolerance and requires a declared scale instead.
+  dynamic "feature_definition" {
+    for_each = each.value.values
+
+    content {
+      feature_name = feature_definition.value
+      feature_type = "Integral"
+    }
   }
 
   offline_store_config {

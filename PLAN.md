@@ -1,196 +1,106 @@
-# PLAN — building Watermark end to end
+# PLAN — the four phases, and what closes each one
 
-Four phases. **Each one leaves the repository in a state that can be shown to an
-interviewer.** There is no point at which the project is half a thing.
+`CLAUDE.md` names this file as the definition of done and, for most of the project's life, it did
+not exist. That is worth stating rather than quietly fixing: a plan reconstructed from finished
+work is a description, not a plan, and the difference shows in the last section — the only one
+whose items have not been done, and therefore the only one that is not a summary.
 
-Work top to bottom. Do not start a phase's cloud work before its offline work is green.
-
-Definition of done, everywhere: *the code runs, it is tested, the tests run offline, and if
-it is a gate there is a `gate-proof` mutation that breaks it.*
-
----
-
-## Phase 0 — Foundations (before any feature)
-
-- [x] `pyproject.toml`, ruff config, pytest config, `Makefile` with the help-target pattern
-      from Attestor. The venv-or-ambient-interpreter handling in Attestor's Makefile is there
-      because of a real CI failure — copy the approach, not blindly the file.
-- [x] `.github/workflows/ci.yml`: lint, test, gitleaks, `terraform validate`, checkov.
-      CI exists from commit one; a suite added later is a suite shaped to pass.
-- [x] `docs/adr/0001-the-safe-state-is-a-conservative-action.md` — doctrine rule 1. This is
-      the project's defining argument and it should be written before the code that assumes it.
-- [x] Verify every citation in `docs/REGULATORY.md` against source text; stamp the file.
-- [x] Decide S3 Tables vs Iceberg-on-S3 with the current docs open; ADR either way.
-- [x] **ADR-0003 — the pure-core boundary and how core↔Flink equivalence is established.**
-      What exactly the core guarantees; what the adapter is structurally forbidden to decide
-      (enforced by `scripts/check_core_is_pure.py`); where the equivalence test runs, given
-      that it needs a JVM. Two test tiers: `make test` stays pure and instant,
-      `make test-flink` carries the MiniCluster and runs as its own CI job.
-- [x] **ADR-0004 — the two-mechanism parity design.** Written now, not in Phase 2. A shared
-      contract, two independent execution paths, and the leakage cases planted for the harness
-      to catch. Deciding this after the feature code exists means rewriting the feature code.
-- [x] **`docs/AWS-CONSTRAINTS.md`** — the service facts that shape the design, each verified
-      against current documentation and dated: SageMaker Feature Store's record-identifier and
-      event-time requirements and its online/offline consistency model · Managed Service for
-      Apache Flink's Python application packaging, KPU model and savepoint behaviour · Kinesis
-      on-demand vs provisioned and the shard model under burst · Iceberg maintenance and
-      compaction · Lake Formation's integration with whichever table format wins ADR-0002.
-      This is what de-risks the Terraform, not writing the Terraform early.
-- [x] `infra/bootstrap/` — state backend + CI OIDC role. **Applied from a laptop 2026-08-10**,
-      once, as its own design always intended: it is the layer that creates the state backend
-      every other layer needs and the role CI assumes, so there is no gated workflow that could
-      have created it. Everything else applies only from `deploy.yml`.
-
-**Done when:** `make test` and `make lint` are green on an empty-but-real skeleton, and CI
-runs them on a pull request.
+**Done here means one thing: it runs, it is tested, and something refuses it when it breaks.**
+Generated-but-unrun code is not done, and a check with no `gate-proof` mutation against it is not
+a check. Every task below carries the artefact that proves it.
 
 ---
 
-## Phase 1 — The stream is correct
+## Phase 1 — the core, and the two claims that need nothing else · **done**
 
-*Unlocks claims 1 and 2. This phase alone is a publishable project.*
+The stream logic as pure functions over plain data, and the two claims provable from it alone.
 
-- [x] `data/` — the seeded synthetic generator, with every pathology listed in
-      `docs/SCENARIO.md`. Committed, deterministic, no network.
-- [x] `contracts/entities/` — meter, customer, tariff, substation, meter assignment, with
-      SCD-2 rules. Loader + validation + cross-checks.
-- [x] `src/watermark/core/` — the pure logic, no Flink import anywhere in it:
-      normalisation across firmware schema variants · deduplication on
-      `(meter_id, interval_start, payload_hash)` · event-time windowing · watermark
-      generation with idle-source detection · allowed lateness with a side output ·
-      clock-skew quarantine with a reason · point-in-time SCD-2 join.
-- [x] `src/watermark/lineage/` — a lineage id minted at ingestion and carried to every
-      downstream artefact; restatement records (prior value, new value, cause, delta).
-- [x] `evals/watermark/` — **claim 1**. The labelled cases: an idle substation, a stalled
-      watermark, a burst, a window that must not close, a window that must. Each expects a
-      specific outcome, not "no exception".
-- [x] `evals/replay/` — **claim 2**. Shuffle, duplicate and delay the same event set; assert
-      byte-identical outputs and identical lineage hashes.
-- [x] `recordings/` — golden outputs; a `seed-check` target proving every generated total
-      reproduces its recording exactly.
-- [~] `streaming/` — the PyFlink job as a thin adapter. **Adapter done and enforced** (no
-      semantic literal, `scripts/check_adapter_is_thin.py`, with a gate-proof mutation).
-      **The equivalence test is written and has never run**: `apache-flink` will not install
-      on this machine (apache-beam has no wheel for py3.12/arm64 — `docs/AWS-CONSTRAINTS.md`,
-      dated). It runs as its own CI job on Linux with `WATERMARK_REQUIRE_FLINK=1`, so a
-      missing runtime is a failure rather than a skip, and it stays off the README scoreboard
-      until somebody has watched it pass. Ticking this box before then would be the exact
-      thing the repository says it does not do.
-- [x] Settlement resolution + restatement pipeline: the 3-day-late batch changes a published
-      total, and the prior value survives.
-- [x] `infra/foundation/` and `infra/streaming/` — Terraform, validated, and **applied through
-      `deploy.yml`** in phase 4's live capture. Written here to be deploy-ready in one pass.
+| task | done when | where |
+|---|---|---|
+| Windowing, watermarks, deduplication, lateness | `src/watermark/core/` imports no Flink, no boto3, no AWS SDK | `check_core_is_pure.py` |
+| Claim 1 — no decision from an unclosed window | 7 cases, including a silent substation, a stalled stream and a device three hours fast | `evals/watermark/` |
+| Claim 2 — replay is identical | 5 cases; the same day under five seeds, delivered twice, byte-identical with identical lineage | `evals/replay/` |
+| The synthetic cast | Every declared defect observable, and reproducing `recordings/day.json` exactly | `make seed-check` |
+| The contract layer | Three families of YAML, no Python importing a contract by name | `check_contracts.py` |
 
-**Done when:** claims 1 and 2 pass offline, `gate-proof` breaks both and they refuse for the
-named reason, and the late batch restates rather than overwrites.
+**What closed it:** claims 1 and 2 green offline, the core provably free of frameworks, and a
+`gate-proof` mutation against each.
 
 ---
 
-## Phase 2 — Features that can be trusted
+## Phase 2 — features, decisions, and the claim nothing else proves · **done**
 
-*Unlocks claims 3 and 4. This is where the project becomes an AI data engineering project.*
+| task | done when | where |
+|---|---|---|
+| Feature registry, offline and online resolution | Two genuinely different mechanisms sharing only the contract | `check_parity_paths_are_independent.py` |
+| Claim 3 — train/serve parity | As-of SQL against a streaming materialiser, no tolerance | `evals/parity/` |
+| Claim 4 — no decision on a stale feature | A feature past its budget is never served; the fallback marker survives to the record | `evals/freshness/` |
+| The decision engine and its fallbacks | Silence is the safe state only where the contract says so | `evals/freshness/`, `evals/settlement/` |
+| Claim 7 — no automatic consequential decision | The contract does not load; the actuation type cannot be constructed | `evals/oversight/` |
 
-- [x] `contracts/features/` — one file per feature: definition, window, grain, **freshness
-      budget**, purpose (GDPR Art. 5), owner. A feature without a freshness budget or a
-      declared purpose must fail to load, with a test asserting it.
-- [x] `src/watermark/features/` — offline resolution (as-of SQL over Iceberg) and online
-      resolution (streaming materialisation into the Feature Store) from **one contract and
-      two deliberately different mechanisms**. The contract is shared; the execution is not.
-      Collapsing them into one shared function would make claim 3 compare code with itself
-      and report green — see ADR-0004.
-- [x] `evals/parity/` — **claim 3**. For every feature and a population of entities, the
-      online value equals the offline value computed at the same instant. Deliberately
-      include a case where a naive implementation would leak a future value, and assert the
-      harness catches it.
-- [x] `evals/freshness/` — **claim 4**. A feature past its budget is never served; the
-      decision falls back; the fallback marker survives to the decision record.
-- [x] `contracts/decisions/` — the three decision contracts, including fallback rules and
-      actuation policy. **Load-time enforcement of claim 7** goes in here now, even though
-      its eval arrives in Phase 3: a contract with `effect: significant_on_person` and
-      `actuation: automatic` must fail to load.
-- [x] `src/watermark/decisions/` — the decision engine and the deterministic fallback rules.
-      The curtailment fallback must be computable with no model and no fresh features.
-- [x] `infra/lakehouse/` and the Feature Store definitions in `infra/ml/`. Glue Data Quality
-      rules as a gate on the offline side. *(Done early, in phase 1: the whole estate was
-      written to be deploy-ready in one pass. The feature *contracts* it will hold are still
-      phase 2 work.)*
-
-**Done when:** claims 3 and 4 pass offline, a stale feature demonstrably cannot reach a
-decision, and every decision record states whether it came from a model or a fallback.
+**What closed it:** claim 3 is the one nothing else in this portfolio proves, and it is proved
+twice — offline against a model of the mechanisms, and live against the deployed ones.
 
 ---
 
-## Phase 3 — The model lifecycle
+## Phase 3 — the estate, and the claims that need one · **done**
 
-*Unlocks claims 5 and 7.*
+| task | done when | where |
+|---|---|---|
+| Six Terraform layers, state isolated per layer | `terraform validate` on all six, no cross-layer state reads | `tf_validate.py` |
+| OIDC, no long-lived keys | Every trusted subject names this repository and one environment | `check_oidc_subjects.py` |
+| Claim 5 — the promotion gate | 12 cases, and **the model this repository trained is refused** | `evals/promotion/`, `docs/BIAS-FINDING.md` |
+| Claim 6 — erasure to a declared boundary | 9 cases offline; live, every leg confirmed against the estate rather than against the certificate | `evals/erasure/`, `erasure_legs_live.py` |
+| The live case matrix | The same questions asked of the deployed system, not only of the core | `cases_live.py` |
+| Deploy, capture, destroy, all gated | Nothing applied outside a workflow; the estate stood up, driven and torn down | `.github/workflows/` |
 
-- [x] `src/watermark/models/` — training for both models from the offline store, as-of a
-      pinned snapshot. Reproducible: the same snapshot yields the same model metrics.
-- [x] Bias analysis on the anomaly path, with the proxy-discrimination risk from
-      `docs/SCENARIO.md` as the thing actually measured — not a generic fairness metric
-      chosen because it is easy to compute. Write down what was found, including if it is
-      uncomfortable.
-- [x] The **promotion gate**: performance thresholds, bias thresholds, a model card generated
-      from the training run, and a named human approver. Nothing self-approves (doctrine 5).
-- [x] `evals/promotion/` — **claim 5**. A model that fails each threshold in turn is refused,
-      and refused *for that threshold*.
-- [x] `src/watermark/decisions/` oversight queue: the anomaly path's inspector flow, the
-      recorded accept/reject, and the rejection as a training signal.
-- [x] `evals/oversight/` — **claim 7**. Attempt to actuate a significant decision without a
-      recorded human decision, through every path that exists. All must fail.
-- [x] SageMaker Pipelines, Model Registry, Clarify, Model Monitor, Model Cards, endpoint with
-      shadow → canary → auto-rollback on drift or p99 SLO breach. In `infra/ml/`, validated.
-- [x] A rollback rolls back *both* the model and the feature snapshot it was trained against.
-
-**Done when:** claims 5 and 7 pass offline, the bias finding is written down, and a rollback
-is demonstrated end to end in the offline harness.
+**What closed it:** a full capture green end to end, and a destroy verified afterwards.
 
 ---
 
-## Phase 4 — Governance, erasure, recovery, and the live capture
+## Phase 4 — the things a running estate teaches · **in progress**
 
-*Unlocks claim 6 and closes the project.*
+Everything above is finished. This is not, and the items are here because each was found by
+asking the same question a different way: *what does this repository claim that nothing checks?*
 
-- [x] `src/watermark/policy/` — Lake Formation tag policy authored in the repository and
-      evaluated **offline**, the way Attestor evaluates Cedar. The deployed grants and the
-      offline evaluator must read the same bytes.
-- [x] A Lake Formation access suite: for each principal and each tag combination, the
-      expected reachable set — and the paths that must be closed.
-- [x] `src/watermark/erasure/` — the KMS key hierarchy, the Step Functions orchestration
-      across Iceberg, offline store, online store, training sets and model artefacts, and the
-      **completeness proof**. The system refuses to report "erased" unless every leg confirms.
-- [x] `evals/erasure/` — **claim 6**. Erase a subject, then attempt to reach them through
-      every store. Include a deliberately incomplete run and assert the system refuses to
-      certify it.
-- [x] Recovery drill: kill the job mid-window, restore from savepoint, assert no double
-      counting. Declared RPO/RTO, tested rather than written.
-- [x] Generated technical documentation (Annex IV shape) + the DPIA for the anomaly path,
-      CI-failing on drift from the code.
-- [x] Cost telemetry: cost per decision, cost per meter.
-- [x] `scripts/preflight.py` — every claim, every consistency invariant, `terraform validate`
-      against real provider schemas, checkov at zero findings. One command, all checks.
-- [x] `README.md` with a scoreboard, in the style of Attestor's: numbers that are the output
-      of a command in the repository, not a summary of one.
-- [x] **The live capture.** Done 2026-08-10/11, after decision 15 was retracted. Bootstrap
-      applied from a laptop; every other layer applied through the gated workflow; the scenario
-      driven through it; the whole estate destroyed and the account verified clean by name and
-      by tag. Claims 1, 5 and 6 exercised live — including an erasure run that **refused to
-      certify**, which is the answer the design wanted.
-      What it cost: **USD 12.35** tagged, undercounting the untagged first hours before the cost
-      allocation tag activated. What it found: four design errors invisible to `terraform
-      validate` and checkov, listed in `docs/DECISIONS.md` 17.
-      Still not exercised live, and recorded as gaps in `README.md` rather than quietly dropped:
-      claim 2 end-to-end (the Glue merge job was blocked on a missing IAM read — fixed, not yet
-      re-run), the endpoint and Model Monitor (both need a human-approved model), and the
-      `held_back` / `stalled` / `starved` watermark states.
+### Closed in this phase
 
-**Done when:** `make preflight` is green, every layer validates and scans clean, and the
-README's scoreboard is reproducible by a stranger with no AWS account.
+| task | what it was | what closed it |
+|---|---|---|
+| Attack coverage was partial | Six new checks had no mutation, and eleven under `scripts/` were never run by one | `test_every_check_script_is_run_by_a_mutation` — mechanical, so a new check ships red |
+| Doctrine 6 was unimplemented | "Exceptions expire" was a sentence with nothing behind it | `contracts/waivers.yaml` + `check_waivers.py`, red on its own schedule |
+| Erasure verified one leg of six | The certificate was checking itself | `erasure_legs_live.py` asks the estate through different services |
+| A contract nothing read | `settlement_publication` existed before the settlement code and no harness ever named it | `evals/settlement/` + a guard over every decision contract |
+| Two features that could not be served | `substation_telemetry` was a catalogue entry with no writer; `headroom_w` was a column no table had | `check_feature_sources.py`, `land_telemetry.py`, and all three features compared live |
+| A ruleset never evaluated | Six Glue Data Quality rules, applied and attached, never once run against a row | `evaluate_quality.py`, reporting rule by rule |
+| A reaper that deleted nothing | It classified, logged `would delete`, and returned a list — hourly, convincingly | `WATERMARK_REAPER_MODE`, ten tests over every branch that deletes |
+| A budget guard that did not exist | `CLAUDE.md` described it; the account had never had one | `aws_budgets_budget` + an action that denies creation and never deletion |
+
+### Open
+
+| task | why it is not done | what would close it |
+|---|---|---|
+| **The five-step sequence, in order** | Steps 3–5 — promote, redeploy with an endpoint, capture again — have each run, but not in sequence with the case matrices present | One run of `deploy → capture → promote → deploy → capture`, green throughout |
+| **Claim 7's second half** | The refusal is proved on every run: 20 pending, 0 actuated. That a *named human* is the only thing that can actuate needs a name on a record | A capture with `approver` set, and the actuated decision carrying it |
+| **The budget action** | It needs `iam:CreatePolicy`, and bootstrap is the one layer that applies from a laptop | A bootstrap apply, then `budget_action_enabled = true` — WV-004 |
+| **The savepoint-restore drill** | A harness rather than an assertion: hold a job open, cancel with a savepoint, resume | A test in `tests_flink/` that survives the break — WV-001 |
+| **Required reviewers** | Removed so a session could iterate without an approval prompt on every one of six runs in a day | Attach one to `deploy` and `destroy` — WV-003 |
+| **Model Monitor and Clarify** | Closed by AWS to accounts of this class. Not a decision this repository made and no work here reopens it | AWS reopening them, or the bias leg moving to a service that is open — WV-002 |
+| **`gold.settlement_hour` has no ruleset** | It names a table dbt builds, which does not exist at any point during a deploy | The gold layer built inside the capture rather than by hand |
 
 ---
 
-## After Phase 4 — not part of building the system
+## What this plan will not do
 
-video walkthrough, the long-form article, and the second worked example of the Readiness
-Framework. Do not start these before Phase 4 is done — a system shaped to look good in a
-portfolio card is a worse system.
+**It will not add a claim to make the scoreboard longer.** Seven is what the domain has. An
+eighth that restates one of the seven from a different angle would make the table look better
+and prove nothing new.
+
+**It will not close an open item by narrowing it.** The savepoint drill is not closed by
+asserting that savepoints exist; the budget action is not closed by writing that it would work.
+Each of the rows above says what would actually close it, and none of them says "document it".
+
+**It will not leave a gap unwritten.** Every open item is either in the table above or in
+`contracts/waivers.yaml` with a name and a date against it, and the date is enforced by a check
+that goes red with no commit behind it. That is the only mechanism here that does not depend on
+somebody remembering.

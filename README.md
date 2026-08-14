@@ -177,14 +177,18 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 | **core ≡ Flink** · tier two of ADR-0003 | **green** — the deployed operator chain on a MiniCluster produces the same value for every window it and the pure core both closed. Scoped to the live stream: a bounded list cannot reproduce a three-day-late batch, and the harness says so rather than absorbing it in a tolerance |
 | **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach. Proved live in both directions: five refusals for five real defects, then all five legs confirmed and a certificate written |
 | **claim 7** · no automatic decision about a person | **8/8** — the contract does not load and the actuation type cannot be constructed |
-| `make gate-proof` | **22 refused, 0 accepted, 0 stale** |
+| `make gate-proof` | **39 refused, 0 accepted, 0 stale** |
 | `make policy` | **24 principal-resource pairs** — every reachable set exact and every closed path closed |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined, net restatement **+2,261 Wh** |
-| `make test` | **225 passing**, offline, credential-free, no JVM, under a second |
+| `make test` | **319 passing**, offline, credential-free, no JVM, in about two seconds |
 | `terraform validate` | **6/6 layers** against real provider schemas |
-| `checkov` | **0 findings**, 48 deliberate exceptions each carrying a written reason beside the resource |
-| `make preflight` | **27 passed, 0 failed, 0 skipped** |
-| core↔Flink equivalence | **not yet observed green anywhere** — see below |
+| `checkov` | **0 findings**, 64 deliberate exceptions each carrying a written reason beside the resource |
+| `make preflight` | **36 passed, 0 failed, 0 skipped** |
+| **the declared cases** · offline | **11/11** — every defect the cast declares is observed in the generated day, and a cohort that is declared and unchecked fails the run |
+| **the declared cases** · against the estate | **7/7** — the same questions asked of the deployed system rather than of the core |
+| **the settlement path** · doctrine 4 and its contract | **8/8** — the third decision contract, whose safe state is the inverse of curtailment's |
+| `check_waivers` | **4 live, none expired** — doctrine 6, enforced by a clock rather than by a habit |
+| `check_feature_sources` | **3 features**, every column present in a table something writes |
 
 Two rows are worth reading twice.
 
@@ -197,24 +201,30 @@ had been written to catch the *opposite* shape and would have called it a pass;
 not fixed.
 
 **`gate-proof` is the row to read first.** A suite tells you the code does what it does; this
-copies the repository, plants twenty-one real violations, and requires the *named* gate to refuse
-each one *for the right reason*. Four of the twenty-one are mistakes this project actually made and
-the harness caught.
+copies the repository, plants thirty-nine real violations, and requires the *named* gate to
+refuse each one *for the right reason* — a non-zero exit is not evidence, and a mutation whose
+target has moved is reported STALE rather than passed.
 
-**One row is deliberately absent from the scoreboard, and the reason has changed.** ADR-0003's
-tier two runs the real PyFlink job on a MiniCluster and asserts it produces the same bytes as
-the pure core. It cannot be executed on the machine this was written on — `apache-flink`
-requires `apache-beam`, which has no wheel for Python 3.12 on arm64 macOS, recorded with its
-date in [docs/AWS-CONSTRAINTS.md](docs/AWS-CONSTRAINTS.md).
+Several of the thirty-nine are mistakes this project actually made. The telemetry read that
+listed one prefix and reported three of four substations as silent. The replay offset rounded
+onto a grid the two runs did not share. The Glue job importing a name its Python 3.10 runtime
+does not have. Writing the mutation is also how the gaps in the harness itself were found: six
+checks had no mutation against them at all, and eleven more under `scripts/` were never run by
+one — so the coverage rule is now mechanical, and a new check ships red until something attacks
+it.
 
-**That is no longer what is stopping it.** The CI job on Linux installs the runtime and reaches
-the test, which then fails on an unwritten harness: `_run_on_mini_cluster` raises
-`NotImplementedError` rather than returning an empty collection, because an equivalence test
-that compares nothing against nothing passes and looks exactly like one that worked. So the
-honest statement is not "we cannot run it here" but **"the harness has not been written"** —
-a smaller excuse, and the true one. The job runs with `WATERMARK_REQUIRE_FLINK=1` so a missing
-runtime would be a failure rather than a skip, and it stays off this table until somebody has
-watched it pass. A check nobody has seen go green is indistinguishable from one that cannot.
+**Tier two is green, and one leg of it is not.** ADR-0003's second tier runs the real PyFlink
+job on a MiniCluster and asserts it produces the same bytes as the pure core. It cannot execute
+on the machine this was written on — `apache-flink` requires `apache-beam`, which has no wheel
+for Python 3.12 on arm64 macOS, recorded with its date in
+[docs/AWS-CONSTRAINTS.md](docs/AWS-CONSTRAINTS.md) — so it runs in CI on Linux with
+`WATERMARK_REQUIRE_FLINK=1`, which turns a missing runtime into a failure rather than a skip.
+
+What is *not* proved is equivalence **across a restart**: cancel with a savepoint, resume, and
+produce the same bytes over the break. That needs a harness rather than an assertion — something
+to hold a job open and bring it back — and until it exists the test is skipped. It is WV-001 in
+[contracts/waivers.yaml](contracts/waivers.yaml) with a date on it, which is the difference
+between a gap somebody chose and a gap nobody noticed.
 
 ---
 

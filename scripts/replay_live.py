@@ -98,6 +98,17 @@ REVISIONS_WITH_A_RESTATEMENT: Final = 2
 #: would otherwise compare its two remaining windows and report claim 2 proved.
 MINIMUM_OVERLAP: Final = 0.95
 
+#: One metering interval, in milliseconds. The grid every window start sits on.
+INTERVAL_MILLIS: Final = 15 * 60 * 1000
+
+#: How many interval steps either side of the median difference to try when aligning.
+#:
+#: Four covers a run gaining or losing an hour's worth of windows at either end, which is far
+#: more than a compressed day's tail has ever moved. Widening it costs one set intersection per
+#: step and buys nothing if the runs are further apart than that — at which point they are not
+#: the same day and the overlap floor should say so rather than a search finding a coincidence.
+ALIGNMENT_SEARCH: Final = 4
+
 
 def _rows(directory: Path, exclude: set[str] | None = None) -> list[dict[str, Any]]:
     """Published rows from a landing directory, optionally skipping files seen before.
@@ -125,49 +136,87 @@ def _rows(directory: Path, exclude: set[str] | None = None) -> list[dict[str, An
 
 
 def published_values(rows: list[dict[str, Any]]) -> dict[tuple[str, int], tuple[str, ...]]:
-    """The final value of each window, keyed by meter and by the window's position in that
-    meter's own day.
+    """The final value of each window, keyed by meter and by the window's absolute instant.
 
-    **Three anchors were tried and the first two were wrong in instructive ways.**
+    Absolute here, and aligned later by `align`. Three earlier attempts each tried to make the
+    key itself comparable and each failed on a different asymmetry between the two runs:
 
-    *The absolute instant.* `data/publish.py` moves the whole generated day so that it ends at the
-    moment of the run — which is what makes a capture a replay rather than an archive — so two
-    deliveries land on two different sets of fifteen-minute boundaries and share not one key. The
-    comparison reported every row missing from both sides while nothing was wrong.
+    *The raw instant.* The publisher moves the day to end at the moment of the run, so two
+    deliveries share not one key.
 
-    *The run's earliest interval.* Subtracting a per-run anchor recovers a comparable position,
-    and the minimum is the fragile choice: one window closed at the edge by one run and not the
-    other moves that run's minimum by a whole interval and displaces every key. Two runs two
-    windows apart reported four thousand missing. The median over rows is no better — it is
-    weighted by how many meters published at each instant, so it moves for a different reason.
+    *An offset from the run's own earliest or median interval.* One window closed by one run and
+    not the other moves the anchor by a whole interval and displaces everything. The median over
+    rows is weighted by how many meters published at each instant, which moves it for its own
+    reason: a live run shared 5% of its windows on that key.
 
-    *The window's position within its own meter's day*, which is what this uses. Windows close in
-    order and what a compressed day loses is the tail, so ranks align from the front and a missing
-    last window costs one key rather than shifting all of them. It assumes losses are at the end;
-    the overlap floor in `main` is what catches the case where they are not.
+    *The window's rank within its meter's day.* Robust to a missing tail, which is what a
+    compressed day usually loses — and wrong the moment a run gains a window at the *head*. It
+    did: `M00002` came back with the first run's values shifted one place, `replay[1] == first[0]`
+    all the way down.
 
-    **Revisions collapse to the final value.** How many times a total was restated is a fact about
-    where the batch boundaries fell — the same conclusion `tests_flink/` reached comparing the
-    core against Flink. What the meter measured is the last word, and it is what settlement reads.
+    Every one of those tried to guess where the two runs differ. `align` stops guessing and
+    measures.
+
+    **Revisions collapse to the final value**, the same conclusion `tests_flink/` reached: how
+    many times a total was restated is a fact about where batch boundaries fell, and what the
+    meter measured is the last word.
     """
-    if not rows:
-        return {}
-
-    by_meter: dict[str, dict[int, tuple[int, tuple[str, ...]]]] = {}
+    final: dict[tuple[str, int], tuple[int, tuple[str, ...]]] = {}
     for row in rows:
-        meter = str(row["meter"])
-        interval = int(row["interval_start"])
+        key = (str(row["meter"]), int(row["interval_start"]))
         revision = int(row["revision"])
-        values = tuple(str(row.get(field)) for field in SETTLED_FIELDS)
-        seen = by_meter.setdefault(meter, {})
-        if interval not in seen or revision > seen[interval][0]:
-            seen[interval] = (revision, values)
+        if key not in final or revision > final[key][0]:
+            final[key] = (revision, tuple(str(row.get(field)) for field in SETTLED_FIELDS))
+    return {key: value for key, (_, value) in final.items()}
 
-    final: dict[tuple[str, int], tuple[str, ...]] = {}
-    for meter, intervals in by_meter.items():
-        for rank, interval in enumerate(sorted(intervals)):
-            final[(meter, rank)] = intervals[interval][1]
-    return final
+
+def align(
+    first: dict[tuple[str, int], tuple[str, ...]],
+    second: dict[tuple[str, int], tuple[str, ...]],
+) -> tuple[dict[tuple[str, int], tuple[str, ...]], int]:
+    """Shift the replay onto the first run's grid, by finding the offset that lines them up.
+
+    **The two runs are the same day at an unknown offset, so the offset is measured rather than
+    assumed.** Every previous attempt picked a landmark — the earliest window, the median, the
+    rank within a meter — and every one of them was a landmark that moves when the two runs close
+    slightly different sets of windows. The offset that maximises agreement cannot move for that
+    reason: it is chosen *because* it agrees.
+
+    Candidates come from the difference between the two runs' medians, widened by a few interval
+    steps either way, which covers a run gaining or losing windows at either end. The search is a
+    handful of set intersections over a few thousand keys.
+
+    Returning the offset as well as the shifted mapping is deliberate: a run whose best alignment
+    is several intervals from the median difference is a run worth looking at, and the caller
+    prints it.
+    """
+    if not first or not second:
+        return second, 0
+
+    grid = INTERVAL_MILLIS
+    firsts = sorted(interval for _, interval in first)
+    seconds = sorted(interval for _, interval in second)
+    centre = firsts[len(firsts) // 2] - seconds[len(seconds) // 2]
+
+    # **Not rounded to the grid**, and the first version was. `data/publish.py` shifts the day by
+    # `now - day_end`, which is whatever the wall clock says — so two runs' windows do not sit on
+    # a shared fifteen-minute grid at all, only on grids of their own that are parallel. Rounding
+    # the candidate offset to a multiple of the interval therefore moved it *off* the answer by
+    # up to seven minutes, and the search found 0% agreement while the two days differed by a
+    # single window.
+    #
+    # The median difference is already the right offset whenever both medians land on the same
+    # window of the day. The steps either side are for when they do not.
+    best_offset, best_hits = 0, -1
+    for step in range(-ALIGNMENT_SEARCH, ALIGNMENT_SEARCH + 1):
+        offset = centre + step * grid
+        hits = sum(1 for meter, interval in second if (meter, interval + offset) in first)
+        if hits > best_hits:
+            best_offset, best_hits = offset, hits
+
+    return {
+        (meter, interval + best_offset): value for (meter, interval), value in second.items()
+    }, best_offset
 
 
 def compare(
@@ -188,25 +237,25 @@ def compare(
     # the overlap floor in `main`, as a proportion rather than as four thousand individual lines.
     missing: list[tuple[str, int]] = []
     extra: list[tuple[str, int]] = []
-    for meter, rank in missing[:NAMED_DISAGREEMENTS]:
-        problems.append(f"{meter} window {rank} was published by the first run and not the replay")
+    for meter, interval in missing[:NAMED_DISAGREEMENTS]:
+        problems.append(f"{meter} at {interval} was published by the first run and not the replay")
     if len(missing) > NAMED_DISAGREEMENTS:
         problems.append(
             f"...and {len(missing) - NAMED_DISAGREEMENTS} more the replay did not publish"
         )
-    for meter, rank in extra[:NAMED_DISAGREEMENTS]:
-        problems.append(f"{meter} window {rank} was published by the replay and not the first run")
+    for meter, interval in extra[:NAMED_DISAGREEMENTS]:
+        problems.append(f"{meter} at {interval} was published by the replay and not the first run")
     if len(extra) > NAMED_DISAGREEMENTS:
         problems.append(
             f"...and {len(extra) - NAMED_DISAGREEMENTS} more the first run did not publish"
         )
 
     disagreed = [key for key in set(first) & set(second) if first[key] != second[key]]
-    for meter, rank in sorted(disagreed)[:NAMED_DISAGREEMENTS]:
-        key = (meter, rank)
+    for meter, interval in sorted(disagreed)[:NAMED_DISAGREEMENTS]:
+        key = (meter, interval)
         before = dict(zip(SETTLED_FIELDS, first[key], strict=True))
         after = dict(zip(SETTLED_FIELDS, second[key], strict=True))
-        problems.append(f"{meter} window {rank}: first run {before}, replay {after}")
+        problems.append(f"{meter} at {interval}: first run {before}, replay {after}")
     if len(disagreed) > NAMED_DISAGREEMENTS:
         problems.append(f"...and {len(disagreed) - NAMED_DISAGREEMENTS} more values that disagree")
 
@@ -255,6 +304,9 @@ def main(argv: list[str] | None = None) -> int:
     # A floor is what stops that allowance from covering a regression. Without it, a change that
     # published almost nothing would compare its two remaining windows, find them equal, and
     # report claim 2 proved.
+    second, offset = align(first, second)
+    print(f"the replay's day is offset by {offset / 1000:.0f}s from the first run's")
+
     shared = set(first) & set(second)
     overlap = len(shared) / max(len(first), len(second))
     if overlap < MINIMUM_OVERLAP:

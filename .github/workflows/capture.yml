@@ -601,7 +601,10 @@ jobs:
           WATERMARK_LAKEHOUSE_BUCKET: ${{ env.LAKEHOUSE }}
           WATERMARK_REGION: ${{ vars.AWS_REGION }}
           WATERMARK_PROJECT: ${{ env.PROJECT }}
-          DBT_PROFILES_DIR: pipelines/dbt
+          # Absolute, because the step below `cd`s into this same directory and a relative path
+          # would then resolve from inside it — `Path 'pipelines/dbt' does not exist`, from a
+          # step standing in `pipelines/dbt`.
+          DBT_PROFILES_DIR: ${{ github.workspace }}/pipelines/dbt
         run: |
           set -euo pipefail
           pip install -e ".[dbt]" >/dev/null

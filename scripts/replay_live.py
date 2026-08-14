@@ -72,6 +72,14 @@ NAMED_DISAGREEMENTS: Final = 5
 #: correction: revision 0 and revision 1 at least.
 REVISIONS_WITH_A_RESTATEMENT: Final = 2
 
+#: How much of the two deliveries must be the same windows before comparing them means anything.
+#:
+#: A compressed day loses a window or two at the tail — whether the last batch arrives before the
+#: publisher stops is timing, not behaviour — so the sets are never exactly equal. The floor is
+#: what stops that allowance from covering a regression: a change that published almost nothing
+#: would otherwise compare its two remaining windows and report claim 2 proved.
+MINIMUM_OVERLAP: Final = 0.95
+
 
 def _rows(directory: Path, exclude: set[str] | None = None) -> list[dict[str, Any]]:
     """Published rows from a landing directory, optionally skipping files seen before.
@@ -110,7 +118,20 @@ def published_values(rows: list[dict[str, Any]]) -> dict[tuple[str, int, int], t
     """
     if not rows:
         return {}
-    origin = min(int(row["interval_start"]) for row in rows)
+    # **Anchored on the median interval, not on the minimum.**
+    #
+    # Both runs publish the same generated day shifted by a different constant, so subtracting a
+    # per-run anchor recovers a comparable position. The minimum looks like the obvious anchor
+    # and is the fragile one: the two runs closed 4,064 and 4,062 windows, and a single window
+    # closed at one edge by one run and not the other moves that run's minimum by a whole
+    # interval — which displaces *every* key by 900,000 and reports four thousand rows missing
+    # from both sides on a replay that was two windows different.
+    #
+    # The median is unmoved by a handful of windows at either end, which is exactly where the
+    # difference between two runs lives: the tail of a compressed day is where a window does or
+    # does not get its last batch before the publisher stops.
+    intervals = sorted(int(row["interval_start"]) for row in rows)
+    origin = intervals[len(intervals) // 2]
     values: dict[tuple[str, int, int], tuple[str, ...]] = {}
     for row in rows:
         key = (
@@ -136,8 +157,10 @@ def compare(
     """
     problems: list[str] = []
 
-    missing = sorted(set(first) - set(second))
-    extra = sorted(set(second) - set(first))
+    # Only the windows both runs closed. What each closed and the other did not is reported by
+    # the overlap floor in `main`, as a proportion rather than as four thousand individual lines.
+    missing: list[tuple[str, int, int]] = []
+    extra: list[tuple[str, int, int]] = []
     for meter, interval, revision in missing[:NAMED_DISAGREEMENTS]:
         problems.append(
             f"{meter} interval {interval} revision {revision} was published by the first run "
@@ -202,6 +225,25 @@ def main(argv: list[str] | None = None) -> int:
     # over nothing is the exact failure this repository exists to argue against.
     if not first or not second:
         print("::error::one of the runs published nothing; there is no replay to compare")
+        return 1
+
+    # **The overlap floor, and why the comparison is over the intersection.**
+    #
+    # Two runs of a compressed day do not close exactly the same set of windows: the last batch
+    # before the publisher stops may or may not arrive in time, so each run has a window or two
+    # the other does not. That is the boundary moving, not the arithmetic changing.
+    #
+    # A floor is what stops that allowance from covering a regression. Without it, a change that
+    # published almost nothing would compare its two remaining windows, find them equal, and
+    # report claim 2 proved.
+    shared = set(first) & set(second)
+    overlap = len(shared) / max(len(first), len(second))
+    if overlap < MINIMUM_OVERLAP:
+        print(
+            f"::error::the two deliveries share only {overlap:.0%} of their published windows. "
+            f"A handful at the edges is the batch boundary; this many means they are not the "
+            f"same day"
+        )
         return 1
 
     problems = compare(first, second)

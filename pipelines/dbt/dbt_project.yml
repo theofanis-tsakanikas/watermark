@@ -37,17 +37,21 @@ models:
       # a prefix, and it would be the one table nobody remembers.
       +table_type: iceberg
       +format: parquet
-      # **Table properties are interpolated into `WITH (...)` unquoted**, so a key containing a
-      # dot is parsed as a qualified name and Athena answers `mismatched input '.'. Expecting:
-      # '='`. `write.delete.mode` and `write.update.mode` were set here to ask for merge-on-read
-      # and never reached a table — the models failed at DDL, so the properties they were
-      # arguing about had no effect either way.
+      # **No table properties, after two attempts that each failed differently.**
       #
-      # `format_version` is the one dbt's own Athena documentation recommends setting explicitly:
-      # it keeps tables written here compatible with the same tables read by Spark, which in this
-      # repository is `pipelines/jobs/` doing compaction and orphan-file removal on them.
-      +table_properties:
-        format_version: '2' 
+      # `write.delete.mode` and `write.update.mode` asked for merge-on-read. Properties are
+      # interpolated into `WITH (...)` unquoted, so a key containing a dot is parsed as a
+      # qualified name: `mismatched input '.'. Expecting: '='`.
+      #
+      # `format_version: '2'` replaced them, on dbt's own Athena documentation recommending it be
+      # set explicitly. Athena answered `Table properties [format_version] are not supported` —
+      # the recommendation is for the Spark-on-Athena path, and these models are built by the
+      # Trino engine, which does not take it.
+      #
+      # So: none. Athena writes format-version-2 Iceberg by default, which is what the property
+      # was asking for, and a property the engine rejects is worse than one it defaults to
+      # correctly. Neither attempt ever reached a table — both failed at DDL — so nothing they
+      # were arguing about was ever in force.
 
 vars:
   # Bound at run time by the orchestration, never interpolated into SQL by hand. A settlement

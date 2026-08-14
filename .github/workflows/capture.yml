@@ -973,7 +973,22 @@ jobs:
 
   erase:
     name: an erasure certifies
-    needs: [drive]
+    # **Last, and this is a race the single-job version could not have.**
+    #
+    # `erase` deletes a subject's rows from `silver.meter_interval`. `decide` reads the same
+    # table through the offline half of the parity comparison, and `aggregate` aggregates it.
+    # Made siblings of `drive`, all three ran at once — and the first staged capture failed with
+    # `claim 3: 19 agreed, 1 diverged`, the divergence being `M00007: offline None, online 352`.
+    #
+    # `M00007` is the meter the erasure targets. The offline side found nothing because the rows
+    # had just been deleted underneath it; the online store still held what had been materialised
+    # a minute earlier. Neither mechanism was wrong and claim 3 was not broken — the harness was
+    # reading a table while another job emptied part of it.
+    #
+    # Parallelising jobs that share mutable state buys wall-clock and pays for it in races. This
+    # one is bought back deliberately: `aggregate` and `decide` still run together, and the
+    # destructive job waits for both.
+    needs: [drive, aggregate, decide]
     runs-on: ubuntu-latest
     environment: deploy
     timeout-minutes: 40

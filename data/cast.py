@@ -27,7 +27,18 @@ DAY_END: Final = DAY_START.plus(Duration.of_days(1))
 
 #: The meter that changes customer at 10:00 — the scenario's "a meter changes customer".
 REASSIGNED_METER: Final = "M00007"
-#: The meter whose tariff changes at 14:00 — the scenario's "a tariff change mid-period".
+#: The meter whose tariff changes at 14:30 — the scenario's "a tariff change mid-period".
+#:
+#: **Half past, and it was on the hour until the first gold layer was built.** 14:00 is a
+#: settlement hour boundary, so no hour ever contained two tariffs: everything from 13:00 to
+#: 14:00 was priced at the old rate and everything after at the new, and `settlement_priced`
+#: would have given the same answer if it had priced at the hour instead of at the interval.
+#: The whole reason that model resolves the tariff per fifteen-minute interval is a change that
+#: falls *inside* an hour, and the case as declared could not produce one.
+#:
+#: `pipelines/dbt/tests/priced_hours_cover_every_settled_hour.sql` is what said so, on its first
+#: run against a real gold layer: no hour in the whole settlement crossed a boundary, which is
+#: indistinguishable from a point-in-time join that has collapsed.
 RETARIFFED_METER: Final = "M00019"
 
 SUBSTATIONS: Final = ("SUB-01", "SUB-02", "SUB-03", "SUB-04")
@@ -233,10 +244,12 @@ def customers() -> History:
 def tariffs() -> History:
     """Tariffs, with one meter changing mid-period.
 
-    `M00019` moves from the standard tariff to a time-of-use tariff at 14:00 — the scenario's
-    *"a tariff change mid-period"*.
+    `M00019` moves from the standard tariff to a time-of-use tariff at 14:30 — the scenario's
+    *"a tariff change mid-period"*, and half past rather than on the hour so that a settlement
+    hour genuinely straddles it. See `RETARIFFED_METER` for what the on-the-hour version failed
+    to exercise.
     """
-    change = Instant.from_iso(f"{DAY}T14:00:00Z")
+    change = Instant.from_iso(f"{DAY}T14:30:00Z")
     versions = []
     for meter in METERS:
         if meter.meter_id == RETARIFFED_METER:

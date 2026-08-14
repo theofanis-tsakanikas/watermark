@@ -125,6 +125,29 @@ jobs:
               {v.attributes["customer_id"] for v in meter_assignments().versions})))
           ' >> "$GITHUB_ENV"
 
+      - name: sweep the catalogue entries Terraform never declared
+        # **A teardown that only undoes its own work is not a teardown.**
+        #
+        # `dbt` creates its own databases and tables. When `dbt_project.yml` briefly carried
+        # `+schema: gold` on top of a profile already targeting `watermark_gold`, dbt did what it
+        # was told and created `watermark_gold_gold` — a database no Terraform state has ever
+        # heard of, which therefore survived a `destroy` that reported success. It was empty and
+        # free, and it was still there.
+        #
+        # Anything named for this project is this project's to remove, whether or not a state
+        # file knows about it. Deliberately narrow: `watermark`-prefixed only, so a database
+        # belonging to something else in the account cannot be caught by it — the same care the
+        # rest of this workflow takes about other people's resources.
+        run: |
+          set -euo pipefail
+          for database in $(aws glue get-databases \
+            --query "DatabaseList[?starts_with(Name, 'watermark')].Name" --output text); do
+            tables=$(aws glue get-tables --database-name "$database" \
+              --query 'length(TableList)' --output text 2>/dev/null || echo 0)
+            echo "sweeping glue database $database ($tables tables)"
+            aws glue delete-database --name "$database" || true
+          done
+
       - name: empty the model registry
         # A model package group cannot be deleted while it holds versions — the same rule as an
         # S3 bucket with objects, and Terraform has no `force_delete` for it. Every capture

@@ -68,6 +68,14 @@ CONSEQUENTIAL: Final = "meter_anomaly"
 #: decision path — they do not get truer at two hundred meters than at twenty.
 POPULATION: Final = 20
 
+#: How many telemetry samples per substation to decide over, newest first.
+#:
+#: The prefix holds every capture the estate has ever driven, so this is the tail of the latest.
+#: A hundred and twenty samples at five minutes apart is ten hours of scenario time, which
+#: reaches back from the end of the day past the evening peak — the part of the curve where a
+#: substation crosses its limit and a decision has to be taken.
+TELEMETRY_TAIL: Final = 120
+
 #: The score above which the endpoint's output is read as `queue_for_inspection`.
 #:
 #: Here rather than inline because it is a *policy* number, not an implementation detail: it
@@ -226,8 +234,21 @@ def meters_in(lines: list[dict[str, Any]]) -> list[str]:
     )
 
 
-def latest_telemetry(client, bucket: str) -> dict[str, SubstationTelemetry]:
-    """The newest load measurement per substation, read from the prefix the IoT rule writes.
+def telemetry_stream(client, bucket: str) -> dict[str, list[SubstationTelemetry]]:
+    """The recent load measurements per substation, in event order.
+
+    **A sequence, not a single instant, and the first version read only the newest.** That looks
+    right — a curtailment decision reads "the last telemetry reading", as the contract says — and
+    it means something different when the decider runs once at the end of a capture instead of
+    continuously. The publisher lands the whole generated day and then stops, so the newest sample
+    is the day's *last*: a few minutes past midnight in scenario time, at the base of the load
+    curve. Every substation read `under`, the capture reported `curtailment throttles: 0`, and the
+    overload at 19:00 had come and gone hours earlier in event time.
+    #
+    A real curtailment path decides every time a measurement arrives. This one cannot run for a
+    day, so it decides over the measurements the day produced — which is the same thing sampled,
+    and is what makes "the substation crossed its limit and was throttled" a statement about the
+    estate rather than about when the decider happened to look.
 
     **Listed per substation, and the first version listed them all at once.** It paginated the
     whole `telemetry/` prefix, sorted the keys in reverse and took the newest two hundred — which
@@ -252,32 +273,68 @@ def latest_telemetry(client, bucket: str) -> dict[str, SubstationTelemetry]:
     is unavailable, and a path that reached Athena would be unavailable in exactly the conditions
     the primary path is — the one property ADR-0001 requires it not to have.
     """
-    latest: dict[str, SubstationTelemetry] = {}
+    stream: dict[str, list[SubstationTelemetry]] = {}
     for substation in SUBSTATIONS:
         pages = client.get_paginator("list_objects_v2").paginate(
             Bucket=bucket, Prefix=f"telemetry/{substation}/"
         )
-        newest = None
-        for page in pages:
-            for item in page.get("Contents", ()):
-                if newest is None or item["LastModified"] > newest["LastModified"]:
-                    newest = item
-        if newest is None:
-            continue
-        body = client.get_object(Bucket=bucket, Key=newest["Key"])["Body"].read()
-        try:
-            record = json.loads(body)
-        except json.JSONDecodeError:
-            continue
-        moment = Instant.from_iso(str(record["event_time"]))
-        latest[substation] = SubstationTelemetry(
-            substation_id=str(record.get("substation_id", substation)),
-            event_time=moment,
-            ingest_time=moment,
-            load_w=int(record["load_w"]),
-            limit_w=int(record["limit_w"]),
+        items = [item for page in pages for item in page.get("Contents", ())]
+        # Newest first by write time, bounded, then put back into event order. The prefix holds
+        # every capture this estate has ever driven; what is wanted is the tail of the latest.
+        recent = sorted(items, key=lambda item: item["LastModified"], reverse=True)[:TELEMETRY_TAIL]
+
+        samples: list[SubstationTelemetry] = []
+        for item in recent:
+            body = client.get_object(Bucket=bucket, Key=item["Key"])["Body"].read()
+            try:
+                record = json.loads(body)
+            except json.JSONDecodeError:
+                continue
+            moment = Instant.from_iso(str(record["event_time"]))
+            samples.append(
+                SubstationTelemetry(
+                    substation_id=str(record.get("substation_id", substation)),
+                    event_time=moment,
+                    ingest_time=moment,
+                    load_w=int(record["load_w"]),
+                    limit_w=int(record["limit_w"]),
+                )
+            )
+        if samples:
+            stream[substation] = sorted(samples, key=lambda s: s.event_time.epoch_millis)
+    return stream
+
+
+def curtail(engine, telemetry, view) -> list[dict[str, object]]:
+    """One decision per measurement, per substation, in event order.
+
+    A real curtailment path decides every time a measurement arrives, and the decision that
+    matters is the one taken while the substation is over its limit — not the one taken whenever
+    a harness happens to look. Deciding over the sequence is what makes "it crossed its limit and
+    was throttled" a statement about the estate.
+    """
+    produced: list[dict[str, object]] = []
+    for substation_id in sorted(telemetry):
+        samples = telemetry[substation_id]
+        throttled = 0
+        for measured in samples:
+            decision = engine.decide(
+                entity_id=substation_id,
+                at=measured.event_time,
+                served={},
+                view=view,
+                model_action=None,
+                telemetry=measured,
+            )
+            produced.append(decision.as_row())
+            if str(decision.action).startswith("throttle"):
+                throttled += 1
+        peak = max(samples, key=lambda s: s.load_w * 10_000 // max(1, s.limit_w))
+        print(
+            f"  {substation_id}: {len(samples)} samples, peak {peak.load_w}W of "
+            f"{peak.limit_w}W -> {throttled} throttled"
         )
-    return latest
+    return produced
 
 
 def properties_that_must_hold(rows, view, feature) -> list[str]:
@@ -409,24 +466,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915 — a linear sc
     # from measured watts, with no model and no feature store, and the fallback marker travels
     # with it into the record.
     curtailment = DecisionEngine(contract=decisions["curtailment"], features=features)
-    telemetry = latest_telemetry(boto3.client("s3", region_name=estate.region), estate.lakehouse)
-    print(f"telemetry: {len(telemetry)} substations, latest per substation")
-    for substation_id in sorted(telemetry):
-        measured = telemetry[substation_id]
-        decision = curtailment.decide(
-            entity_id=substation_id,
-            at=now,
-            served={},
-            view=view,
-            model_action=None,
-            telemetry=measured,
-        )
-        over = "over" if measured.headroom_w < 0 else "under"
-        print(
-            f"  {substation_id}: {measured.load_w}W of {measured.limit_w}W ({over}) "
-            f"-> {decision.action} [{decision.origin.value}]"
-        )
-        rows.append(decision.as_row())
+    telemetry = telemetry_stream(boto3.client("s3", region_name=estate.region), estate.lakehouse)
+    seen = sum(len(samples) for samples in telemetry.values())
+    print(f"telemetry: {seen} samples over {len(telemetry)} substations")
+    rows.extend(curtail(curtailment, telemetry, view))
 
     # Curtailment is *not* enqueued for oversight, and the asymmetry is the whole point of
     # `docs/REGULATORY.md`. Its effect is physical, not significant on a person, so doctrine 3

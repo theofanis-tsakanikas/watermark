@@ -607,7 +607,18 @@ jobs:
           pip install -e ".[dbt]" >/dev/null
           cd pipelines/dbt
           dbt deps
-          dbt build --target deployed
+          # **`--full-refresh`, because these models are incremental and the estate is not.**
+          #
+          # `settlement_priced` inner-joins the tariff point-in-time, so an hour with no tariff in
+          # force produces no row. Rows built under an earlier, shorter seed stay exactly as they
+          # were built — an incremental model does not revisit them — so 396 unpriced hours
+          # survived the seed being extended to cover them, and the test written to catch them
+          # went on reporting the same number.
+          #
+          # These are four small aggregates over one day. Rebuilding them costs seconds and makes
+          # every capture's gold layer a statement about the data as it stands rather than about
+          # the order in which captures happened to run.
+          dbt build --target deployed --full-refresh
 
           {
             echo ""

@@ -1,0 +1,125 @@
+# Doctrine 6 — exceptions expire. On expiry the finding returns and CI goes red again.
+#
+# A waiver is a finding somebody has decided to live with *for now*. It is not an argument that
+# a rule does not apply: those are the `#checkov:skip` comments in `infra/`, each of which
+# carries its reasoning and none of which has an end date, because "a KMS key policy's Resource
+# is always `*`" does not stop being true in ninety days.
+#
+# The difference matters because the two fail in opposite directions. A permanent argument that
+# is made to expire becomes noise, and noise is what teaches people to add `--no-verify`. A
+# temporary exception that never expires becomes the architecture, silently, on the day everyone
+# who remembers the trade-off has moved on.
+#
+# `scripts/check_waivers.py` reads this file. It refuses when a waiver has passed its expiry,
+# when nobody is named as having granted it, when the grant is longer than the horizon below, or
+# when the person who asked is the person who approved — doctrine 5, nothing approves itself.
+#
+# Adding an entry is deliberately uncomfortable: it needs a name, a date, and a sentence saying
+# what would have to be true to close it.
+
+#: The longest any single grant may run. Renewing is allowed and is the point — a renewal is a
+#: second decision by a named person, which is the thing an unexpiring waiver never gets.
+horizon_days: 90
+
+waivers:
+  - id: WV-001
+    finding: >-
+      The savepoint-restore drill in `tests_flink/` is skipped. ADR-0003's tier two asserts the
+      PyFlink adapter produces the same bytes as the pure core; the restore leg of that — cancel
+      with a savepoint, resume, and produce the same bytes across the break — has no harness.
+    where: tests_flink/
+    claim: core-equals-flink
+    reason: >-
+      It is not an assertion, it is a harness: something has to hold a MiniCluster job open,
+      cancel it with a savepoint and bring it back. Writing that is a day, and the tier's other
+      leg (a cold run over the same events) is proved and running, so what is unproved is
+      narrower than "equivalence" — it is equivalence *across a restart*.
+    closes_when: >-
+      A test in `tests_flink/` cancels a running job with a savepoint, restores from it, and
+      asserts the published bytes match a cold run over the same events.
+    requested_by: theofanis-tsakanikas
+    granted_by: theofanis-tsakanikas
+    granted_on: 2026-08-14
+    expires_on: 2026-11-12
+    self_approval_acknowledged: >-
+      One author, so the grant and the request are the same signature. What that costs here is
+      real but bounded: the thing being waived is a harness nobody is relying on, and the tier's
+      other leg runs on every push, so a second reader would be approving "this stays unproved
+      for a quarter" rather than "this unsafe thing ships".
+
+  - id: WV-002
+    finding: >-
+      SageMaker Model Monitor and Clarify are not deployed, so ADR-0006's "Clarify runs but does
+      not vote" is argued from the pipeline definition rather than from a run.
+    where: infra/ml/
+    claim: claim-5
+    reason: >-
+      Both are closed to accounts created after the cutoff AWS applied; see
+      `docs/AWS-CONSTRAINTS.md`. This is not a decision anybody in this repository made and no
+      amount of work here reopens it. The bias analysis it would have run is computed offline in
+      `src/watermark/models/` and gates the promotion there instead.
+    closes_when: >-
+      AWS reopens the services to this account class, or the bias leg is moved to a service that
+      is open and the ADR is restated to name it.
+    requested_by: theofanis-tsakanikas
+    granted_by: theofanis-tsakanikas
+    granted_on: 2026-08-14
+    expires_on: 2026-11-12
+    self_approval_acknowledged: >-
+      One author again, and here the self-approval is close to immaterial: nobody is choosing
+      anything. AWS closed the service. The date on this entry is not a grant of permission, it
+      is a reminder to go and look whether that is still true.
+
+  - id: WV-003
+    finding: >-
+      The `deploy` and `destroy` environments have no required reviewer. The OIDC subject still
+      names the environment, so the trust boundary holds — but the environment is where a human
+      approval hangs, and with no reviewer attached, a workflow dispatch applies infrastructure
+      with nothing in front of it.
+    where: .github/workflows/deploy.yml
+    claim: doctrine-3
+    reason: >-
+      Removed so a session could iterate on a broken capture without an approval prompt on every
+      one of six runs in a day. That reason expires with the iteration, which is what this entry
+      exists to make true.
+    closes_when: >-
+      A required reviewer is attached to both the `deploy` and `destroy` environments in the
+      repository settings, and `docs/DAY-ONE.md` records it as done.
+    requested_by: theofanis-tsakanikas
+    granted_by: theofanis-tsakanikas
+    granted_on: 2026-08-14
+    expires_on: 2026-09-13
+    #: Shorter than the horizon on purpose. This one is a hole in an authorisation boundary, not
+    #: a missing harness, and the only thing keeping it small is that it ends soon.
+    self_approval_acknowledged: >-
+      Doctrine 5 says nothing approves itself, and a single-author repository cannot satisfy it
+      for a waiver the author both wants and grants. The check below refuses a self-approved
+      waiver *unless* this field states why, which is the most an honest single-author project
+      can do: it cannot manufacture a second person, so it refuses to let the gap go unwritten.
+
+  - id: WV-004
+    finding: >-
+      The budget's automatic freeze is not created. `aws_budgets_budget_action.freeze` attaches a
+      deny-creation policy to the deploy role at 100% of the monthly budget, and it is behind
+      `budget_action_enabled`, which defaults to false. The budget itself and both notifications
+      are live, so the estate is watched — what is missing is the action that stops it growing.
+    where: infra/foundation/cost.tf
+    claim: cost-controls
+    reason: >-
+      A budget action attaches a *managed* policy, and creating one needs `iam:CreatePolicy`,
+      which the deploy role does not hold. The permission is written into
+      `infra/bootstrap/oidc.tf` — but bootstrap is the one layer in this repository that applies
+      from a laptop rather than from a gated workflow, so the deploy that needs the permission
+      cannot be the deploy that grants it. Shipping it enabled would mean a foundation layer
+      that fails on apply for everyone until somebody happens to re-bootstrap.
+    closes_when: >-
+      `infra/bootstrap/` is applied from a laptop with the managed-policy actions in place, and
+      `budget_action_enabled` is set to true for the foundation layer.
+    requested_by: theofanis-tsakanikas
+    granted_by: theofanis-tsakanikas
+    granted_on: 2026-08-14
+    expires_on: 2026-09-13
+    self_approval_acknowledged: >-
+      One author, and the honest note is that this waiver is short precisely because the author
+      is also the person with the laptop. Nobody is being asked to accept a risk they cannot
+      remove; the work is one command and the date is what makes it happen.

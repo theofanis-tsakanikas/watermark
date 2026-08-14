@@ -518,6 +518,29 @@ jobs:
           [ "$SUPERSEDED" = "$RESTATED" ] || { echo "::error::doctrine 4: $RESTATED restatements, only $SUPERSEDED of which say what they replaced"; fail=1; }
           exit $fail
 
+      - name: renew the credentials before the second half
+        # **The role's maximum session is one hour and this capture is now longer than that.**
+        #
+        # `infra/bootstrap/oidc.tf` sets `max_session_duration = 3600`, so a longer token cannot
+        # be requested — and raising it would mean applying the one layer that applies from a
+        # laptop, to work around a workflow that can simply ask again. Assuming the role a second
+        # time costs one OIDC exchange and leaves the infrastructure alone.
+        #
+        # **Placed before claim 2, not after it**, and the first version had it the wrong side.
+        # That step publishes the whole generated day a *second* time, which is what took this
+        # capture from forty minutes to seventy — so renewing afterwards renews for everything
+        # except the step that needed it. The replay's publish failed with
+        # `ForbiddenException` from IoT Core, which is what an expired token looks like on
+        # `iot-data`: no mention of a token anywhere in the message.
+        #
+        # Renew before the long step, not after. The other renewal, immediately before the
+        # cleanup, stays where it is for the same reason in reverse: whatever happens above it,
+        # the thing that stops the billing must have credentials.
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
+          aws-region: ${{ vars.AWS_REGION }}
+
       - name: "claim 2 — the same day, delivered twice, publishes the same values"
         # **What every capture already asserted, and why it was not claim 2.**
         #
@@ -557,23 +580,6 @@ jobs:
             --before out/landing-before.txt \
             --first out/landing-first \
             --after out/landing-second
-
-      - name: renew the credentials before the second half
-        # **The role's maximum session is one hour and this capture is now longer than that.**
-        #
-        # `infra/bootstrap/oidc.tf` sets `max_session_duration = 3600`, so a longer token cannot
-        # be requested — and raising it would mean applying the one layer that applies from a
-        # laptop, to work around a workflow that can simply ask again. Assuming the role a second
-        # time costs one OIDC exchange and leaves the infrastructure alone.
-        #
-        # Placed here because the claim 2 step above publishes the whole day a second time: the
-        # capture went from forty minutes to seventy the moment that landed, and everything after
-        # it began failing on `ExpiredTokenException` — the *assertions* first, and then the
-        # cleanup, which is the half that costs money.
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
-          aws-region: ${{ vars.AWS_REGION }}
 
       - name: build the gold layer, which no capture had ever built
         # **The settlement path, run for the first time.**

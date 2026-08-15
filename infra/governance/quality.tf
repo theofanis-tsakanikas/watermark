@@ -32,6 +32,19 @@
 #                   signature, and either way it is evidence rather than a measurement.
 #   revision/supersedes — doctrine 4: a revision states what it replaced. A restatement with an
 #                   empty `supersedes` has erased the prior value instead of superseding it.
+#
+#                   **This rule had the same disease as the one removed above, and it took the
+#                   first evaluation to find it.** It was written
+#                   `(ColumnValues "revision" = 0) OR (ColumnLength "supersedes" > 0)`, and
+#                   `ColumnLength` is a string function against a `bigint` column:
+#
+#                       Expected type of column supersedes to be StringType, but found LongType
+#
+#                   The type is only half of it. `OR` in DQDL composes two *rule outcomes*, not
+#                   two row predicates — so even with the types fixed, a table holding both
+#                   revision-0 and revision-1 rows fails the left side and fails the right side
+#                   and the composition can never pass. What the doctrine actually says is a
+#                   statement about a subset of rows, and `where` is the construct for that.
 #   lineage_id    — claim 2's identity. It was `Completeness = 1.0` against a column the
 #                   streaming adapter never wrote, so the rule would have failed every run had
 #                   the table it names ever existed to be scanned.
@@ -48,7 +61,7 @@ resource "aws_glue_data_quality_ruleset" "meter_interval" {
     Rules = [
       IsPrimaryKey "meter_id" "interval_start" "revision",
       ColumnValues "energy_wh" >= 0,
-      (ColumnValues "revision" = 0) OR (ColumnLength "supersedes" > 0),
+      Completeness "supersedes" where "revision > 0" = 1.0,
       Completeness "meter_id" = 1.0,
       Completeness "lineage_id" = 1.0,
       Completeness "closed_at" = 1.0

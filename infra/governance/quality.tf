@@ -44,7 +44,10 @@
 #                   two row predicates — so even with the types fixed, a table holding both
 #                   revision-0 and revision-1 rows fails the left side and fails the right side
 #                   and the composition can never pass. What the doctrine actually says is a
-#                   statement about a subset of rows, and `where` is the construct for that.
+#                   statement about a subset of rows, and `where` is the construct for that —
+#                   placed *after* the expression, which is the second thing the account had to
+#                   teach: `Completeness "supersedes" where "revision > 0" = 1.0` is refused with
+#                   "DataQuality rules cannot be parsed", and the whole ruleset with it.
 #   lineage_id    — claim 2's identity. It was `Completeness = 1.0` against a column the
 #                   streaming adapter never wrote, so the rule would have failed every run had
 #                   the table it names ever existed to be scanned.
@@ -61,7 +64,7 @@ resource "aws_glue_data_quality_ruleset" "meter_interval" {
     Rules = [
       IsPrimaryKey "meter_id" "interval_start" "revision",
       ColumnValues "energy_wh" >= 0,
-      Completeness "supersedes" where "revision > 0" = 1.0,
+      Completeness "supersedes" = 1.0 where "revision > 0",
       Completeness "meter_id" = 1.0,
       Completeness "lineage_id" = 1.0,
       Completeness "closed_at" = 1.0

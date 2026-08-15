@@ -30,6 +30,7 @@ The asymmetry between the legs is the interesting part and it is not incidental:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from enum import Enum
 
@@ -91,8 +92,6 @@ class Observation:
 
 
 def _deletion_verdict(observation: Observation) -> LegVerdict:
-    if observation.unobservable_because:
-        return LegVerdict(observation.leg, Finding.UNOBSERVABLE, observation.unobservable_because)
     if observation.rows is None:
         return LegVerdict(
             observation.leg,
@@ -166,7 +165,17 @@ def _bounded_verdict(observation: Observation) -> LegVerdict:
 
 
 def verdict(observation: Observation) -> LegVerdict:
-    """One observation in, one finding out. The whole decision table, and it is pure."""
+    """One observation in, one finding out. The whole decision table, and it is pure.
+
+    **"Could not look" is answered here, before any leg-specific rule.** It was answered inside
+    the deletion branch only, so a certificate that could not be read reached the bounded rule,
+    found no residual, and was reported CONTRADICTED — an accusation that the certificate lies,
+    made on the basis of not having read it. Both outcomes fail the run, which is why it went
+    unnoticed and why it matters: the two say completely different things to whoever is holding
+    the report.
+    """
+    if observation.unobservable_because:
+        return LegVerdict(observation.leg, Finding.UNOBSERVABLE, observation.unobservable_because)
     if observation.leg == "crypto_shred":
         return _shred_verdict(observation)
     if observation.leg == BOUNDABLE:
@@ -199,3 +208,53 @@ def report(observations: list[Observation], expected: tuple[str, ...]) -> list[L
             LegVerdict(leg, Finding.CONTRADICTED, "observed, but the scope declares no such leg")
         )
     return verdicts
+
+
+#: How many times the certificate may be JSON-encoded before this gives up. Step Functions writes
+#: it through `States.JsonToString`, so what lands in S3 is a JSON *string* containing JSON and a
+#: single `json.loads` returns `str`. The bound exists so a third encoding is reported rather
+#: than looped on.
+MAXIMUM_ENCODINGS = 4
+
+
+def residual_from_certificate(body: str | bytes) -> Observation:
+    """What the certificate says about the leg deletion cannot reach.
+
+    Pure, and here rather than in the collector, because every way this can go wrong is a shape
+    of document rather than a state of the estate — and a shape can be written down. The first
+    version reached for `.get` on the result of one `json.loads` and raised `AttributeError` on
+    a live certificate, which is a crash where the whole point of the module is a verdict.
+    """
+    document: object = body
+    for _ in range(MAXIMUM_ENCODINGS):
+        if isinstance(document, dict):
+            break
+        try:
+            document = json.loads(document)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return Observation(
+                leg=BOUNDABLE, unobservable_because="the certificate is not readable JSON"
+            )
+    if not isinstance(document, dict):
+        return Observation(
+            leg=BOUNDABLE,
+            unobservable_because="the certificate is still not an object after unwrapping",
+        )
+
+    # `leg`, not `name` — the state machine's key for it. The residual is prose plus a window,
+    # and the prose is what a data subject would be shown, so the prose is what is checked.
+    for entry in document.get("legs", []):
+        if entry.get("leg") == BOUNDABLE:
+            note = str(entry.get("note") or "").strip()
+            days = entry.get("residual_days")
+            if note and days:
+                return Observation(leg=BOUNDABLE, residual=f"{note} Residual window: {days} days.")
+            return Observation(leg=BOUNDABLE, residual=note or (f"{days} days" if days else ""))
+
+    return Observation(
+        leg=BOUNDABLE,
+        unobservable_because=(
+            f"the certificate names no `{BOUNDABLE}` leg, so it does not say what it could not "
+            f"reach"
+        ),
+    )

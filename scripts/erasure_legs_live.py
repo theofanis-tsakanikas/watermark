@@ -18,7 +18,6 @@ deciding of its own beyond turning an exception into "unobservable".
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -33,6 +32,7 @@ from watermark.erasure.verify import (  # noqa: E402
     Finding,
     Observation,
     report,
+    residual_from_certificate,
 )
 
 #: The legs `ErasureScope.legs` declares, restated as the thing this script must cover. Imported
@@ -181,19 +181,7 @@ def _certificate_residual(subject: str, bucket: str) -> Observation:
 
     newest = max(objects, key=lambda item: item["LastModified"])
     body = s3.get_object(Bucket=bucket, Key=newest["Key"])["Body"].read()
-    try:
-        document = json.loads(body)
-    except json.JSONDecodeError:
-        return Observation(
-            leg="model_artefacts", unobservable_because="the certificate is not readable JSON"
-        )
-
-    residual = document.get("residual") or ""
-    if not residual:
-        for leg in document.get("legs", []):
-            if leg.get("name") == "model_artefacts":
-                residual = leg.get("residual") or ""
-    return Observation(leg="model_artefacts", residual=residual)
+    return residual_from_certificate(body)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -8,6 +8,7 @@ without breaking a real estate.
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from watermark.erasure.verify import (  # noqa: E402
     Finding,
     Observation,
     report,
+    residual_from_certificate,
     verdict,
 )
 
@@ -152,3 +154,60 @@ def test_the_collector_covers_exactly_the_legs_the_scope_declares() -> None:
     without a resolvable contract root. A copy nobody compares is a copy that drifts."""
     scope = scope_from_contracts(load())
     assert scope.legs == _expected_legs()
+
+
+# ── reading the certificate the state machine actually writes ────────────────
+
+CERTIFICATE = {
+    "subject_id": "C00007-NEW",
+    "legs": [
+        {"leg": "crypto_shred", "confirmed": True},
+        {"leg": "physical_deletion", "confirmed": True},
+        {
+            "leg": "model_artefacts",
+            "confirmed": True,
+            "boundary": "declared",
+            "residual_days": 30,
+            "note": "Models trained before this request retain the subject statistically.",
+        },
+    ],
+}
+
+
+def test_the_certificate_is_json_inside_a_json_string() -> None:
+    """What Step Functions writes, and what crashed the first live run.
+
+    `States.JsonToString` puts a JSON *string* in S3, so one `json.loads` returns `str` — and
+    reaching for `.get` on it raises `AttributeError` in a module whose whole purpose is to
+    return a verdict rather than to crash.
+    """
+    body = json.dumps(json.dumps(CERTIFICATE)).encode("utf-8")
+    observation = residual_from_certificate(body)
+    assert verdict(observation).ok
+    assert "retain the subject statistically" in verdict(observation).detail
+    assert "30 days" in verdict(observation).detail
+
+
+def test_a_plain_object_is_read_too() -> None:
+    """The encoding is a property of how the state machine is wired, not of the document."""
+    assert verdict(residual_from_certificate(json.dumps(CERTIFICATE))).ok
+
+
+def test_the_leg_key_is_leg_and_not_name() -> None:
+    """The scope calls it a leg name; the state machine writes `leg`. Reading the wrong key
+    finds nothing, and finding nothing must be unobservable rather than a silent pass."""
+    wrong = {"legs": [{"name": "model_artefacts", "note": "x", "residual_days": 30}]}
+    result = verdict(residual_from_certificate(json.dumps(wrong)))
+    assert result.finding is Finding.UNOBSERVABLE
+    assert "names no `model_artefacts` leg" in result.detail
+
+
+def test_a_certificate_that_is_not_json_is_unobservable_not_a_crash() -> None:
+    result = verdict(residual_from_certificate(b"<html>403</html>"))
+    assert result.finding is Finding.UNOBSERVABLE
+
+
+def test_a_bounded_leg_with_no_note_and_no_window_is_contradicted() -> None:
+    """The one dishonest outcome available: reporting the unreachable leg as complete."""
+    bare = {"legs": [{"leg": "model_artefacts", "confirmed": True}]}
+    assert verdict(residual_from_certificate(json.dumps(bare))).finding is Finding.CONTRADICTED

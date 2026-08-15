@@ -160,10 +160,20 @@ resource "aws_glue_catalog_table" "substation_telemetry" {
       name = "limit_w"
       type = "bigint"
     }
+    # `headroom_w` is `limit_w - load_w`, stored rather than derived, and its reasoning lives
+    # here because Glue caps a column comment at 255 characters — a limit `terraform validate`
+    # does not see and the plan does.
+    #
+    # `substation_headroom_15m` aggregates it with `min`. A minimum over a computed expression
+    # and a minimum over a column are the same answer only while both paths stay identical, and
+    # claim 3 compares those two paths with no tolerance — so one writer computes it once.
+    #
+    # Negative when the substation is over its limit. That is the case the curtailment decision
+    # exists for, and clamping it at zero would erase the magnitude of the overload.
     columns {
       name    = "headroom_w"
       type    = "bigint"
-      comment = "limit_w - load_w, stored rather than derived. `substation_headroom_15m` aggregates it with `min`, and a minimum over a computed expression and a minimum over a column are the same answer only while nobody adds a filter — which is precisely the kind of edit that arrives with a deadline. Negative when the substation is over its limit; that is the case the curtailment decision exists for and clamping it at zero would erase the magnitude of the overload."
+      comment = "limit_w - load_w. Negative when the substation is over its limit."
     }
   }
 

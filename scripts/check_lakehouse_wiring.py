@@ -173,6 +173,38 @@ def _query_tables() -> dict[str, set[str]]:
     return tables
 
 
+#: Glue stores a column comment in a field of this width. Longer and `CreateTable` refuses.
+COMMENT_LIMIT = 255
+
+
+def _overlong_comments() -> list[str]:
+    """Column comments Glue will refuse, which `terraform validate` does not see.
+
+    The provider validates this at *plan* time, not at validate time, so a comment that is too
+    long passes every offline check in this repository and fails four minutes into an apply,
+    after the layers below it have already been created. That is exactly what it did: a comment
+    explaining why `headroom_w` is stored rather than derived ran to 430 characters and killed
+    the deploy that would have proved the feature it described.
+
+    The reasoning belongs in an HCL comment above the block, where it can be as long as it needs
+    to be. What goes in the field is what somebody querying the table should read.
+    """
+    problems = []
+    for path in sorted((ROOT / "infra" / "lakehouse").glob("*.tf")):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r'comment\s*=\s*"((?:[^"\\]|\\.)*)"', text):
+            comment = match.group(1)
+            if len(comment) > COMMENT_LIMIT:
+                line = text[: match.start()].count("\n") + 1
+                problems.append(
+                    f"{path.name}:{line} has a column comment of {len(comment)} characters, and "
+                    f"Glue accepts {COMMENT_LIMIT}. `terraform validate` does not check this; "
+                    f"the plan does, four minutes into an apply. Move the reasoning above the "
+                    f"block: \u201c{comment[:60]}\u2026\u201d"
+                )
+    return problems
+
+
 def main() -> int:
     sources, queries = _dbt_sources(), _query_tables()
 
@@ -190,7 +222,7 @@ def main() -> int:
     }
     known = set(created) | EXTERNAL
 
-    problems = []
+    problems = _overlong_comments()
     for name in sorted(set(sources) - known):
         problems.append(
             f"dbt declares source `{name}`, which nothing in this repository creates and which "

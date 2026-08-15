@@ -48,6 +48,18 @@
 #                   placed *after* the expression, which is the second thing the account had to
 #                   teach: `Completeness "supersedes" where "revision > 0" = 1.0` is refused with
 #                   "DataQuality rules cannot be parsed", and the whole ruleset with it.
+#
+#                   **And the subset is not `revision > 0`.** With the syntax right, the rule
+#                   evaluated at 0.9869 — and the missing 1.3% is not a defect in the data. A
+#                   *confirmation* (`windows.py`: late data that agrees with what was published)
+#                   carries the previous revision forward with `supersedes` deliberately unset,
+#                   because restating a number to itself would put a meaningless row in a
+#                   settlement report. So a window restated once and then confirmed lands at
+#                   revision 1 with no `supersedes`, correctly.
+#
+#                   `restatement_cause` is the marker of an actual restatement — set in that
+#                   branch and nowhere else. The invariant doctrine 4 states is about
+#                   restatements, not about revision numbers, and the two differ exactly here.
 #   lineage_id    — claim 2's identity. It was `Completeness = 1.0` against a column the
 #                   streaming adapter never wrote, so the rule would have failed every run had
 #                   the table it names ever existed to be scanned.
@@ -64,7 +76,7 @@ resource "aws_glue_data_quality_ruleset" "meter_interval" {
     Rules = [
       IsPrimaryKey "meter_id" "interval_start" "revision",
       ColumnValues "energy_wh" >= 0,
-      Completeness "supersedes" = 1.0 where "revision > 0",
+      Completeness "supersedes" = 1.0 where "restatement_cause IS NOT NULL",
       Completeness "meter_id" = 1.0,
       Completeness "lineage_id" = 1.0,
       Completeness "closed_at" = 1.0

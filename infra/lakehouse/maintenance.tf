@@ -364,10 +364,24 @@ resource "aws_iam_role_policy" "maintenance" {
 # Compaction on a schedule; the other two are invoked by the erasure orchestration and by the
 # nightly window in `infra/governance`. Compaction is the only one that has to keep up with
 # ingestion rather than with a request.
+# **Daily at 03:15, and it used to be hourly at :30.**
+#
+# Compaction rewrites the data files a merge planned against, and Iceberg validates at commit
+# that those files still exist. Hourly on a table this estate writes *once per capture* was
+# disproportionate to begin with, and it collided: `land_to_silver` started at 03:30:47 and the
+# commit was refused with `Cannot commit, missing data files`. Neither job was wrong.
+#
+# The merge now retries — that is the real fix, because a schedule can always be unlucky and
+# optimistic concurrency exists to be re-tried. Moving the schedule is the second one: it makes
+# the collision rare rather than hourly, so the retry is a safety net instead of the mechanism.
+#
+# 03:15 rather than 03:30 so that neither the hour nor the half-hour is the moment anything in
+# this estate does something expensive. A capture launched on a round number is the ordinary
+# case, and it should not be the unlucky one.
 resource "aws_glue_trigger" "compaction" {
   name     = "${var.project}-compaction"
   type     = "SCHEDULED"
-  schedule = "cron(30 * * * ? *)"
+  schedule = "cron(15 3 * * ? *)"
   enabled  = true
 
   actions {

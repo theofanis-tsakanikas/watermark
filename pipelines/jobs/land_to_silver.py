@@ -27,6 +27,7 @@ is correct only if nothing is ever delivered twice.
 from __future__ import annotations
 
 import sys
+import time
 
 import boto3
 from awsglue.context import GlueContext
@@ -59,6 +60,10 @@ job = Job(GlueContext(SparkContext.getOrCreate()))
 job.init(ARGUMENTS["JOB_NAME"], ARGUMENTS)
 
 TARGET = f"glue_catalog.{ARGUMENTS['DATABASE']}.{ARGUMENTS['TABLE']}"
+
+#: How many times the merge may lose a commit race before it is contention worth reporting.
+MERGE_ATTEMPTS = 4
+MERGE_BACKOFF_SECONDS = 15
 
 # **The writer creates the table, because nothing else can.**
 #
@@ -337,14 +342,43 @@ else:
         FROM newest
     """)
 
-    spark.sql(f"""
+    # **The merge retries, because a concurrent writer is not an error.**
+    #
+    # Iceberg plans a row-level delete against the data files of the snapshot it read, and
+    # validates at commit that those files still exist. Compaction rewrites exactly those files.
+    # Run the two together and the commit is refused:
+    #
+    #     ValidationException: Cannot commit, missing data files: [...00000-18-....parquet, ...]
+    #
+    # That is what happened: `watermark-compaction` was scheduled `cron(30 * * * ? *)` and this
+    # job started at 03:30:47. Neither had done anything wrong. Optimistic concurrency means the
+    # loser re-reads and tries again, and a writer that treats the first refusal as a failure has
+    # simply not implemented the protocol.
+    #
+    # `closed` is a view over the landing files, not over the table, so re-running the statement
+    # re-plans against the new snapshot and the same rows land. Bounded, because a merge that
+    # cannot commit after this many attempts is contention nobody should absorb silently.
+    merge = f"""
         MERGE INTO {TARGET} AS target
         USING closed AS source
         ON  target.meter_id = source.meter_id
         AND target.interval_start = source.interval_start
         WHEN MATCHED AND source.revision > target.revision THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
-    """)
+    """
+    for attempt in range(1, MERGE_ATTEMPTS + 1):
+        try:
+            spark.sql(merge)
+            break
+        except Exception as error:  # py4j wraps the Iceberg exception; the text is what is left
+            retryable = "missing data files" in str(error) or "ValidationException" in str(error)
+            if not retryable or attempt == MERGE_ATTEMPTS:
+                raise
+            print(
+                f"merge attempt {attempt} lost a commit race with a concurrent writer; "
+                f"re-planning against the new snapshot"
+            )
+            time.sleep(MERGE_BACKOFF_SECONDS * attempt)
 
     merged = spark.sql(f"SELECT COUNT(*) AS rows, MAX(revision) AS top FROM {TARGET}").collect()[0]
     print(f"merged; {TARGET} now holds {merged['rows']} rows, highest revision {merged['top']}")

@@ -894,7 +894,21 @@ jobs:
           # reported nine transitions, one of them `held_back` naming SUB-01.
           aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" out/landing \
             --recursive --exclude "*_tmp_*" --quiet
-          cat out/landing/*/* 2>/dev/null \
+
+          # **Only this capture's files.** The landing prefix accumulates across every capture the
+          # estate has ever driven — `replay_live.py`'s docstring says so in as many words, and it
+          # says so because that prefix once made a comparison report four thousand phantom
+          # losses. This step read the whole of it, so a `held_back` transition from *some
+          # earlier run* satisfied it. It passed on the run below, where the case matrix — which
+          # is scoped — reported no hold-back at all, and the matrix was right.
+          #
+          # A check that is green because of something that happened last week is worse than a
+          # check that is red: it is the same tick with none of the meaning.
+          find out/landing -type f | while read -r file; do
+            if ! grep -qxF "$(basename "$file")" out/landing-before.txt; then
+              cat "$file"
+            fi
+          done 2>/dev/null \
             | grep '"kind": "watermark"' > out/capture/watermark-status.jsonl || true
 
           transitions=$(wc -l < out/capture/watermark-status.jsonl | tr -d ' ')

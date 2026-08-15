@@ -132,3 +132,36 @@ def test_an_empty_delivery_is_not_a_pass(replay, tmp_path, capsys) -> None:
     code = replay.main(["--before", str(before), "--first", str(first), "--after", str(after)])
     assert code == 1
     assert "published nothing" in capsys.readouterr().out
+
+
+def test_a_neighbouring_offset_does_not_win_on_an_edge_effect(replay) -> None:
+    """The live failure, in miniature — and the reason the alignment counts values.
+
+    A generated day is contiguous, so shifting it by one interval still overlaps every window
+    but the one at each edge. Counting shared *keys* therefore gives almost the same score to
+    the true offset and to its neighbours, and a two-window edge effect decides between them.
+
+    The estate picked the offset one interval short and reported 3,612 disagreements in which
+    every replayed value was the first run's value from fifteen minutes earlier — the signature
+    of a shift, printed as a data corruption.
+
+    Here the second run gains a window at the head, which is exactly the edge effect that used
+    to tip the count the wrong way.
+    """
+    first = replay.published_values(_day(1_000_000))
+    replayed = replay.published_values(_day(9_998_123_456, extra_head=1))
+    second, offset = replay.align(first, replayed)
+
+    assert offset == 1_000_000 - 9_998_123_456, "the alignment moved by a whole interval"
+    assert not replay.compare(first, second)
+
+
+def test_the_offset_is_measured_on_agreement_and_not_on_overlap(replay) -> None:
+    """Stated directly, because the two read alike and the docstring claimed the stronger one
+    for a long time while the code did the weaker one."""
+    first = replay.published_values(_day(1_000_000))
+    shifted = replay.published_values(_day(1_000_000 + GRID))
+
+    # Every key of the shifted run overlaps the first run's; only the values rule it out.
+    _, offset = replay.align(first, shifted)
+    assert offset == -GRID

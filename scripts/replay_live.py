@@ -207,11 +207,29 @@ def align(
     #
     # The median difference is already the right offset whenever both medians land on the same
     # window of the day. The steps either side are for when they do not.
-    best_offset, best_hits = 0, -1
+    # **Agreement of values, not presence of keys**, and the difference is a whole interval.
+    #
+    # Counting shared keys reads as the same thing and is not. A generated day is contiguous, so
+    # shifting by one interval still overlaps every window except the one at each edge — the
+    # count is almost flat across neighbouring offsets and a two-window edge effect decides it.
+    # A live run picked the offset one interval short and reported 3,612 disagreements in which
+    # every replayed value was the first run's value from fifteen minutes earlier.
+    #
+    # Values break the tie outright: at the true offset a whole day agrees, and one interval away
+    # essentially nothing does. Ties go to the candidate nearest the median difference, so a run
+    # with no agreement anywhere is reported at the offset the medians imply rather than at
+    # whichever end of the search the loop happened to reach first.
+    best_offset, best_hits = centre, -1
     for step in range(-ALIGNMENT_SEARCH, ALIGNMENT_SEARCH + 1):
         offset = centre + step * grid
-        hits = sum(1 for meter, interval in second if (meter, interval + offset) in first)
-        if hits > best_hits:
+        hits = sum(
+            1
+            for (meter, interval), value in second.items()
+            if first.get((meter, interval + offset)) == value
+        )
+        if hits > best_hits or (
+            hits == best_hits and abs(offset - centre) < abs(best_offset - centre)
+        ):
             best_offset, best_hits = offset, hits
 
     return {

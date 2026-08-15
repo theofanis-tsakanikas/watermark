@@ -275,6 +275,43 @@ data "aws_iam_policy_document" "maintenance" {
     ]
   }
 
+  # **Data Quality, which this role had no reason to touch until something finally evaluated the
+  # ruleset.** It was declared in `infra/governance/quality.tf`, applied, attached, and never
+  # once run — so nothing had ever needed permission to run it, and the absence looked exactly
+  # like a role scoped correctly.
+  #
+  # The failure is worth keeping in view because of *which* action it named. Glue starts the run
+  # under this role and then reads its own progress back under the same role, so
+  # `Start…` without `Get…` produces an evaluation that begins and can never be observed —
+  # `AccessDeniedException` on `GetDataQualityRulesetEvaluationRun`, from inside a job that had
+  # already started doing the work.
+  #
+  # A separate statement rather than more actions above, because a ruleset is not a table: it is
+  # its own ARN type, and folding it into the catalogue statement would grant these actions
+  # against every table pattern there and read as though it were narrower than it is.
+  statement {
+    sid    = "EvaluateTheQualityRuleset"
+    effect = "Allow"
+    actions = [
+      "glue:StartDataQualityRulesetEvaluationRun",
+      "glue:GetDataQualityRulesetEvaluationRun",
+      "glue:GetDataQualityRuleset",
+      "glue:ListDataQualityRulesets",
+      "glue:GetDataQualityResult",
+      "glue:ListDataQualityResults",
+      # Glue writes the score to CloudWatch as it finishes. Without this the evaluation
+      # completes and then fails on the publish, which reports as a failed run over data that
+      # was in fact fine — the most misleading outcome available here.
+      "glue:PublishDataQuality",
+    ]
+    resources = [
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:dataQualityRuleset/${var.project}-*",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/${var.project}_*",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project}_*/*",
+    ]
+  }
+
   statement {
     sid       = "UseTheDataKey"
     effect    = "Allow"

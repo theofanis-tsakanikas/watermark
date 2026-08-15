@@ -130,58 +130,24 @@ resource "aws_glue_catalog_table" "quarantine" {
 # shape the platform reads, so that a query written against it is checkable and the erasure
 # orchestration has something real to issue a DELETE against.
 
-resource "aws_glue_catalog_table" "substation_telemetry" {
-  name          = "substation_telemetry"
-  database_name = aws_glue_catalog_database.gold.name
-  table_type    = "EXTERNAL_TABLE"
-  parameters    = local.iceberg_properties
+# **`gold.substation_telemetry` is created by its writer, not here — ADR-0008, and it is the one
+# table that had never learnt the lesson because nothing had ever written to it.**
+#
+# It was declared here with `table_type = "ICEBERG"` in `parameters`, which produces a catalogue
+# entry that *looks* like an Iceberg table and has no metadata location. Athena refuses to write
+# to it, in as many words:
+#
+#     Detected Iceberg type table without metadata location. [...] Setting table_type parameter
+#     in Glue metastore to create an Iceberg table is not supported.
+#
+# `meter_interval` and `settlement_hour` were moved to their writers for exactly this reason; the
+# comment above says so. This one stayed behind because the failure needs a writer to surface it,
+# and for the whole life of the lakehouse there was none — the two substation features read from
+# it and neither had ever been served.
+#
+# `scripts/land_telemetry.py` now issues the `CREATE TABLE IF NOT EXISTS`, and
+# `check_feature_sources.py` reads the columns from there.
 
-  storage_descriptor {
-    location = "${local.warehouse}/gold/substation_telemetry"
-
-    columns {
-      name = "substation_id"
-      type = "string"
-    }
-    columns {
-      name = "event_time"
-      type = "timestamp"
-    }
-    columns {
-      name = "ingest_time"
-      type = "timestamp"
-    }
-    columns {
-      name    = "load_w"
-      type    = "bigint"
-      comment = "Measured load in watts. Integer: the curtailment fallback compares it against a limit, and a float comparison inside a safety path is a comparison two engines can disagree about."
-    }
-    columns {
-      name = "limit_w"
-      type = "bigint"
-    }
-    # `headroom_w` is `limit_w - load_w`, stored rather than derived, and its reasoning lives
-    # here because Glue caps a column comment at 255 characters — a limit `terraform validate`
-    # does not see and the plan does.
-    #
-    # `substation_headroom_15m` aggregates it with `min`. A minimum over a computed expression
-    # and a minimum over a column are the same answer only while both paths stay identical, and
-    # claim 3 compares those two paths with no tolerance — so one writer computes it once.
-    #
-    # Negative when the substation is over its limit. That is the case the curtailment decision
-    # exists for, and clamping it at zero would erase the magnitude of the overload.
-    columns {
-      name    = "headroom_w"
-      type    = "bigint"
-      comment = "limit_w - load_w. Negative when the substation is over its limit."
-    }
-  }
-
-  partition_keys {
-    name = "event_day"
-    type = "date"
-  }
-}
 
 resource "aws_glue_catalog_table" "inspection_outcome" {
   name          = "inspection_outcome"

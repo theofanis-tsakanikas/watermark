@@ -105,6 +105,34 @@ def read_telemetry(client, bucket: str, since_millis: int) -> list[dict[str, obj
     return rows
 
 
+def create_statement(database: str, warehouse: str) -> str:
+    """The table, created by its writer — ADR-0008, and the reason this exists at all.
+
+    It used to be an `aws_glue_catalog_table` with `table_type = "ICEBERG"` in its parameters.
+    That produces a catalogue entry which looks like an Iceberg table and carries no metadata
+    location, and Athena refuses to write to it in as many words: *"Detected Iceberg type table
+    without metadata location. Setting table_type parameter in Glue metastore to create an
+    Iceberg table is not supported."*
+
+    `meter_interval` learnt this years of commits ago. This table did not, because the lesson
+    needs a writer to teach it and this table had none.
+    """
+    return f"""
+        CREATE TABLE IF NOT EXISTS {database}.{TABLE} (
+            event_time    TIMESTAMP,
+            ingest_time   TIMESTAMP,
+            substation_id STRING,
+            load_w        BIGINT,
+            limit_w       BIGINT,
+            headroom_w    BIGINT,
+            event_day     STRING
+        )
+        PARTITIONED BY (event_day)
+        LOCATION '{warehouse}/gold/{TABLE}'
+        TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
+    """
+
+
 def insert_statements(database: str, rows: list[dict[str, object]]) -> list[str]:
     """The INSERTs, batched. Pure, so the SQL is inspectable without an estate."""
     statements = []
@@ -128,6 +156,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--database", default="watermark_gold")
     parser.add_argument("--workgroup", required=True)
+    parser.add_argument(
+        "--warehouse",
+        default="",
+        help="s3://…/warehouse. Required the first time, when the table does not exist yet.",
+    )
     parser.add_argument(
         "--since",
         default="",
@@ -154,6 +187,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     athena = boto3.client("athena")
+    if arguments.warehouse:
+        _run(
+            athena,
+            arguments.workgroup,
+            arguments.database,
+            create_statement(arguments.database, arguments.warehouse.rstrip("/")),
+        )
+
     statements = insert_statements(arguments.database, rows)
     for statement in statements:
         _run(athena, arguments.workgroup, arguments.database, statement)

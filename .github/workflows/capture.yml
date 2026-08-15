@@ -839,6 +839,7 @@ jobs:
             --bucket "$LAKEHOUSE" \
             --database "${PROJECT}_gold" \
             --workgroup "$PROJECT" \
+            --warehouse "s3://${LAKEHOUSE}/warehouse" \
             --since "${{ inputs.snapshot }}"
 
           # Each feature separately, and the loop does not swallow a failure: a divergence on the

@@ -78,6 +78,16 @@ _CREATE = re.compile(
 )
 
 
+def _module_constants(text: str) -> dict[str, str]:
+    """Module-level `NAME = "literal"` assignments, so an f-string can be resolved locally."""
+    return {
+        match.group("name"): match.group("value")
+        for match in re.finditer(
+            r'^(?P<name>[A-Z_][A-Z0-9_]*)(?::[^=]+)?\s*=\s*"(?P<value>[^"]+)"', text, re.M
+        )
+    }
+
+
 def _columns_of(body: str) -> set[str]:
     return {
         line.strip().split()[0].strip('`"')
@@ -130,12 +140,23 @@ def _tables_a_writer_creates() -> dict[str, set[str]]:
         for match in _CREATE.finditer(text):
             columns = _columns_of(match.group("body"))
             name = match.group("name").split(".")[-1]
-            if "{" in name or "[" in name:
-                # The name is interpolated. Terraform knows what it resolves to.
-                for resolved in by_script.get(path.name, ()):
-                    tables.setdefault(resolved, set()).update(columns)
-            else:
+            if "{" not in name and "[" not in name:
                 tables.setdefault(name, set()).update(columns)
+                continue
+
+            # The name is interpolated, and there are two ways it can be. A Glue job builds it
+            # from a job argument, so Terraform is the only place that knows — `land_to_silver`
+            # writes `{TARGET}`. A script builds it from a constant beside it, so the file knows
+            # — `land_telemetry` writes `{database}.{TABLE}` with `TABLE` two screens up. Reading
+            # only the first left a writer that plainly creates a table reported as no writer at
+            # all, which is a false accusation and the fastest way to get a check deleted.
+            placeholder = name.strip("{}")
+            local = _module_constants(text).get(placeholder)
+            if local:
+                tables.setdefault(local, set()).update(columns)
+                continue
+            for resolved in by_script.get(path.name, ()):
+                tables.setdefault(resolved, set()).update(columns)
     return tables
 
 

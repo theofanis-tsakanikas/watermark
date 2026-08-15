@@ -74,12 +74,17 @@ asking the same question a different way: *what does this repository claim that 
 | Two features that could not be served | `substation_telemetry` was a catalogue entry with no writer; `headroom_w` was a column no table had | `check_feature_sources.py`, `land_telemetry.py`, and all three features compared live |
 | A ruleset never evaluated | Six Glue Data Quality rules, applied and attached, never once run against a row | `evaluate_quality.py`, reporting rule by rule |
 | A reaper that deleted nothing | It classified, logged `would delete`, and returned a list — hourly, convincingly | `WATERMARK_REAPER_MODE`, ten tests over every branch that deletes |
+| The `held_back` check reading history | It read the whole landing prefix, which accumulates across every capture ever driven, so it was green on an earlier run's evidence | Scoped to `landing-before.txt`, like the case matrix that disagreed with it and was right |
+| An alignment that counted keys | `align`'s docstring claimed it chose the offset that agrees; the code counted shared keys, and a contiguous day is nearly flat across neighbouring offsets | Value agreement, ties to the nearest candidate — and a test that reproduces the one-interval shift |
+| A merge that had not implemented optimistic concurrency | Compaction rewrote the files it planned against; `Cannot commit, missing data files` | The merge retries; compaction moved from hourly to daily |
 | A budget guard I reported missing | It was not missing. `infra/bootstrap/cost.tf` has had it — budget, notifications and the action that detaches the deploy role — since before this phase. I searched `infra/foundation/` and concluded from an absence | The duplicate was reverted. The lesson is in the search, not the code: an absence in one layer is not an absence |
 
 ### Open
 
 | task | why it is not done | what would close it |
 |---|---|---|
+| **`the evidence gap leaves a hole`** | The gap meter published as many windows as the fleet. Likely the second delivery filling the hole legitimately, which would make it a scoping question rather than a cast one — check that first | The case reading the first delivery's evidence, and failing when a declared gap is absent |
+| **The six-leg erasure verification, live** | Closed in code and covered offline against the real certificate shape. It has run against an estate once, crashed on the parse, and been skipped in every run since because `decide` failed ahead of it | One capture that reaches the `erase` job |
 | **The five-step sequence, in order** | Steps 3–5 — promote, redeploy with an endpoint, capture again — have each run, but not in sequence with the case matrices present | One run of `deploy → capture → promote → deploy → capture`, green throughout |
 | **Claim 7's second half** | The refusal is proved on every run: 20 pending, 0 actuated. That a *named human* is the only thing that can actuate needs a name on a record | A capture with `approver` set, and the actuated decision carrying it |
 | **The savepoint-restore drill** | A harness rather than an assertion: hold a job open, cancel with a savepoint, resume | A test in `tests_flink/` that survives the break — WV-001 |

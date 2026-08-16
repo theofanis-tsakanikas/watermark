@@ -258,10 +258,22 @@ def _offline_store(arguments, athena) -> Observation:
     # state machine's DELETE is written the same way, which is deliberate: the two must agree
     # about what belongs to whom, or one of them is checking a different question.
     moment = "cast(from_iso8601_timestamp(substr(f.event_time, 1, 23) || 'Z') as timestamp)"
+    # **`is_deleted` is excluded, and it is not a loophole.**
+    #
+    # SageMaker's `DeleteRecord` is a soft delete: it appends a row to the offline store with
+    # `is_deleted = true` and no feature values, which is how that store records that a record
+    # stopped existing. The online-store leg issues exactly that call, so the erasure's own
+    # deletion flushes through as a row carrying the meter and the instant — and a count that
+    # did not know the difference reads the record of the removal as the thing that survived it.
+    #
+    # What is being asked is whether a *feature value* belonging to the subject is still
+    # readable. A tombstone is the opposite of one. The diagnostic below prints the flag anyway,
+    # because this argument only holds while the rows really are tombstones.
     belonging = f"""
         FROM {database}.{table} f
         JOIN {arguments.gold}.meter_assignment_scd2 a ON a.meter_id = f.meter_id
         WHERE a.customer_id = ?
+          AND NOT coalesce(f.is_deleted, false)
           AND {moment} >= a.valid_from
           AND (a.valid_to IS NULL OR {moment} < a.valid_to)
     """
@@ -283,7 +295,8 @@ def _offline_store(arguments, athena) -> Observation:
         athena,
         arguments.workgroup,
         database,
-        f"SELECT f.meter_id, f.event_time, f.write_time {belonging} ORDER BY f.event_time LIMIT 5",
+        f"SELECT f.meter_id, f.event_time, f.write_time, f.is_deleted {belonging}"
+        " ORDER BY f.event_time LIMIT 5",
         [arguments.subject],
     )
     written = "; ".join(" ".join(row) for row in survivors) or "could not be listed"
@@ -291,7 +304,7 @@ def _offline_store(arguments, athena) -> Observation:
         leg="offline_store",
         rows=count,
         unobservable_because=None,
-        note=f"survivors (meter, event_time, write_time): {written}",
+        note=f"survivors (meter, event_time, write_time, is_deleted): {written}",
     )
 
 

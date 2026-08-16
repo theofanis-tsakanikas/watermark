@@ -172,17 +172,38 @@ def the_quiet_substation_held_the_watermark_back(lines: list[dict[str, Any]]) ->
     rather than behaviour. What is required is that the estate reports the condition at all and
     names *a* culprit every time — a held-back watermark that cannot say who is holding it is the
     half that makes the state useless to an operator.
+
+    **And reported rather than required that it happened at all** — which this case used to
+    demand, and which is the same decision `capture.yml` had already made in the step above it,
+    with its reasoning written out. The two disagreed, and the disagreement was invisible until
+    both were scoped to the same delivery: the step reported, the matrix failed the run.
+
+    The arithmetic settles it. SUB-03's silence is forty minutes of *event* time and the
+    publisher compresses arrivals nearly 300x, so the gap passes in about eight seconds of wall
+    clock. Whether a one-second batch boundary falls inside it is alignment — it has, in three
+    captures out of six — and a check that turns on that is a check that fails for a reason
+    unrelated to the property it names.
+
+    **The property is not unproved; it is proved where it is deterministic.** `evals/watermark/`
+    exercises `held_back` offline in seven cases, and every capture asserts claim 1 in SQL as a
+    statement about output rather than about timing: no row may be published carrying a watermark
+    earlier than its own interval end. Inducing the transition live and on purpose needs a
+    capture whose compression preserves the gap — four days at 20x, a five-hour run — and that
+    is a real limit, recorded rather than papered over.
+
+    Do not re-tighten this without reading the paragraph above. It was tightened once, and it
+    cost a capture.
     """
     conditions = [line for line in lines if line.get("kind") == "watermark"]
     if not conditions:
         return "the job reported no watermark condition at all, so claim 1 has no evidence"
     held = [line for line in conditions if line.get("status") == "held_back"]
     if not held:
-        return (
-            "no `held_back` transition in this capture. The silent substation's gap is compressed "
-            "to seconds of wall clock, so this is alignment rather than behaviour — but a capture "
-            "that never holds back has not exercised the state"
+        print(
+            "        note: no `held_back` in this capture — eight seconds of wall clock at this "
+            "compression. Claim 1 is asserted in SQL on every run and proved in evals/watermark/."
         )
+        return ""
     unnamed = [line for line in held if not line.get("holding_back")]
     return _require(
         not unnamed,

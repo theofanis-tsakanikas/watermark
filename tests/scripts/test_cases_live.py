@@ -154,3 +154,32 @@ def test_the_first_delivery_boundary_keeps_the_gap_visible(matrix, tmp_path) -> 
 
     bounded = matrix.read_lines(landing, {"history.jsonl"}, {"first.jsonl"})
     assert {row["meter"] for row in bounded} == {"M00001"}
+
+
+def test_a_capture_with_no_hold_back_is_reported_and_not_failed(matrix, capsys) -> None:
+    """Pins a decision that was made twice and disagreed with itself once.
+
+    `capture.yml` reports a missing `held_back` with its reasoning; this case used to fail the
+    run for it. The two contradicted each other and nobody noticed until both were scoped to the
+    same delivery. Eight seconds of wall clock decides whether the transition is observed, and a
+    check that turns on that fails for a reason unrelated to claim 1.
+    """
+    healthy = [{"kind": "watermark", "status": "advancing", "holding_back": None}] * 3
+    assert matrix.the_quiet_substation_held_the_watermark_back(healthy) == ""
+    assert "eight seconds" in capsys.readouterr().out
+
+
+def test_a_hold_back_that_names_nobody_still_fails(matrix) -> None:
+    """The half that stays deterministic. A held-back watermark that cannot say who is holding
+    it is the half that makes the state useless to an operator, and it is not a timing question."""
+    anonymous = [
+        {"kind": "watermark", "status": "advancing", "holding_back": None},
+        {"kind": "watermark", "status": "held_back", "holding_back": None},
+    ]
+    assert matrix.the_quiet_substation_held_the_watermark_back(anonymous) != ""
+
+
+def test_no_watermark_condition_at_all_still_fails(matrix) -> None:
+    """Silence from the reporter is not the same as a healthy quiet grid — that distinction is
+    the whole of claim 1, and it is what the emitter's heartbeat exists to make."""
+    assert matrix.the_quiet_substation_held_the_watermark_back([]) != ""

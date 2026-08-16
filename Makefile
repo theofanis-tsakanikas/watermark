@@ -205,8 +205,23 @@ connector: ## Fetch the Kinesis connector JAR the Flink job cannot start without
 	@echo "Fetching the Flink Kinesis connector for the runtime in infra/streaming/variables.tf."
 	@echo "Not vendored: a 20 MB binary in a repository whose claim is that everything in it is"
 	@echo "checkable is the one file nobody would verify. The download is a deliberate act."
-	curl -fsSL -o infra/streaming/lib/flink-sql-connector-kinesis.jar \
-		"https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kinesis/$(CONNECTOR_VERSION)/flink-sql-connector-kinesis-$(CONNECTOR_VERSION).jar"
+	@# **Retried, because Maven Central rate-limits GitHub's runners.** A deploy died on
+	@# `curl: (22) ... 403` for this exact URL while the same URL served 200 from a laptop a
+	@# minute later. One deliberate download is the policy; one *attempt* was never the policy,
+	@# and a transient upstream 403 should not cost a deploy that is otherwise ready to apply.
+	@for attempt in 1 2 3 4 5; do \
+		if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
+			-o infra/streaming/lib/flink-sql-connector-kinesis.jar \
+			"https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kinesis/$(CONNECTOR_VERSION)/flink-sql-connector-kinesis-$(CONNECTOR_VERSION).jar"; then \
+			break; \
+		fi; \
+		echo "  attempt $$attempt failed; Maven Central rate-limits runners. Waiting."; \
+		rm -f infra/streaming/lib/flink-sql-connector-kinesis.jar; \
+		sleep $$((attempt * 15)); \
+	done
+	@test -s infra/streaming/lib/flink-sql-connector-kinesis.jar || { \
+		echo "the connector could not be fetched after five attempts"; exit 1; \
+	}
 	@echo "fetched $$(du -h infra/streaming/lib/flink-sql-connector-kinesis.jar | cut -f1)"
 
 .PHONY: gate-proof

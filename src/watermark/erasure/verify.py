@@ -89,6 +89,10 @@ class Observation:
     residual: str | None = None
     #: Free text from the collector about why it could not look, if it could not.
     unobservable_because: str | None = None
+    #: Free text the collector wants carried into the finding whatever the verdict — the rows
+    #: behind a count, the instant behind a state. A verdict that names a number and not the
+    #: thing it counted costs a whole run to interpret.
+    note: str | None = None
 
 
 def _deletion_verdict(observation: Observation) -> LegVerdict:
@@ -100,12 +104,13 @@ def _deletion_verdict(observation: Observation) -> LegVerdict:
             "that passed.",
         )
     if observation.rows > 0:
-        return LegVerdict(
-            observation.leg,
-            Finding.CONTRADICTED,
+        detail = (
             f"{observation.rows} rows belonging to the subject survived a leg the certificate "
-            f"reports as complete",
+            f"reports as complete"
         )
+        if observation.note:
+            detail = f"{detail}. {observation.note}"
+        return LegVerdict(observation.leg, Finding.CONTRADICTED, detail)
     return LegVerdict(observation.leg, Finding.CONFIRMED, "no rows belonging to the subject remain")
 
 

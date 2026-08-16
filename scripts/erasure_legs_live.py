@@ -88,6 +88,37 @@ def _athena_count(
     return int(rows[1]["Data"][0]["VarCharValue"]), None
 
 
+def _athena_rows(
+    client, workgroup: str, database: str, query: str, parameters: list[str]
+) -> tuple[list[list[str]], str | None]:
+    """The rows themselves, for when a count is not an answer.
+
+    A leg that reports "four rows survived" and stops has spent a whole capture to say that
+    something is wrong without saying what — the same lesson the live case matrix and the dbt
+    tests each learnt on their own.
+    """
+    try:
+        started = client.start_query_execution(
+            QueryString=query,
+            WorkGroup=workgroup,
+            QueryExecutionContext={"Database": database},
+            ExecutionParameters=parameters,
+        )
+    except ClientError as error:
+        return [], f"Athena refused the query: {error.response['Error']['Code']}"
+
+    execution = started["QueryExecutionId"]
+    state = ""
+    while state not in ("SUCCEEDED", "FAILED", "CANCELLED"):
+        detail = client.get_query_execution(QueryExecutionId=execution)["QueryExecution"]
+        state = detail["Status"]["State"]
+    if state != "SUCCEEDED":
+        return [], detail["Status"].get("StateChangeReason", "no reason given")
+
+    rows = client.get_query_results(QueryExecutionId=execution)["ResultSet"]["Rows"]
+    return [[cell.get("VarCharValue", "") for cell in row["Data"]] for row in rows[1:]], None
+
+
 def _crypto_shred(subject: str, project: str, bucket: str) -> Observation:
     """KMS directly, plus the durable marker that separates 'destroyed' from 'never existed'."""
     kms = boto3.client("kms")
@@ -227,21 +258,41 @@ def _offline_store(arguments, athena) -> Observation:
     # state machine's DELETE is written the same way, which is deliberate: the two must agree
     # about what belongs to whom, or one of them is checking a different question.
     moment = "cast(from_iso8601_timestamp(substr(f.event_time, 1, 23) || 'Z') as timestamp)"
+    belonging = f"""
+        FROM {database}.{table} f
+        JOIN {arguments.gold}.meter_assignment_scd2 a ON a.meter_id = f.meter_id
+        WHERE a.customer_id = ?
+          AND {moment} >= a.valid_from
+          AND (a.valid_to IS NULL OR {moment} < a.valid_to)
+    """
     count, why = _athena_count(
+        athena, arguments.workgroup, database, f"SELECT count(*) {belonging}", [arguments.subject]
+    )
+    if not count:
+        return Observation(leg="offline_store", rows=count, unobservable_because=why)
+
+    # **Name the survivors, and say when they were written.**
+    #
+    # The offline store is *eventually* consistent: `PutRecord` answers from the online store and
+    # SageMaker flushes to the offline one on its own schedule. So a record already in flight when
+    # the erasure ran lands afterwards, and the leg deleted everything that existed at the moment
+    # it looked. That is a different finding from a DELETE whose predicate is wrong, and the two
+    # are indistinguishable from a count — which is why the first run of this leg reported four
+    # survivors and said nothing about them.
+    survivors, _ = _athena_rows(
         athena,
         arguments.workgroup,
         database,
-        f"""
-            SELECT count(*)
-            FROM {database}.{table} f
-            JOIN {arguments.gold}.meter_assignment_scd2 a ON a.meter_id = f.meter_id
-            WHERE a.customer_id = ?
-              AND {moment} >= a.valid_from
-              AND (a.valid_to IS NULL OR {moment} < a.valid_to)
-        """,  # noqa: S608
+        f"SELECT f.meter_id, f.event_time, f.write_time {belonging} ORDER BY f.event_time LIMIT 5",
         [arguments.subject],
     )
-    return Observation(leg="offline_store", rows=count, unobservable_because=why)
+    written = "; ".join(" ".join(row) for row in survivors) or "could not be listed"
+    return Observation(
+        leg="offline_store",
+        rows=count,
+        unobservable_because=None,
+        note=f"survivors (meter, event_time, write_time): {written}",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

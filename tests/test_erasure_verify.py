@@ -211,3 +211,25 @@ def test_a_bounded_leg_with_no_note_and_no_window_is_contradicted() -> None:
     """The one dishonest outcome available: reporting the unreachable leg as complete."""
     bare = {"legs": [{"leg": "model_artefacts", "confirmed": True}]}
     assert verdict(residual_from_certificate(json.dumps(bare))).finding is Finding.CONTRADICTED
+
+
+def test_a_contradiction_carries_the_rows_it_counted() -> None:
+    """A leg that reports "four rows survived" and stops has spent a whole capture saying that
+    something is wrong without saying what.
+
+    It matters most here because two very different findings produce the same count. A DELETE
+    whose predicate is wrong leaves rows written *before* the erasure; the offline store being
+    eventually consistent leaves rows written *after* it, which the leg could not have deleted
+    and which say nothing about the predicate. Only the timestamps tell them apart.
+    """
+    result = verdict(
+        Observation(leg="offline_store", rows=1, note="survivors: M00007 2026-08-16T22:59:00Z")
+    )
+    assert result.finding is Finding.CONTRADICTED
+    assert "M00007" in result.detail
+    assert "1 rows" in result.detail
+
+
+def test_a_confirmed_leg_needs_no_note() -> None:
+    """The note is evidence for a refusal, not decoration on a pass."""
+    assert verdict(Observation(leg="offline_store", rows=0)).ok

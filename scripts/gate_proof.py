@@ -444,6 +444,14 @@ def _use_a_python_311_builtin_in_a_glue_job(root: Path) -> bool:
     )
 
 
+def _declare_a_leg_the_erasure_never_reaches(root: Path) -> bool:
+    return _replace(
+        root / "src/watermark/erasure/scope.py",
+        '            "crypto_shred",',
+        '            "crypto_shred",\n            "backup_snapshots",',
+    )
+
+
 def _point_a_feature_at_a_column_no_table_has(root: Path) -> bool:
     return _replace(
         root / "contracts/features/substation_load_15m.yaml",
@@ -525,6 +533,20 @@ def _leave_the_expensive_things_standing_overnight(root: Path) -> bool:
 
 
 MUTATIONS: tuple[Mutation, ...] = (
+    Mutation(
+        "declare a leg the erasure never reaches",
+        "erasure legs",
+        "erasure-legs",
+        ["scripts/check_erasure_legs.py"],
+        "the state machine has no such leg",
+        _declare_a_leg_the_erasure_never_reaches,
+        "Adding a leg to the scope is the natural first move when somebody realises a subject "
+        "survives somewhere new — a backup, a replica, a cache. It is also the whole of the "
+        "move, because nothing downstream demands the branch: the certificate lists what the "
+        "machine produced and the refusal counted what it expected to find. `offline_store` sat "
+        "in exactly that state for the life of this repository, and it took an independent "
+        "check against a running estate to notice.",
+    ),
     Mutation(
         "point a feature at a column no table has",
         "feature sources",

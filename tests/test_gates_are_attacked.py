@@ -47,6 +47,7 @@ WIRING = {
     "waivers",
     "settlement",
     "feature-sources",
+    "erasure-legs",
     "contract-coverage",
     "oidc-subjects",
     "vpc-endpoints",

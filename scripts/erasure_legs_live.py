@@ -184,7 +184,7 @@ def _certificate_residual(subject: str, bucket: str) -> Observation:
     return residual_from_certificate(body)
 
 
-def _offline_store(arguments, athena, meters: list[str]) -> Observation:
+def _offline_store(arguments, athena) -> Observation:
     """The offline store, through the table the feature group says it writes.
 
     SageMaker creates the Glue table for an Iceberg-format offline store and names it itself;
@@ -192,13 +192,6 @@ def _offline_store(arguments, athena, meters: list[str]) -> Observation:
     group rather than assuming is also what makes this leg independent — the delete leg acts on
     the online store, and this reads what the offline half actually holds.
     """
-    if not meters:
-        return Observation(
-            leg="offline_store",
-            unobservable_because="no meter was named for this subject, so there was nothing to "
-            "look for. An empty question is not an empty answer.",
-        )
-
     import boto3  # noqa: PLC0415
 
     sagemaker = boto3.client("sagemaker")
@@ -223,13 +216,30 @@ def _offline_store(arguments, athena, meters: list[str]) -> Observation:
             ),
         )
 
-    placeholders = ", ".join("?" for _ in meters)
+    # **Through the assignment history, not by meter** — the same correction the lakehouse leg
+    # needed a day earlier, and it would have gone the same way here. The offline store holds a
+    # *history* of feature values, so a row belongs to whoever held the meter at that instant;
+    # `M00007` changes customer at 10:00. Counting by meter would report the predecessor's rows
+    # as survivors and demand an over-deletion the erasure is right to refuse.
+    #
+    # The event time is a String with nine fractional digits — the one shape an Iceberg offline
+    # store accepts — so it is narrowed to milliseconds before it can meet a timestamp. The
+    # state machine's DELETE is written the same way, which is deliberate: the two must agree
+    # about what belongs to whom, or one of them is checking a different question.
+    moment = "cast(from_iso8601_timestamp(substr(f.event_time, 1, 23) || 'Z') as timestamp)"
     count, why = _athena_count(
         athena,
         arguments.workgroup,
         database,
-        f'SELECT count(*) FROM "{database}"."{table}" WHERE meter_id IN ({placeholders})',  # noqa: S608
-        meters,
+        f"""
+            SELECT count(*)
+            FROM {database}.{table} f
+            JOIN {arguments.gold}.meter_assignment_scd2 a ON a.meter_id = f.meter_id
+            WHERE a.customer_id = ?
+              AND {moment} >= a.valid_from
+              AND (a.valid_to IS NULL OR {moment} < a.valid_to)
+        """,  # noqa: S608
+        [arguments.subject],
     )
     return Observation(leg="offline_store", rows=count, unobservable_because=why)
 
@@ -280,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     # produced `TABLE_NOT_FOUND: watermark_gold.meter_interval_features` — a table that has
     # never existed — and an unobservable leg, which is at least honest, but it is a leg nobody
     # was checking dressed as a leg somebody was.
-    offline = _offline_store(arguments, athena, meters)
+    offline = _offline_store(arguments, athena)
     observations.append(offline)
 
     count, why = _athena_count(

@@ -146,3 +146,25 @@ resource "aws_lakeformation_permissions" "erasure_gold" {
     wildcard      = true
   }
 }
+
+# **And the offline store's own database, which is SageMaker's, not ours.**
+#
+# The `offline_store` leg deletes from the Glue table the feature group creates, and SageMaker
+# both names it and puts it in `sagemaker_featurestore` — a database this project does not
+# declare and therefore had granted nothing against. Lake Formation is a second and independent
+# yes: the IAM policy above allows the S3 and the KMS, and the table would still refuse.
+#
+# The same four permissions the lakehouse tables get, and for the same reasons. `ALTER` because
+# an Iceberg DELETE moves the metadata pointer rather than editing rows in place, so a role that
+# may delete and may not alter can do neither. Not `DROP`: this role removes a person's rows,
+# and one that could remove the table would turn the worst kind of bug into the worst kind of
+# outage.
+resource "aws_lakeformation_permissions" "erasure_offline_store" {
+  principal   = aws_iam_role.erasure.arn
+  permissions = ["SELECT", "DELETE", "DESCRIBE", "ALTER"]
+
+  table {
+    database_name = var.feature_store_database
+    wildcard      = true
+  }
+}

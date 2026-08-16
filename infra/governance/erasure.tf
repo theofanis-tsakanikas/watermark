@@ -27,6 +27,21 @@
 # "erased". Saying the second would be the exact overclaim this repository exists to argue
 # against.
 
+locals {
+  # The legs an erasure has to reach, in the order `ErasureScope.legs` declares them.
+  # `scripts/check_erasure_legs.py` refuses when this list, the scope and the state machine's
+  # own branches are not the same set — which is the check that would have caught
+  # `offline_store` being declared, never implemented, and never missed.
+  erasure_legs = [
+    "crypto_shred",
+    "lakehouse_rows",
+    "offline_store",
+    "online_store",
+    "training_sets",
+    "model_artefacts",
+  ]
+}
+
 resource "aws_sfn_state_machine" "erasure" {
   #checkov:skip=CKV_AWS_285:Execution history logging IS enabled at level ALL. What is off is `include_execution_data`, deliberately: the execution input is the subject identifier of somebody exercising Art. 17, and writing it into a log group is copying the data being erased into a store the erasure does not reach. The state transitions are logged; the subject is not.
   name     = "${var.project}-erasure"
@@ -44,6 +59,17 @@ resource "aws_sfn_state_machine" "erasure" {
   }
 
   definition = templatefile("${path.module}/erasure.asl.json.tftpl", {
+    # **The number the refusal counts against, and it is a copy on purpose.**
+    #
+    # `EveryLegConfirmed` used to enumerate `$.legs[0]` through `$.legs[4]`, which cannot notice
+    # a leg that is missing — the missing leg is what changes the count. It now compares the
+    # count against this, and this is `local.erasure_legs`, which `scripts/check_erasure_legs.py`
+    # holds equal to `ErasureScope.legs` *and* to the legs the state machine actually produces.
+    #
+    # Terraform cannot import Python, so a copy is unavoidable; what is avoidable is a copy
+    # nobody compares. Adding a leg to the scope and forgetting the branch now turns CI red
+    # rather than the certificate quiet.
+    declared_legs        = length(local.erasure_legs)
     project              = var.project
     region               = var.aws_region
     account              = data.aws_caller_identity.current.account_id
@@ -185,6 +211,18 @@ data "aws_iam_policy_document" "erasure" {
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     resources = ["${data.aws_s3_bucket.lakehouse.arn}/warehouse/*"]
+  }
+
+  # **The offline store lives outside the warehouse**, under `feature-store/`, because SageMaker
+  # puts it there — see `infra/ml/feature_store.tf`. The `offline_store` leg is a row-level
+  # DELETE against an Iceberg table in that prefix, and a role that may delete rows from the
+  # warehouse and not from here can satisfy five legs and fail the sixth on encryption, which
+  # would look like the leg being broken rather than the grant being short.
+  statement {
+    sid       = "AndTheOfflineStoreTheFeatureGroupWrites"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${data.aws_s3_bucket.lakehouse.arn}/feature-store/*"]
   }
 
   # The results are SSE-KMS with the data key, so writing them needs the key as well as the

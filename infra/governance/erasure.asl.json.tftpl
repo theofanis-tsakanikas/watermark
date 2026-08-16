@@ -167,7 +167,7 @@
               "Type": "Task",
               "Resource": "arn:aws:states:::glue:startJobRun.sync",
               "Parameters": { "JobName": "${orphan_files_job}" },
-              "ResultSelector": { "leg": "physical_deletion", "confirmed": true },
+              "ResultSelector": { "leg": "lakehouse_rows", "confirmed": true },
               "End": true,
               "Catch": [
                 { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "PhysicalDeleteFailed" }
@@ -175,7 +175,7 @@
             },
             "PhysicalDeleteFailed": {
               "Type": "Pass",
-              "Parameters": { "leg": "physical_deletion", "confirmed": false },
+              "Parameters": { "leg": "lakehouse_rows", "confirmed": false },
               "End": true
             }
           }
@@ -262,6 +262,50 @@
           }
         },
         {
+          "StartAt": "DescribeTheOfflineStore",
+          "States": {
+            "DescribeTheOfflineStore": {
+              "Type": "Task",
+              "Comment": "**This branch did not exist.** ErasureScope declared offline_store, the machine produced five legs, and EveryLegConfirmed counted five — so a leg the scope names was absent from the erasure, absent from the certificate, and absent from the check meant to notice it. Four of the subject rows survived an erasure that certified, and the independent verifier found them. SageMaker names the offline store Glue table itself, so the name is asked for rather than assumed.",
+              "Resource": "arn:aws:states:::aws-sdk:sagemaker:describeFeatureGroup",
+              "Parameters": { "FeatureGroupName": "${project}-meter-consumption" },
+              "ResultSelector": {
+                "database.$": "$.OfflineStoreConfig.DataCatalogConfig.Database",
+                "table.$": "$.OfflineStoreConfig.DataCatalogConfig.TableName"
+              },
+              "ResultPath": "$.offline",
+              "Next": "DeleteFromTheOfflineStore",
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "OfflineStoreFailed" }
+              ]
+            },
+            "DeleteFromTheOfflineStore": {
+              "Type": "Task",
+              "Comment": "Bounded by the assignment interval, not by the meter — the same rule as DeleteRowsPhysically and for the same reason. The offline store holds a history of feature values, so each row belongs to whoever held the meter at that instant; M00007 changes customer at 10:00, and taking the predecessor rows would be the over-deletion the lakehouse leg goes out of its way to avoid. The event time is a String with nine fractional digits, the one shape an Iceberg offline store accepts, so it is narrowed to milliseconds before it can be compared to a timestamp.",
+              "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+              "Parameters": {
+                "QueryString.$": "States.Format('DELETE FROM {}.{} WHERE (meter_id, event_time) IN (SELECT f.meter_id, f.event_time FROM {}.{} f JOIN ${project}_gold.meter_assignment_scd2 a ON a.meter_id = f.meter_id WHERE a.customer_id = \\'{}\\' AND cast(from_iso8601_timestamp(substr(f.event_time, 1, 23) || \\'Z\\') as timestamp) >= a.valid_from AND (a.valid_to IS NULL OR cast(from_iso8601_timestamp(substr(f.event_time, 1, 23) || \\'Z\\') as timestamp) < a.valid_to))', $.offline.database, $.offline.table, $.offline.database, $.offline.table, $.subject_id)",
+                "WorkGroup": "${project}"
+              },
+              "ResultPath": "$.offline_delete",
+              "Next": "ConfirmTheOfflineStore",
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "OfflineStoreFailed" }
+              ]
+            },
+            "ConfirmTheOfflineStore": {
+              "Type": "Pass",
+              "Parameters": { "leg": "offline_store", "confirmed": true },
+              "End": true
+            },
+            "OfflineStoreFailed": {
+              "Type": "Pass",
+              "Parameters": { "leg": "offline_store", "confirmed": false },
+              "End": true
+            }
+          }
+        },
+        {
           "StartAt": "RederiveTrainingSets",
           "States": {
             "RederiveTrainingSets": {
@@ -302,20 +346,29 @@
           }
         }
       ],
-      "Next": "EveryLegConfirmed"
+      "Next": "CountTheLegs"
     },
 
+    "CountTheLegs": {
+      "Type": "Pass",
+      "Comment": "**Counted, not enumerated — and the difference is a whole leg.** This used to be a five-way AND over $.legs[0] through $.legs[4]. `ErasureScope` declares six; the machine produced five; nothing anywhere compared the two lists, so `offline_store` was absent from the erasure and the refusal was written to expect exactly the legs that happened to be there. A hand-counted condition cannot notice a missing leg, because the missing leg is what changes the count.\n\nTwo questions instead. `expected` comes from Terraform, which takes it from the same list `scripts/check_erasure_legs.py` holds equal to `ErasureScope.legs` — so adding a leg to the scope and forgetting the branch turns CI red rather than the certificate quiet. And `refused` asks whether any leg came back false, which is the question the old condition was written to ask.",
+      "Parameters": {
+        "subject_id.$": "$.subject_id",
+        "request.$": "$.request",
+        "legs.$": "$.legs",
+        "counted.$": "States.ArrayLength($.legs)",
+        "refused.$": "States.ArrayContains($.legs[*].confirmed, false)"
+      },
+      "Next": "EveryLegConfirmed"
+    },
     "EveryLegConfirmed": {
       "Type": "Choice",
-      "Comment": "The refusal. This is what claim 6 actually delivers — not a deletion mechanism, but a system that will not say 'erased' unless every leg came back confirmed.",
+      "Comment": "The refusal. This is what claim 6 actually delivers — not a deletion mechanism, but a system that will not say 'erased' unless every leg the scope declares came back confirmed.",
       "Choices": [
         {
           "And": [
-            { "Variable": "$.legs[0].confirmed", "BooleanEquals": true },
-            { "Variable": "$.legs[1].confirmed", "BooleanEquals": true },
-            { "Variable": "$.legs[2].confirmed", "BooleanEquals": true },
-            { "Variable": "$.legs[3].confirmed", "BooleanEquals": true },
-            { "Variable": "$.legs[4].confirmed", "BooleanEquals": true }
+            { "Variable": "$.counted", "NumericEquals": ${declared_legs} },
+            { "Variable": "$.refused", "BooleanEquals": false }
           ],
           "Next": "WriteTheCertificate"
         }

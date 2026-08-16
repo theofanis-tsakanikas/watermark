@@ -67,3 +67,17 @@ variable "subjects" {
     error_message = "subjects is empty. Personal data with no per-subject key cannot be erased, and claim 6 would fail at the first request rather than at the plan."
   }
 }
+
+variable "feature_store_database" {
+  type        = string
+  default     = "sagemaker_featurestore"
+  description = <<-EOT
+    The Glue database SageMaker puts a feature group's offline store in. It is SageMaker's
+    default and this project does not create it, which is exactly why it had been granted
+    nothing: the erasure's offline-store leg deletes from a table in a database nobody here
+    declared.
+
+    A variable rather than a literal so that an account which has moved it can say so, and so
+    that the name appears once.
+  EOT
+}

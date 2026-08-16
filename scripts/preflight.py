@@ -200,6 +200,14 @@ CHECKS: list[Check] = [
     # ── Consistency ─────────────────────────────────────────────────────────
     Check(
         "consistency",
+        "erasure legs",
+        [PYTHON, "scripts/check_erasure_legs.py"],
+        "The scope, the state machine and the count the refusal compares against must name the "
+        "same legs. `offline_store` was declared, never implemented, absent from the "
+        "certificate and absent from the condition that decides whether to write one.",
+    ),
+    Check(
+        "consistency",
         "feature sources",
         [PYTHON, "scripts/check_feature_sources.py"],
         "Every feature reads a column that exists, from a table something writes. A declared "

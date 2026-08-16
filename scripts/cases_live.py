@@ -122,11 +122,20 @@ def the_evidence_gap_leaves_a_hole(lines: list[dict[str, Any]]) -> str:
         meter: len(intervals) for meter, intervals in per_meter.items() if len(intervals) < ordinary
     }
     gapped = [meter for meter in cast.GAP_METERS if meter in short]
+
+    # **The counts, in the message.** This case failed live against a thirty-minute capture and
+    # said only that it had failed. Reproducing it offline did not work — the generated day's
+    # meters have naturally uneven counts, so the cohort stays visibly short under every shift
+    # tried — which means the next live run is the only place the answer lives. A failure that
+    # does not carry the numbers it judged spends a whole capture to say "no".
+    declared = {meter: len(per_meter.get(meter, ())) for meter in cast.GAP_METERS}
     return _require(
         bool(gapped),
         f"no meter the cast declares with missing intervals published fewer windows than the "
         f"fleet's {ordinary}. A gap that fills itself in is worse than one that stays open: an "
-        f"hour built from three intervals is a different statement, not a smaller total",
+        f"hour built from three intervals is a different statement, not a smaller total. "
+        f"The declared cohort published {declared}, against a fleet spread of "
+        f"{sorted({len(i) for i in per_meter.values()})} across {len(per_meter)} meters",
     )
 
 
@@ -271,11 +280,28 @@ CASES: Final = (
 )
 
 
-def read_lines(directory: Path, exclude: set[str]) -> list[dict[str, Any]]:
-    """Every JSON object under a directory, skipping files named in `exclude`."""
+def read_lines(
+    directory: Path, exclude: set[str], only: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """Every JSON object under a directory, bounded at both ends.
+
+    `exclude` drops what existed before the capture. `only`, when given, keeps what existed at
+    the end of the *first* delivery — and the second boundary is not a refinement, it is the
+    difference between this matrix asking its question and asking a different one.
+
+    **Claim 2 re-drives the whole day into a running stream.** Its records land in windows the
+    first delivery already closed, which is at-least-once delivery working; but the two days are
+    shifted relative to each other, and on a thirty-minute capture the measured offset was
+    -1800 s — exactly two intervals, which is exactly how wide the cast's evidence gap is. The
+    second delivery therefore published windows at the very instants the first had left empty,
+    and `the evidence gap leaves a hole` reported no hole. Nothing was wrong with the estate: the
+    matrix had been handed two days and asked a question about one.
+    """
     lines: list[dict[str, Any]] = []
     for path in sorted(directory.rglob("*")):
         if not path.is_file() or path.name in exclude:
+            continue
+        if only is not None and path.name not in only:
             continue
         for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
             if not raw.strip().startswith("{"):
@@ -298,17 +324,29 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="A file listing part files that existed before this capture, to be excluded.",
     )
+    parser.add_argument(
+        "--first-delivery",
+        type=Path,
+        help="A file listing the part files that existed at the end of the first delivery. "
+        "Given, the evidence is bounded to that one delivery — see `read_lines`. Omitted, the "
+        "matrix reads everything this capture produced, which for a run with a replay in it "
+        "means two shifted copies of the same day.",
+    )
     arguments = parser.parse_args(argv)
 
-    exclude: set[str] = set()
-    if arguments.before and arguments.before.exists():
-        exclude = {
-            name.strip()
-            for name in arguments.before.read_text(encoding="utf-8").splitlines()
-            if name.strip()
+    def _names(path: Path | None) -> set[str] | None:
+        if not path or not path.exists():
+            return None
+        return {
+            name.strip() for name in path.read_text(encoding="utf-8").splitlines() if name.strip()
         }
 
-    lines = read_lines(arguments.landing, exclude)
+    exclude = _names(arguments.before) or set()
+    only = _names(arguments.first_delivery)
+
+    lines = read_lines(arguments.landing, exclude, only)
+    if only is not None:
+        print(f"cases-live: bounded to the first delivery's {len(only)} part files")
     if arguments.decisions and arguments.decisions.exists():
         for raw in arguments.decisions.read_text(encoding="utf-8").splitlines():
             if raw.strip().startswith("{"):

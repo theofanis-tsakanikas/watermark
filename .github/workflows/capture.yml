@@ -423,6 +423,14 @@ jobs:
           aws s3 cp "s3://${LAKEHOUSE}/landing/meter_interval/" out/landing-first \
             --recursive --exclude "*_tmp_*" --quiet
 
+          # The same snapshot, as a list of names, for the case matrix in the `decide` job.
+          # `landing-before.txt` bounds the evidence at the start of the capture; this bounds it
+          # at the end of the *first* delivery, and the matrix needs both — the replay below
+          # publishes a second, shifted copy of the same day, and a matrix reading two days is
+          # asking a different question from the one its cases are written for.
+          find out/landing-first -type f -exec basename {} \; | sort -u > out/landing-first.txt
+          echo "first delivery: $(wc -l < out/landing-first.txt | tr -d ' ') part files"
+
           python -m data.publish --minutes "${{ inputs.minutes }}" --live
           sleep 180
 
@@ -470,7 +478,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: landing-before
-          path: out/landing-before.txt
+          path: |
+            out/landing-before.txt
+            out/landing-first.txt
           if-no-files-found: error
 
 
@@ -1051,7 +1061,8 @@ jobs:
           python scripts/cases_live.py \
             --landing out/landing \
             --decisions out/capture/decisions/decisions.jsonl \
-            --before out/landing-before.txt
+            --before out/landing-before.txt \
+            --first-delivery out/landing-first.txt
 
       - uses: actions/upload-artifact@v4
         with:

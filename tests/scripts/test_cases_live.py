@@ -138,3 +138,19 @@ def test_an_empty_run_fails_every_case_rather_than_passing(matrix) -> None:
     """
     for case in matrix.CASES:
         assert case.check([]) != "", f"{case.name} passed over no evidence at all"
+
+
+def test_the_first_delivery_boundary_keeps_the_gap_visible(matrix, tmp_path) -> None:
+    """`read_lines` with `only` is what restores the question, and it is checked on files
+    rather than on rows — that is the form the workflow hands it."""
+    landing = tmp_path / "landing"
+    landing.mkdir()
+    (landing / "first.jsonl").write_text('{"kind": "published", "meter": "M00001"}\n')
+    (landing / "second.jsonl").write_text('{"kind": "published", "meter": "M00002"}\n')
+    (landing / "history.jsonl").write_text('{"kind": "published", "meter": "M99999"}\n')
+
+    everything = matrix.read_lines(landing, {"history.jsonl"})
+    assert {row["meter"] for row in everything} == {"M00001", "M00002"}
+
+    bounded = matrix.read_lines(landing, {"history.jsonl"}, {"first.jsonl"})
+    assert {row["meter"] for row in bounded} == {"M00001"}

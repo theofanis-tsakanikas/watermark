@@ -184,6 +184,56 @@ def _certificate_residual(subject: str, bucket: str) -> Observation:
     return residual_from_certificate(body)
 
 
+def _offline_store(arguments, athena, meters: list[str]) -> Observation:
+    """The offline store, through the table the feature group says it writes.
+
+    SageMaker creates the Glue table for an Iceberg-format offline store and names it itself;
+    `DescribeFeatureGroup` is the only thing that knows what it called it. Asking the feature
+    group rather than assuming is also what makes this leg independent — the delete leg acts on
+    the online store, and this reads what the offline half actually holds.
+    """
+    if not meters:
+        return Observation(
+            leg="offline_store",
+            unobservable_because="no meter was named for this subject, so there was nothing to "
+            "look for. An empty question is not an empty answer.",
+        )
+
+    import boto3  # noqa: PLC0415
+
+    sagemaker = boto3.client("sagemaker")
+    group = f"{arguments.project}-meter-consumption"
+    try:
+        detail = sagemaker.describe_feature_group(FeatureGroupName=group)
+    except ClientError as error:
+        return Observation(
+            leg="offline_store",
+            unobservable_because=f"DescribeFeatureGroup answered {error.response['Error']['Code']}",
+        )
+
+    catalog = (detail.get("OfflineStoreConfig") or {}).get("DataCatalogConfig") or {}
+    database, table = catalog.get("Database"), catalog.get("TableName")
+    if not database or not table:
+        return Observation(
+            leg="offline_store",
+            unobservable_because=(
+                f"`{group}` declares no offline store catalogue entry, so there is no table to "
+                f"count. A feature group with no offline store is a training set nobody can "
+                f"reproduce, which is a different finding from an erasure that missed."
+            ),
+        )
+
+    placeholders = ", ".join("?" for _ in meters)
+    count, why = _athena_count(
+        athena,
+        arguments.workgroup,
+        database,
+        f'SELECT count(*) FROM "{database}"."{table}" WHERE meter_id IN ({placeholders})',  # noqa: S608
+        meters,
+    )
+    return Observation(leg="offline_store", rows=count, unobservable_because=why)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--subject", required=True)
@@ -199,36 +249,48 @@ def main(argv: list[str] | None = None) -> int:
     athena = boto3.client("athena")
     observations = [_crypto_shred(arguments.subject, arguments.project, arguments.bucket)]
 
-    # The lakehouse and the offline store are the same Iceberg tables read two ways: the rows a
-    # settlement resolves, and the feature values a training run would read back. They are
-    # separate legs because they fail separately — a delete that misses the feature table leaves
-    # the subject out of every report and inside every model.
-    for leg, database, table, column in (
-        ("lakehouse_rows", arguments.silver, "meter_interval", "meter_id"),
-        ("offline_store", arguments.gold, "meter_interval_features", "meter_id"),
-        ("training_sets", arguments.gold, "training_snapshot", "customer_id"),
-    ):
-        if column == "meter_id" and not meters:
-            observations.append(
-                Observation(
-                    leg=leg,
-                    unobservable_because="no meter was named for this subject, so the count "
-                    "would have been over an empty predicate",
-                )
-            )
-            continue
-        values = meters if column == "meter_id" else [arguments.subject]
-        placeholders = ", ".join("?" for _ in values)
-        count, why = _athena_count(
-            athena,
-            arguments.workgroup,
-            database,
-            # The identifiers are this file's own constants; only the values come from outside,
-            # and those are bound above.
-            f"SELECT count(*) FROM {database}.{table} WHERE {column} IN ({placeholders})",  # noqa: S608
-            values,
-        )
-        observations.append(Observation(leg=leg, rows=count, unobservable_because=why))
+    # **Rows belonging to the subject, resolved the way the erasure resolves them.**
+    #
+    # The first live run of this check reported 54 surviving rows on `silver.meter_interval` and
+    # it was wrong — the count was `WHERE meter_id IN (…)`, which is every reading the meter ever
+    # produced. `M00007` changes customer at 10:00, so more than half those rows belong to the
+    # *predecessor* and must survive. Demanding their deletion is asking for the over-deletion
+    # `DeleteRowsPhysically` goes out of its way to avoid, and the certificate step beside this
+    # one had that right all along. The same lesson as the replay counts: the assertion and the
+    # thing it asserts about must agree on the question.
+    #
+    # The join is the assignment history, half-open on the right, exactly as the state machine's
+    # own DELETE writes it.
+    # The database names are this script's own arguments and the only outside value — the
+    # subject id — is bound below.
+    owned_by_subject = f"""
+        SELECT count(*)
+        FROM {arguments.silver}.meter_interval r
+        JOIN {arguments.gold}.meter_assignment_scd2 a ON a.meter_id = r.meter_id
+        WHERE a.customer_id = ?
+          AND r.interval_start >= a.valid_from
+          AND (a.valid_to IS NULL OR r.interval_start < a.valid_to)
+    """  # noqa: S608
+    count, why = _athena_count(
+        athena, arguments.workgroup, arguments.silver, owned_by_subject, [arguments.subject]
+    )
+    observations.append(Observation(leg="lakehouse_rows", rows=count, unobservable_because=why))
+
+    # The offline store's table is named by the feature group, not by this file. Guessing it
+    # produced `TABLE_NOT_FOUND: watermark_gold.meter_interval_features` — a table that has
+    # never existed — and an unobservable leg, which is at least honest, but it is a leg nobody
+    # was checking dressed as a leg somebody was.
+    offline = _offline_store(arguments, athena, meters)
+    observations.append(offline)
+
+    count, why = _athena_count(
+        athena,
+        arguments.workgroup,
+        arguments.gold,
+        f"SELECT count(*) FROM {arguments.gold}.training_snapshot WHERE customer_id = ?",  # noqa: S608
+        [arguments.subject],
+    )
+    observations.append(Observation(leg="training_sets", rows=count, unobservable_because=why))
 
     observations.append(_online_store(arguments.subject, meters, arguments.project))
     observations.append(_certificate_residual(arguments.subject, arguments.bucket))

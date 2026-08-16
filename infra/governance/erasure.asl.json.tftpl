@@ -181,20 +181,77 @@
           }
         },
         {
-          "StartAt": "DeleteFromTheOnlineStore",
+          "StartAt": "FindTheSubjectsMeters",
           "States": {
-            "DeleteFromTheOnlineStore": {
+            "FindTheSubjectsMeters": {
               "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:sagemakerfeaturestoreruntime:deleteRecord",
+              "Comment": "The online store is keyed by meter, and this leg used to hand it a customer id. `DeleteRecord` against an identifier that does not exist is not an error — it returns cleanly — so the leg reported `confirmed: true` having deleted nothing, on every erasure this estate has ever run. The first independent check of it found the subject's record still there. Resolved through the assignment history for the same reason `DeleteRowsPhysically` is: the meter is the join, and the customer is the question.",
+              "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
               "Parameters": {
-                "FeatureGroupName": "${project}-meter-consumption",
-                "RecordIdentifierValueAsString.$": "$.subject_id",
-                "EventTime.$": "$$.Execution.StartTime"
+                "QueryString.$": "States.Format('SELECT meter_id FROM ${project}_gold.meter_assignment_scd2 WHERE customer_id = \\'{}\\' AND valid_to IS NULL', $.subject_id)",
+                "WorkGroup": "${project}"
               },
-              "ResultSelector": { "leg": "online_store", "confirmed": true },
+              "ResultPath": "$.meters_query",
+              "Next": "ReadTheSubjectsMeters",
               "Catch": [
                 { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "OnlineStoreFailed" }
-              ],
+              ]
+            },
+            "ReadTheSubjectsMeters": {
+              "Type": "Task",
+              "Comment": "Only the meters the subject holds *now*. The online store keeps one current value per meter, so a meter they used to hold carries somebody else's number — deleting it would be the over-deletion `DeleteRowsPhysically` is careful to avoid, seen from the other side.",
+              "Resource": "arn:aws:states:::aws-sdk:athena:getQueryResults",
+              "Parameters": {
+                "QueryExecutionId.$": "$.meters_query.QueryExecution.QueryExecutionId"
+              },
+              "ResultSelector": { "rows.$": "$.ResultSet.Rows[1:]" },
+              "ResultPath": "$.meters",
+              "Next": "DeleteEachMetersRecord",
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "OnlineStoreFailed" }
+              ]
+            },
+            "DeleteEachMetersRecord": {
+              "Type": "Map",
+              "Comment": "A subject with no meters deletes nothing and that is correct — but it is also indistinguishable from the bug above, which is why `scripts/erasure_legs_live.py` asks the online store directly rather than reading this leg's own verdict.",
+              "ItemsPath": "$.meters.rows",
+              "Parameters": {
+                "meter.$": "$$.Map.Item.Value.Data[0].VarCharValue",
+                "at.$": "$$.Execution.StartTime"
+              },
+              "Iterator": {
+                "StartAt": "SkipTheHeaderRow",
+                "States": {
+                  "SkipTheHeaderRow": {
+                    "Type": "Choice",
+                    "Comment": "Athena returns the column names as the first row. The slice above drops it; this refuses to delete a record called `meter_id` if a future Athena ever stops including it, because a no-op that looks like work is what this whole leg was.",
+                    "Choices": [
+                      { "Variable": "$.meter", "StringEquals": "meter_id", "Next": "NotAMeter" }
+                    ],
+                    "Default": "DeleteOneMetersRecord"
+                  },
+                  "NotAMeter": { "Type": "Pass", "End": true },
+                  "DeleteOneMetersRecord": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::aws-sdk:sagemakerfeaturestoreruntime:deleteRecord",
+                    "Parameters": {
+                      "FeatureGroupName": "${project}-meter-consumption",
+                      "RecordIdentifierValueAsString.$": "$.meter",
+                      "EventTime.$": "$.at"
+                    },
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": "$.online_deletes",
+              "Next": "ConfirmTheOnlineStore",
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "OnlineStoreFailed" }
+              ]
+            },
+            "ConfirmTheOnlineStore": {
+              "Type": "Pass",
+              "Parameters": { "leg": "online_store", "confirmed": true },
               "End": true
             },
             "OnlineStoreFailed": {

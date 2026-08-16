@@ -659,7 +659,8 @@ jobs:
           # These are four small aggregates over one day. Rebuilding them costs seconds and makes
           # every capture's gold layer a statement about the data as it stands rather than about
           # the order in which captures happened to run.
-          dbt build --target deployed --full-refresh
+          status=0
+          dbt build --target deployed --full-refresh || status=$?
 
           {
             echo ""
@@ -669,6 +670,48 @@ jobs:
             tail -20 logs/dbt.log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo "(no dbt log)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # **A failing dbt test says "Got 1 result" and stops.** Which row, on which meter, in
+          # which hour — none of it is printed, and the rows live behind Lake Formation, so
+          # nobody outside this job can go and look. Diagnosing one costs a whole capture.
+          #
+          # The compiled SQL of every test is sitting in `target/`. On a failure, run the ones
+          # that failed and print what they returned. This is the same lesson the live case
+          # matrix learnt: a check that spends an hour to say "no" and nothing else has spent
+          # the hour badly.
+          if [ "$status" -ne 0 ]; then
+            echo ""
+            echo "── the rows the failing tests returned ──"
+            sed 's/\x1b\[[0-9;]*m//g' logs/dbt.log \
+              | grep -oE "in test [a-z0-9_]+ \(tests/[a-z0-9_/]+\.sql\)" \
+              | sed -E "s#in test [a-z0-9_]+ \(##; s#\)##" | sort -u \
+              | while read -r relative; do
+                  compiled="target/compiled/watermark/${relative}"
+                  [ -f "$compiled" ] || { echo "  ${relative}: no compiled SQL found"; continue; }
+                  echo ""
+                  echo "  ${relative}:"
+                  qid=$(aws athena start-query-execution \
+                    --work-group "$PROJECT" \
+                    --query-string "$(cat "$compiled")" \
+                    --query QueryExecutionId --output text)
+                  for _ in $(seq 1 40); do
+                    state=$(aws athena get-query-execution --query-execution-id "$qid" \
+                      --query 'QueryExecution.Status.State' --output text)
+                    case "$state" in SUCCEEDED|FAILED|CANCELLED) break;; esac
+                    sleep 3
+                  done
+                  if [ "$state" = "SUCCEEDED" ]; then
+                    aws athena get-query-results --query-execution-id "$qid" --max-items 20 \
+                      --query 'ResultSet.Rows[].Data[].VarCharValue' --output text \
+                      | tr '\t' '|' | sed 's/^/    /'
+                  else
+                    echo "    could not re-run it: $(aws athena get-query-execution \
+                      --query-execution-id "$qid" \
+                      --query 'QueryExecution.Status.StateChangeReason' --output text)"
+                  fi
+                done
+          fi
+          exit $status
 
 
   decide:

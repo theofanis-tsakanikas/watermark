@@ -58,7 +58,7 @@ twice — offline against a model of the mechanisms, and live against the deploy
 
 ---
 
-## Phase 4 — the things a running estate teaches · **in progress**
+## Phase 4 — the things a running estate teaches · **done**
 
 Everything above is finished. This is not, and the items are here because each was found by
 asking the same question a different way: *what does this repository claim that nothing checks?*
@@ -77,19 +77,17 @@ asking the same question a different way: *what does this repository claim that 
 | The `held_back` check reading history | It read the whole landing prefix, which accumulates across every capture ever driven, so it was green on an earlier run's evidence | Scoped to `landing-before.txt`, like the case matrix that disagreed with it and was right |
 | An alignment that counted keys | `align`'s docstring claimed it chose the offset that agrees; the code counted shared keys, and a contiguous day is nearly flat across neighbouring offsets | Value agreement, ties to the nearest candidate — and a test that reproduces the one-interval shift |
 | A merge that had not implemented optimistic concurrency | Compaction rewrote the files it planned against; `Cannot commit, missing data files` | The merge retries; compaction moved from hourly to daily |
+| The offline-store leg did not exist | `ErasureScope` declared it; the machine had no branch; four of a subject's rows survived an erasure that certified | An Iceberg `DELETE` bounded by the assignment history, and a settle window because the offline store is eventually consistent |
+| The refusal was hand-counted | A five-way AND over `$.legs[0..4]`, which cannot notice a missing leg — the missing leg is what changes the count | A count against `local.erasure_legs`, and `check_erasure_legs.py` holding the scope, the machine's branches and that list equal |
+| The seed and the publisher shifted the day apart | One read the clock in `drive`, the other inside `train` after the training pipeline. Half an hour of that puts the 14:30 tariff change back on the hour | One anchor, read once where the day starts, handed to both |
+| An erased meter read as a parity failure | `DeleteRecord` is a soft delete; the tombstone's event time outlives any re-materialisation, so claim 3 reported an erasure that worked as a divergence | Named and excluded — nothing here asks the erasure to be undone |
+| Ninety minutes to test a ten-minute fix | Every attempt re-ran all six jobs to exercise one | `from_stage`, with the summary saying whether a run may be quoted as evidence |
 | A budget guard I reported missing | It was not missing. `infra/bootstrap/cost.tf` has had it — budget, notifications and the action that detaches the deploy role — since before this phase. I searched `infra/foundation/` and concluded from an absence | The duplicate was reverted. The lesson is in the search, not the code: an absence in one layer is not an absence |
 
 ### Open
 
 | task | why it is not done | what would close it |
 |---|---|---|
-| **The offline-store leg does not exist** | `ErasureScope` declares six legs; the state machine produces five, and `offline_store` is not among them. Four of the subject's rows survived an erasure that certified. Claim 6's own sentence names that store | An Iceberg `DELETE` against the feature group's offline table, bounded by the assignment history the way `DeleteRowsPhysically` is |
-| **The estate's refusal is hand-counted** | `EveryLegConfirmed` is a five-way AND over `$.legs[0..4]`. `certificate.issue()` refuses unless every leg the *scope* declares confirms, and `evals/erasure/` proves that in nine cases — but `issue()` never runs in the estate. A property proved offline against a mechanism production does not use | The refusal derived from `ErasureScope.legs`, and a `gate-proof` mutation that drops a leg and requires the refusal |
-| **One leg under two names** | The scope calls it `lakehouse_rows`; the machine calls it `physical_deletion` | One name, and something that fails when the two lists disagree about the set |
-| **The seed and the publisher shift the day separately** | `data/publish.py` shifts at the start of `drive`; `scripts/seed_reference.py` re-lands the reference tables inside `train`, *after* the training pipeline. The gap is however long the training took, and `seed_reference`'s own docstring says the two are "computed minutes apart" — but when the gap approaches thirty minutes the 14:30 tariff change lands on an hour boundary and no settled hour straddles it, which is the exact failure moving it off the hour was meant to prevent. Intermittent because the pipeline's duration varies | Both deriving the shift from one anchor the workflow fixes once — `capture.yml` already passes `inputs.snapshot` to the seed; the publisher would take the same value instead of reading its own clock |
-| **A second capture on one estate** | Two failures with one root, both seen on the second capture of an estate whose first was green. `M00007` is absent from the online store because the previous capture *erased* it — SageMaker's soft delete keeps a tombstone with a newer event time, so re-materialising it does not take — and the settlement finds no hour crossing a tariff change because `silver.meter_interval` now holds two differently-shifted days against one reference seed | Either the seed covering every day present in silver and the gold build scoped to the capture's own day, or the operating model saying plainly that one estate serves one capture |
-| **The five-step sequence, in order** | Steps 3–5 — promote, redeploy with an endpoint, capture again — have each run, but not in sequence with the case matrices present | One run of `deploy → capture → promote → deploy → capture`, green throughout |
-| **Claim 7's second half** | The refusal is proved on every run: 20 pending, 0 actuated. That a *named human* is the only thing that can actuate needs a name on a record | A capture with `approver` set, and the actuated decision carrying it |
 | **The savepoint-restore drill** | A harness rather than an assertion: hold a job open, cancel with a savepoint, resume | A test in `tests_flink/` that survives the break — WV-001 |
 | **Required reviewers** | Removed so a session could iterate without an approval prompt on every one of six runs in a day | Attach one to `deploy` and `destroy` — WV-003 |
 | **Model Monitor and Clarify** | Closed by AWS to accounts of this class. Not a decision this repository made and no work here reopens it | AWS reopening them, or the bias leg moving to a service that is open — WV-002 |

@@ -177,13 +177,13 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 | **core ≡ Flink** · tier two of ADR-0003 | **green** — the deployed operator chain on a MiniCluster produces the same value for every window it and the pure core both closed. Scoped to the live stream: a bounded list cannot reproduce a three-day-late batch, and the harness says so rather than absorbing it in a tolerance |
 | **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach. Proved live in both directions: five refusals for five real defects, then all five legs confirmed and a certificate written |
 | **claim 7** · no automatic decision about a person | **8/8** — the contract does not load and the actuation type cannot be constructed |
-| `make gate-proof` | **39 refused, 0 accepted, 0 stale** |
+| `make gate-proof` | **40 refused, 0 accepted, 0 stale** |
 | `make policy` | **24 principal-resource pairs** — every reachable set exact and every closed path closed |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined, net restatement **+2,261 Wh** |
-| `make test` | **319 passing**, offline, credential-free, no JVM, in about two seconds |
+| `make test` | **341 passing**, offline, credential-free, no JVM, in about two seconds |
 | `terraform validate` | **6/6 layers** against real provider schemas |
 | `checkov` | **0 findings**, 64 deliberate exceptions each carrying a written reason beside the resource |
-| `make preflight` | **36 passed, 0 failed, 0 skipped** |
+| `make preflight` | **37 passed, 0 failed, 0 skipped** |
 | **the declared cases** · offline | **11/11** — every defect the cast declares is observed in the generated day, and a cohort that is declared and unchecked fails the run |
 | **the declared cases** · against the estate | **7/7** — the same questions asked of the deployed system rather than of the core |
 | **the settlement path** · doctrine 4 and its contract | **8/8** — the third decision contract, whose safe state is the inverse of curtailment's |
@@ -201,7 +201,7 @@ had been written to catch the *opposite* shape and would have called it a pass;
 not fixed.
 
 **`gate-proof` is the row to read first.** A suite tells you the code does what it does; this
-copies the repository, plants thirty-nine real violations, and requires the *named* gate to
+copies the repository, plants forty real violations, and requires the *named* gate to
 refuse each one *for the right reason* — a non-zero exit is not evidence, and a mutation whose
 target has moved is reported STALE rather than passed.
 

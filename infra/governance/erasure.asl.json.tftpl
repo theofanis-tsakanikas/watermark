@@ -274,10 +274,16 @@
                 "table.$": "$.OfflineStoreConfig.DataCatalogConfig.TableName"
               },
               "ResultPath": "$.offline",
-              "Next": "DeleteFromTheOfflineStore",
+              "Next": "LetTheOfflineStoreSettle",
               "Catch": [
                 { "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "OfflineStoreFailed" }
               ]
+            },
+            "LetTheOfflineStoreSettle": {
+              "Type": "Wait",
+              "Comment": "**The offline store is eventually consistent, and an erasure that does not wait for it is incomplete by exactly the flush window.** `PutRecord` answers from the online store; SageMaker copies to the offline one on its own schedule. The first run of this leg deleted everything present and a record already in flight landed forty-six seconds later — `is_deleted false`, a real feature value, written after the DELETE and found by the independent check.\n\nWaiting is what makes the leg complete rather than bounded. It is correct here because nothing writes this subject once the capture's decision layer has finished; **in production it would not be, and the control there is to stop writing for the subject before erasing rather than to wait longer.** This platform has no such write-block, and that is a real limit rather than one this wait hides.",
+              "Seconds": ${offline_store_settle_seconds},
+              "Next": "DeleteFromTheOfflineStore"
             },
             "DeleteFromTheOfflineStore": {
               "Type": "Task",

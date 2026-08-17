@@ -69,15 +69,16 @@ resource "aws_sfn_state_machine" "erasure" {
     # Terraform cannot import Python, so a copy is unavoidable; what is avoidable is a copy
     # nobody compares. Adding a leg to the scope and forgetting the branch now turns CI red
     # rather than the certificate quiet.
-    declared_legs        = length(local.erasure_legs)
-    project              = var.project
-    region               = var.aws_region
-    account              = data.aws_caller_identity.current.account_id
-    residual_days        = var.erasure_residual_days
-    compaction_job       = "${var.project}-compaction"
-    expire_snapshots_job = "${var.project}-expire-snapshots"
-    orphan_files_job     = "${var.project}-delete-orphan-files"
-    certificate_bucket   = data.aws_s3_bucket.lakehouse.id
+    declared_legs                = length(local.erasure_legs)
+    offline_store_settle_seconds = var.offline_store_settle_seconds
+    project                      = var.project
+    region                       = var.aws_region
+    account                      = data.aws_caller_identity.current.account_id
+    residual_days                = var.erasure_residual_days
+    compaction_job               = "${var.project}-compaction"
+    expire_snapshots_job         = "${var.project}-expire-snapshots"
+    orphan_files_job             = "${var.project}-delete-orphan-files"
+    certificate_bucket           = data.aws_s3_bucket.lakehouse.id
   })
 }
 

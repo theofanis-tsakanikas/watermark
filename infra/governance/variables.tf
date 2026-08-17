@@ -81,3 +81,20 @@ variable "feature_store_database" {
     that the name appears once.
   EOT
 }
+
+variable "offline_store_settle_seconds" {
+  type        = number
+  default     = 900
+  description = <<-EOT
+    How long the erasure waits for SageMaker to flush the online store into the offline one
+    before deleting from it. Fifteen minutes is what AWS documents as the outside of that window.
+
+    Measured rather than guessed at the low end: a record already in flight landed forty-six
+    seconds after the first delete, as a live feature value and not a tombstone. The wait is what
+    makes that leg complete instead of complete-except-for-whatever-was-in-flight.
+
+    It is correct only because nothing writes the subject once a capture's decision layer has
+    finished. In production the control is a write-block on the subject before the erasure runs,
+    not a longer wait, and this platform does not have one.
+  EOT
+}

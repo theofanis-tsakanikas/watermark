@@ -70,6 +70,17 @@ on:
         required: false
         type: string
         default: ""
+      from_stage:
+        description: >-
+          Which job to start from. `drive` is a whole capture and the only thing that may be
+          quoted as evidence. `aggregate` rebuilds the gold layer and re-runs the erasure against
+          the estate as it stands; `erase` runs only the erasure. `decide` is deliberately absent:
+          its case matrix is bounded by what the landing prefix held *before* this capture, and
+          that boundary cannot be reconstructed by a run that did not drive the day.
+        required: true
+        type: choice
+        options: [drive, aggregate, erase]
+        default: drive
       confirm:
         description: "Type `capture` to confirm. This starts billable compute."
         required: true
@@ -86,6 +97,7 @@ concurrency:
 jobs:
   drive:
     name: stand up and drive the day
+    if: ${{ inputs.from_stage == 'drive' }}
     runs-on: ubuntu-latest
     environment: deploy
     # Ninety, because this job publishes the generated day **twice** — once to drive the
@@ -507,6 +519,7 @@ jobs:
 
   train:
     name: train a candidate and register who was in it
+    if: ${{ inputs.from_stage == 'drive' }}
     runs-on: ubuntu-latest
     environment: deploy
     timeout-minutes: 45
@@ -614,6 +627,7 @@ jobs:
   aggregate:
     name: build the gold layer
     needs: [drive]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && inputs.from_stage != 'erase' }}
     runs-on: ubuntu-latest
     environment: deploy
     timeout-minutes: 30
@@ -740,6 +754,7 @@ jobs:
   decide:
     name: serve, compare and decide
     needs: [drive, train]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && inputs.from_stage == 'drive' }}
     runs-on: ubuntu-latest
     environment: deploy
     timeout-minutes: 45
@@ -1147,6 +1162,7 @@ jobs:
 
   erase:
     name: an erasure certifies
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     # **Last, and this is a race the single-job version could not have.**
     #
     # `erase` deletes a subject's rows from `silver.meter_interval`. `decide` reads the same
@@ -1381,6 +1397,40 @@ jobs:
       AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
 
     steps:
+      # **What this run is, before anything else it says.**
+      #
+      # `from_stage` lets a capture resume — the erasure alone is ten minutes against an estate
+      # that already holds a driven day, where a whole capture is ninety. That is worth having
+      # for the same reason `deploy.yml` takes `-f layer=`: a run that failed at the fifth step
+      # should continue, not start again.
+      #
+      # The danger is not the resuming. It is quoting a resumed run as though it were a whole
+      # one. So the summary says which it was, at the top, on every run — the same discipline as
+      # the fallback marker that has to reach the record: a partial result that cannot be told
+      # from a complete one is worse than no result, because somebody will cite it.
+      - name: say whether this run is evidence
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.from_stage }}" = "drive" ]; then
+            {
+              echo "## A whole capture"
+              echo ""
+              echo "Started at \`drive\`. Every job ran. This run may be quoted as evidence."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## A resumed capture — NOT evidence"
+              echo ""
+              echo "Started at \`${{ inputs.from_stage }}\`, against an estate a previous run"
+              echo "drove. The jobs before that stage did not execute, so their claims are"
+              echo "**unproved by this run** whatever their last result was."
+              echo ""
+              echo "Useful for fixing something. Not for citing. Only a run started at"
+              echo "\`drive\` proves the capture end to end."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::resumed from ${{ inputs.from_stage }} — this run is not evidence of a full capture"
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5

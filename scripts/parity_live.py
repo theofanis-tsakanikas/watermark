@@ -108,7 +108,7 @@ def _instant(rendered: str) -> Instant:
     return Instant.from_iso(rendered.strip().replace(" ", "T").split(".")[0] + "Z")
 
 
-def _materialise(estate: Estate, limit: int):
+def _materialise(estate: Estate, limit: int, exclude: frozenset[str] = frozenset()):
     """The online mechanism: incremental, per entity, each record seen once.
 
     Fed in event-time order, because an incremental aggregator is order-dependent in exactly the
@@ -139,7 +139,19 @@ def _materialise(estate: Estate, limit: int):
     # start of the run" is a correct answer to a question nobody asked.
     as_of_event = _instant(max(row[1] for row in raw))
     as_of_ingest = _instant(max(row[3] for row in raw))
-    entities = sorted({row[0] for row in raw})[:limit]
+    # **Excluded entities are dropped before the limit, not after.**
+    #
+    # An entity erased by an earlier capture is legitimately unservable: SageMaker's `DeleteRecord`
+    # is a soft delete and keeps a tombstone with a newer event time, so re-materialising it does
+    # not take and `GetRecord` keeps answering nothing. Claim 3 then reports it missing — on a
+    # system where the erasure worked.
+    #
+    # Demanding it be servable is demanding the erasure be undone, so the caller names it instead.
+    # Dropping it *before* the limit keeps the comparison at its full width rather than quietly
+    # nineteen entities wide.
+    entities = [entity for entity in sorted({row[0] for row in raw}) if entity not in exclude][
+        :limit
+    ]
 
     written = 0
     for entity_id in entities:
@@ -228,6 +240,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workgroup", required=True)
     parser.add_argument("--region", required=True)
     parser.add_argument(
+        "--exclude",
+        default="",
+        help="Comma-separated entity ids to leave out. What a subject erased by an earlier "
+        "capture needs: their online record is tombstoned with an event time no re-materialisation "
+        "can overtake, so demanding it be servable is demanding the erasure be undone.",
+    )
+    parser.add_argument(
         "--entities",
         type=int,
         default=20,
@@ -250,7 +269,10 @@ def main(argv: list[str] | None = None) -> int:
         feature_group=arguments.feature_group,
     )
 
-    _, as_of_ingest, entities, written = _materialise(estate, arguments.entities)
+    excluded = frozenset(name for name in arguments.exclude.split(",") if name)
+    if excluded:
+        print(f"excluded from the comparison, as erased: {sorted(excluded)}")
+    _, as_of_ingest, entities, written = _materialise(estate, arguments.entities, excluded)
     if not written:
         print("::error::nothing was materialised, so nothing can be compared", file=sys.stderr)
         return 1

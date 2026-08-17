@@ -921,12 +921,20 @@ jobs:
           # Each feature separately, and the loop does not swallow a failure: a divergence on the
           # second must fail the step even though the first agreed.
           fail=0
+          # `M00007` is the meter the erasure targets. Once a capture on this estate has run
+          # the erasure, that meter's online record is tombstoned with an event time no
+          # re-materialisation can overtake — SageMaker's DeleteRecord is a soft delete — so a
+          # second capture reports it missing and claim 3 fails on an erasure that worked.
+          #
+          # Excluded rather than tolerated: the comparison stays twenty entities wide, and
+          # nothing here is asking the erasure to be undone.
           compare() {
             python scripts/parity_live.py \
               --feature "$1" \
               --feature-group "${PROJECT}-$2" \
               --database "${PROJECT}_$3" \
               --workgroup "$PROJECT" \
+              --exclude "M00007" \
               --region "$AWS_DEFAULT_REGION" || fail=1
           }
 

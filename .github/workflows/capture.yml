@@ -229,14 +229,27 @@ jobs:
           # depends on `drive` alone, so the gold layer could be built against whatever the
           # deploy-time seed had left — a day computed an hour earlier — while `train` was still
           # fitting. That is the race the tariff boundary kept losing.
+          #
+          # **The anchor is taken here, not from `inputs.snapshot`.** It was the snapshot for one
+          # run, and that is the moment somebody pressed the button: `drive` reaches this line
+          # half an hour later, after the suite and the credentials and the application start. A
+          # day anchored to the dispatch therefore *ends before the capture begins*, which is not
+          # what "ends at the moment of the run" means — the first delivery published 3,751
+          # values against the replay's 3,777, the two days stopped being the same shape, and
+          # claim 2 reported a thousand disagreements on a system where nothing was wrong.
+          #
+          # One value, read once, handed to both. That is all the fix ever needed to be.
+          ANCHOR="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "the day is anchored to $ANCHOR — the seed and the publisher share it"
+
           python scripts/seed_reference.py \
             --project "$PROJECT" \
             --region "$AWS_DEFAULT_REGION" \
             --warehouse "s3://${LAKEHOUSE}/warehouse" \
-            --anchor "${{ inputs.snapshot }}"
+            --anchor "$ANCHOR"
 
           python -m data.publish --minutes "${{ inputs.minutes }}" \
-            --anchor "${{ inputs.snapshot }}" --live | tee /tmp/publish.log
+            --anchor "$ANCHOR" --live | tee /tmp/publish.log
           grep -qE 'published [0-9,]+ deliveries' /tmp/publish.log || {
             echo "::error::the publisher reported no deliveries"; exit 1; }
 
@@ -619,7 +632,6 @@ jobs:
             --region "$AWS_DEFAULT_REGION" \
             --warehouse "s3://${LAKEHOUSE}/warehouse" \
             --snapshot "${{ inputs.snapshot }}" \
-            --anchor "${{ inputs.snapshot }}" \
             --labels "${{ inputs.labels }}" \
             --snapshot-only
 

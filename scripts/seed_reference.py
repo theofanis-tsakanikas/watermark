@@ -85,6 +85,13 @@ def _quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+#: The anchor the shift is computed from, set from `--anchor` before anything is rendered. A
+#: module-level value rather than a parameter threaded through eight row builders: every one of
+#: them calls `day_shift()`, and a signature change to all of them would be a larger edit with
+#: more places to get it half right.
+_ANCHOR_MILLIS: int = 0
+
+
 def day_shift() -> int:
     """The milliseconds `data/publish.py` adds to every event time, computed the same way.
 
@@ -100,15 +107,26 @@ def day_shift() -> int:
     to the first. The bounded `DELETE` was correct and the data it was bounded against was not,
     which is the harder half of that pair to notice.
 
-    **The two shifts are computed minutes apart** — this at seeding, the publisher's when it
-    starts — so the changeover instant differs by that gap. It is stated rather than hidden: at
-    most one fifteen-minute interval can land on the wrong side of it, and nothing in this
-    repository asserts against the raw instant because of it. `capture.yml` counts through the
-    SCD-2 join instead, so the assertion and the erasure resolve the same way whatever the gap.
+    **The two shifts used to be computed minutes apart** — this at seeding, the publisher's when
+    it starts — and that gap was stated rather than closed, on the argument that at most one
+    fifteen-minute interval could land on the wrong side of it and that nothing asserts against
+    the raw instant. `capture.yml` counts through the SCD-2 join, so the erasure's assertions
+    resolve the same way whatever the gap.
+
+    **One thing did assert against it, and the argument did not cover it.** The gold layer's
+    `priced_hours_cover_every_settled_hour` needs a settled *hour* to straddle the tariff change;
+    `M00019` moves at 14:30 precisely so that one does. The seed runs inside `train`, after the
+    training pipeline, so the gap is however long the training took — and near thirty minutes it
+    puts the change back on the hour, where no hour straddles it. Intermittent, because the
+    pipeline's duration varies.
+
+    So `--anchor` closes it rather than bounding it: `capture.yml` hands the same instant to the
+    publisher and to this, and the reference history lands on exactly the stream's day. Absent,
+    the clock is read as before, which is what a hand-run seed wants.
     """
     from data.cast import DAY_END  # noqa: PLC0415
 
-    return int(time.time() * 1000) - DAY_END.epoch_millis
+    return (_ANCHOR_MILLIS or int(time.time() * 1000)) - DAY_END.epoch_millis
 
 
 #: Where an SCD-2 history begins, for the version that is in force at the start of the cast's day.
@@ -309,7 +327,27 @@ def main(argv: list[str] | None = None) -> int:
     # membership at deploy time would register a training set that nobody has trained.
     parser.add_argument("--snapshot", help="Register this training snapshot's membership.")
     parser.add_argument("--labels", default="randomised_inspection")
+    parser.add_argument(
+        "--snapshot-only",
+        action="store_true",
+        help="Register the training snapshot and leave the reference tables alone. What the "
+        "`train` job wants: they were landed before the publisher ran, and replacing them again "
+        "while other jobs read them is a race for no gain.",
+    )
+    parser.add_argument(
+        "--anchor",
+        default="",
+        help="RFC-3339. The instant the stream's day is shifted to end at — the same value "
+        "`data/publish.py` is given, so that the reference history and the stream share one day "
+        "rather than two computed a training run apart.",
+    )
     arguments = parser.parse_args(argv)
+
+    if arguments.anchor:
+        global _ANCHOR_MILLIS  # noqa: PLW0603 — see the note on the constant
+        from watermark.core.time import Instant  # noqa: PLC0415 — the cast is imported lazily
+
+        _ANCHOR_MILLIS = Instant.from_iso(arguments.anchor).epoch_millis
 
     gold = f"{arguments.project}_gold"
     athena = Athena(arguments.project, arguments.region)
@@ -359,14 +397,26 @@ def main(argv: list[str] | None = None) -> int:
     # Safe to replace because this is *reference* data derived from the committed cast — a CRM
     # export, in the scenario — and not subject data. An erasure removes readings, online
     # records and training-set membership; nothing it deletes is rebuilt here.
-    for table, builder in (
-        ("meter_assignment_scd2", meter_assignment_rows),
-        ("customer_scd2", customer_rows),
-        ("tariff_scd2", tariff_rows),
-    ):
-        rows = builder()
-        athena.run(f"DELETE FROM {gold}.{table}")
-        athena.run(f"INSERT INTO {gold}.{table} VALUES {', '.join(rows)}")
+    # **And not re-landed by the run that only registers a snapshot.**
+    #
+    # This script is invoked twice in a capture: once by `drive`, before the publisher, to put
+    # the reference history on the stream's day; and once by `train`, afterwards, to register
+    # who was in the training set. The second invocation used to replace the reference tables
+    # again — a `DELETE` followed by an `INSERT` while `aggregate` and `decide` are reading
+    # them, which is the same race that once produced `claim 3: 19 agreed, 1 diverged` on a
+    # system where nothing was wrong.
+    #
+    # The rows would be identical, because both invocations now share an anchor. A table that is
+    # briefly empty is not.
+    if not arguments.snapshot_only:
+        for table, builder in (
+            ("meter_assignment_scd2", meter_assignment_rows),
+            ("customer_scd2", customer_rows),
+            ("tariff_scd2", tariff_rows),
+        ):
+            rows = builder()
+            athena.run(f"DELETE FROM {gold}.{table}")
+            athena.run(f"INSERT INTO {gold}.{table} VALUES {', '.join(rows)}")
         print(f"seed: {len(rows)} rows into {table}, on the day the stream is on")
 
     # The table is created either way, empty if no snapshot was named. An erasure that finds no

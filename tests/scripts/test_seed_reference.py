@@ -8,6 +8,7 @@ tests are what stops that being true again — offline, with no account.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,17 @@ import pytest
 from data.cast import DAY_START
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from data.generate import INTERVALS_PER_DAY, interval_start  # noqa: E402
+from watermark.core.records import METER_INTERVAL  # noqa: E402
+from watermark.core.time import Instant  # noqa: E402
+
+#: The instant the cast's day ends, which is what every shift is measured from.
+DAY_END_MILLIS = interval_start(INTERVALS_PER_DAY - 1).plus(METER_INTERVAL).epoch_millis
+HOUR_MILLIS = 60 * 60 * 1000
+HALF_AN_HOUR = HOUR_MILLIS // 2
 
 
 def _seeder():
@@ -129,4 +141,52 @@ def test_the_opening_version_reaches_back_before_the_stream_day(seeder) -> None:
 
     assert seeder.HISTORY_BEGINS < "2020", (
         "the opening version must predate anything the lakehouse could already hold"
+    )
+
+
+def test_one_anchor_puts_the_seed_and_the_publisher_on_the_same_day(seeder) -> None:
+    """The gap that cost a gold layer, closed rather than bounded.
+
+    `data/publish.py` shifted the day at the start of `drive`; this seeded inside `train`, after
+    the training pipeline. The two read the clock independently, so the reference history landed
+    a training run away from the stream — minutes, or half an hour, depending on the fit.
+    """
+    anchor = Instant.from_iso("2026-08-17T03:00:00Z")
+    seeder._ANCHOR_MILLIS = anchor.epoch_millis
+    try:
+        assert seeder.day_shift() == anchor.epoch_millis - DAY_END_MILLIS
+    finally:
+        seeder._ANCHOR_MILLIS = 0
+
+
+@pytest.mark.parametrize("minute", [0, 7, 15, 29, 30, 31, 45, 59])
+def test_a_settled_hour_always_straddles_the_tariff_change(seeder, minute: int) -> None:
+    """The property the gold layer's no-boundary branch asks about, on the right grid.
+
+    `M00019` changes at 14:30 so that a settled hour genuinely straddles it — the on-the-hour
+    version exercised nothing, which `data/cast.py` records. The grid that decides this is the
+    *stream's*: the day is shifted to end at the anchor, so its hour boundaries fall on the
+    anchor's minute, not on the wall clock's.
+
+    Which is why one shared anchor is the whole fix. Share it and the change sits exactly half an
+    hour off every hour boundary whatever minute the capture starts at. Compute the two shifts
+    separately and the offset becomes the difference between them — zero, and no hour straddles
+    anything, when the training run happens to have taken thirty minutes.
+    """
+    anchor = Instant.from_iso(f"2026-08-17T03:{minute:02d}:00Z")
+    seeder._ANCHOR_MILLIS = anchor.epoch_millis
+    try:
+        change = next(row for row in seeder.tariff_rows() if "TOU-02" in row)
+        shift = seeder.day_shift()
+    finally:
+        seeder._ANCHOR_MILLIS = 0
+
+    rendered = change.split("TIMESTAMP '")[1].split("'")[0]
+    at = Instant.from_iso(rendered.replace(" ", "T") + "Z").epoch_millis
+    into_the_hour = (at - (DAY_END_MILLIS + shift)) % HOUR_MILLIS
+
+    assert into_the_hour == HALF_AN_HOUR, (
+        f"the change sits {into_the_hour / 60000:.0f} minutes into the stream's hour. At zero no "
+        f"settled hour straddles it and the point-in-time join resolves everything against one "
+        f"version — which is the defect moving it off 14:00 was meant to prevent."
     )

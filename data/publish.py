@@ -136,7 +136,9 @@ def _shift_instants(raw: str, by_millis: int) -> str:
     return generate_module.retimed(raw, lambda instant: Instant(instant.epoch_millis + by_millis))
 
 
-def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — needs an estate
+def publish(
+    minutes: int, topic_prefix: str, anchor_millis: int | None = None
+) -> int:  # pragma: no cover — needs an estate
     """Publish for real, at the compressed pace the plan describes.
 
     Reached only from `capture.yml`. `boto3` and `time` are imported here rather
@@ -172,8 +174,26 @@ def publish(minutes: int, topic_prefix: str) -> int:  # pragma: no cover — nee
     # own fifteen minutes, the newest is fresh, and the oldest is a day behind — which is what
     # lets the watermark walk ninety-odd windows and close them in order. See
     # `_shift_instants` for what compressing this axis instead did to a live run.
+    # **The anchor when the caller has one, its own clock otherwise.**
+    #
+    # `scripts/seed_reference.py` shifts the reference history by the same arithmetic, and the
+    # two used to read the clock independently — this at the start of `drive`, the seed inside
+    # `train` *after* the training pipeline. The gap is however long the training took, and the
+    # seed's own docstring calls it "minutes apart".
+    #
+    # Minutes is fine for the SCD-2 counts, which resolve through the join whatever the gap. It
+    # is not fine for the one property that needs a settled *hour* to straddle a tariff change:
+    # `M00019` changes at 14:30 precisely so that an hour does, and a gap near thirty minutes
+    # puts the change back on the hour, where no hour straddles it. That is the failure moving
+    # it off the hour was meant to prevent, arriving by another road — intermittently, because
+    # the training pipeline's duration varies.
+    #
+    # One anchor removes the gap rather than bounding it. The *replay* deliberately does not
+    # take one: claim 2 measures the offset between two deliveries, and two deliveries at the
+    # same instant would exercise nothing.
     day_end = interval_start(INTERVALS_PER_DAY - 1).plus(METER_INTERVAL)
-    event_shift = int(time.time() * 1000) - day_end.epoch_millis
+    now_millis = anchor_millis if anchor_millis is not None else int(time.time() * 1000)
+    event_shift = now_millis - day_end.epoch_millis
 
     started = time.monotonic()
     published = 0
@@ -259,6 +279,13 @@ def main() -> int:
     parser.add_argument("--minutes", type=int, default=30)
     parser.add_argument("--topic-prefix", default="watermark")
     parser.add_argument(
+        "--anchor",
+        default="",
+        help="RFC-3339. The instant the day is shifted to end at. Hand the same value to "
+        "scripts/seed_reference.py and the reference history lands on exactly the stream's day. "
+        "Omitted, the publisher reads its own clock — which is what the replay wants.",
+    )
+    parser.add_argument(
         "--live",
         action="store_true",
         help="Actually publish. Without it this prints the plan and touches nothing.",
@@ -272,7 +299,8 @@ def main() -> int:
         print("dry run: nothing was published. Pass --live from the capture workflow.")
         return 0
 
-    count = publish(arguments.minutes, arguments.topic_prefix)  # pragma: no cover
+    anchor = Instant.from_iso(arguments.anchor).epoch_millis if arguments.anchor else None
+    count = publish(arguments.minutes, arguments.topic_prefix, anchor)  # pragma: no cover
     print(f"published {count:,} deliveries")  # pragma: no cover
     return 0  # pragma: no cover
 

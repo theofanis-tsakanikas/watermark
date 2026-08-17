@@ -203,7 +203,28 @@ jobs:
         run: |
           set -euo pipefail
           echo "Publishing the generated day to IoT Core for ${{ inputs.minutes }} minutes."
-          python -m data.publish --minutes "${{ inputs.minutes }}" --live | tee /tmp/publish.log
+          # **The anchor, shared with the seed.** `scripts/seed_reference.py` shifts the
+          # reference history by the same arithmetic and used to read its own clock — inside
+          # `train`, after the training pipeline, so the two days were however far apart the fit
+          # took. Half an hour of that puts `M00019`'s 14:30 tariff change back onto the hour
+          # grid, and the gold layer's no-boundary test fails for a reason that has nothing to
+          # do with the settlement.
+          #
+          # The replay below deliberately takes no anchor: claim 2 measures the offset between
+          # two deliveries, and two at the same instant would exercise nothing.
+          #
+          # Seeded *here*, immediately before the publisher, and not only in `train`. `aggregate`
+          # depends on `drive` alone, so the gold layer could be built against whatever the
+          # deploy-time seed had left — a day computed an hour earlier — while `train` was still
+          # fitting. That is the race the tariff boundary kept losing.
+          python scripts/seed_reference.py \
+            --project "$PROJECT" \
+            --region "$AWS_DEFAULT_REGION" \
+            --warehouse "s3://${LAKEHOUSE}/warehouse" \
+            --anchor "${{ inputs.snapshot }}"
+
+          python -m data.publish --minutes "${{ inputs.minutes }}" \
+            --anchor "${{ inputs.snapshot }}" --live | tee /tmp/publish.log
           grep -qE 'published [0-9,]+ deliveries' /tmp/publish.log || {
             echo "::error::the publisher reported no deliveries"; exit 1; }
 
@@ -585,7 +606,9 @@ jobs:
             --region "$AWS_DEFAULT_REGION" \
             --warehouse "s3://${LAKEHOUSE}/warehouse" \
             --snapshot "${{ inputs.snapshot }}" \
-            --labels "${{ inputs.labels }}"
+            --anchor "${{ inputs.snapshot }}" \
+            --labels "${{ inputs.labels }}" \
+            --snapshot-only
 
 
   aggregate:

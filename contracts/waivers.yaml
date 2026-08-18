@@ -70,29 +70,37 @@ waivers:
       anything. AWS closed the service. The date on this entry is not a grant of permission, it
       is a reminder to go and look whether that is still true.
 
-  - id: WV-003
-    finding: >-
-      The `deploy` and `destroy` environments have no required reviewer. The OIDC subject still
-      names the environment, so the trust boundary holds — but the environment is where a human
-      approval hangs, and with no reviewer attached, a workflow dispatch applies infrastructure
-      with nothing in front of it.
-    where: .github/workflows/deploy.yml
-    claim: doctrine-3
-    reason: >-
-      Removed so a session could iterate on a broken capture without an approval prompt on every
-      one of six runs in a day. That reason expires with the iteration, which is what this entry
-      exists to make true.
-    closes_when: >-
-      A required reviewer is attached to both the `deploy` and `destroy` environments in the
-      repository settings, and `docs/DAY-ONE.md` records it as done.
-    requested_by: theofanis-tsakanikas
-    granted_by: theofanis-tsakanikas
-    granted_on: 2026-08-14
-    expires_on: 2026-09-13
-    #: Shorter than the horizon on purpose. This one is a hole in an authorisation boundary, not
-    #: a missing harness, and the only thing keeping it small is that it ends soon.
-    self_approval_acknowledged: >-
-      Doctrine 5 says nothing approves itself, and a single-author repository cannot satisfy it
-      for a waiver the author both wants and grants. The check below refuses a self-approved
-      waiver *unless* this field states why, which is the most an honest single-author project
-      can do: it cannot manufacture a second person, so it refuses to let the gap go unwritten.
+  # ── WV-003 · CLOSED 2026-08-17 ────────────────────────────────────────────────
+  #
+  # A required reviewer is attached to both the `deploy` and `destroy` environments again,
+  # verified through `gh api` rather than through a settings page, and `docs/DAY-ONE.md` records
+  # it. The entry is kept rather than deleted: a register that only ever shows what is currently
+  # wrong cannot show that anything was ever put right, and the five days this one was open are
+  # the interesting part of it.
+  #
+  # - id: WV-003
+  #   finding: >-
+  #     The `deploy` and `destroy` environments have no required reviewer. The OIDC subject still
+  #     names the environment, so the trust boundary holds — but the environment is where a human
+  #     approval hangs, and with no reviewer attached, a workflow dispatch applies infrastructure
+  #     with nothing in front of it.
+  #   where: .github/workflows/deploy.yml
+  #   claim: doctrine-3
+  #   reason: >-
+  #     Removed so a session could iterate on a broken capture without an approval prompt on every
+  #     one of six runs in a day. That reason expires with the iteration, which is what this entry
+  #     exists to make true.
+  #   closes_when: >-
+  #     A required reviewer is attached to both the `deploy` and `destroy` environments in the
+  #     repository settings, and `docs/DAY-ONE.md` records it as done.
+  #   requested_by: theofanis-tsakanikas
+  #   granted_by: theofanis-tsakanikas
+  #   granted_on: 2026-08-14
+  #   expires_on: 2026-09-13
+  #   #: Shorter than the horizon on purpose. This one is a hole in an authorisation boundary, not
+  #   #: a missing harness, and the only thing keeping it small is that it ends soon.
+  #   self_approval_acknowledged: >-
+  #     Doctrine 5 says nothing approves itself, and a single-author repository cannot satisfy it
+  #     for a waiver the author both wants and grants. The check below refuses a self-approved
+  #     waiver *unless* this field states why, which is the most an honest single-author project
+  #     can do: it cannot manufacture a second person, so it refuses to let the gap go unwritten.

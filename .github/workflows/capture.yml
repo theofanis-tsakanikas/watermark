@@ -668,7 +668,7 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watermark-deploy
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: build the gold layer, which no capture had ever built
+      - name: build the gold layer
         # **The settlement path, run for the first time.**
         #
         # `pipelines/dbt/` has held these models since phase 2 — hourly totals per meter, per

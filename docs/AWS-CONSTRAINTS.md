@@ -272,12 +272,18 @@ quiet edit.
 build from source. Java 17 is present, so the JVM is not the obstacle.
 
 **What it means for ADR-0003's tier two.** The core↔Flink equivalence test — the one that
-establishes that Flink's mechanics do not change the answers the core computes — **has not been
-executed anywhere.** It is written to run on a Linux runner, where the wheels exist, as its own
-CI job with `WATERMARK_REQUIRE_FLINK=1` so that a missing runtime is a failure rather than a
-skip. Until that job has run and gone green, the honest statement is that tier two exists and
-is unproven, and it is recorded that way in the README rather than counted on the scoreboard.
+establishes that Flink's mechanics do not change the answers the core computes — cannot run on
+this machine, so it runs on a Linux runner where the wheels exist, as its own CI job with
+`WATERMARK_REQUIRE_FLINK=1` so that a missing runtime is a failure rather than a skip.
 
-This is written down rather than worked around because the alternative was worse: shipping a
-test file that has never executed, in a repository whose rule is that generated-but-unrun code
-is not done. A check nobody has watched pass is indistinguishable from one that cannot.
+**That job has run and is green**, on every push since. The scoreboard counts it as *green in
+CI* rather than simply green, because where a check runs is part of what it proves.
+
+What is still unproved is narrower than the tier: equivalence **across a restart**. Cancelling
+with a savepoint, resuming, and producing the same bytes over the break needs a harness — a way
+to hold a MiniCluster job open and bring it back — rather than an assertion, and the test is
+skipped with that reason rather than half-written. It is WV-001 in `contracts/waivers.yaml`,
+with a date, and `scripts/check_waivers.py` turns CI red when that date passes.
+
+The original constraint is kept above rather than deleted, because the reason the job lives on a
+Linux runner is still true and somebody will otherwise try to run it here.

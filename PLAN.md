@@ -82,6 +82,7 @@ asking the same question a different way: *what does this repository claim that 
 | The seed and the publisher shifted the day apart | One read the clock in `drive`, the other inside `train` after the training pipeline. Half an hour of that puts the 14:30 tariff change back on the hour | One anchor, read once where the day starts, handed to both |
 | An erased meter read as a parity failure | `DeleteRecord` is a soft delete; the tombstone's event time outlives any re-materialisation, so claim 3 reported an erasure that worked as a divergence | Named and excluded — nothing here asks the erasure to be undone |
 | Ninety minutes to test a ten-minute fix | Every attempt re-ran all six jobs to exercise one | `from_stage`, with the summary saying whether a run may be quoted as evidence |
+| A control described and switched off | `docs/DAY-ONE.md` said both deploy environments carried a required reviewer. `gh api` said no protection rules, on either — they had been removed five days earlier so a session could iterate without an approval prompt | Restored on both, verified through the API, and WV-003 closed in the register rather than deleted from it |
 | A budget guard I reported missing | It was not missing. `infra/bootstrap/cost.tf` has had it — budget, notifications and the action that detaches the deploy role — since before this phase. I searched `infra/foundation/` and concluded from an absence | The duplicate was reverted. The lesson is in the search, not the code: an absence in one layer is not an absence |
 
 ### Open
@@ -89,7 +90,6 @@ asking the same question a different way: *what does this repository claim that 
 | task | why it is not done | what would close it |
 |---|---|---|
 | **The savepoint-restore drill** | A harness rather than an assertion: hold a job open, cancel with a savepoint, resume | A test in `tests_flink/` that survives the break — WV-001 |
-| **Required reviewers** | Removed so a session could iterate without an approval prompt on every one of six runs in a day | Attach one to `deploy` and `destroy` — WV-003 |
 | **Model Monitor and Clarify** | Closed by AWS to accounts of this class. Not a decision this repository made and no work here reopens it | AWS reopening them, or the bias leg moving to a service that is open — WV-002 |
 | **`gold.settlement_hour` has no ruleset** | It names a table dbt builds, which does not exist at any point during a deploy | The gold layer built inside the capture rather than by hand |
 

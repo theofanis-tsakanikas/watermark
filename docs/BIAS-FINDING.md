@@ -67,6 +67,15 @@ recorded rather than implied:
 - **Randomised inspection.** A fraction of visits allocated independently of the model, which
   buys unbiased labels at the price of some wasted visits. It is the only thing on this list
   that actually breaks the loop.
+
+  **It is the one this platform now runs end to end.** `capture.yml` takes `labels` as a choice
+  between `dispatch_log` and `randomised_inspection`, and the two produce the two outcomes: the
+  gate refuses the first and promoted the second, live, on 2026-08-17, with a named human on the
+  registry record. Same population, same model class, same thresholds — **the difference is the
+  labels**, which is the finding stated as an experiment rather than as a paragraph.
+
+  What that does not do is fix the loop in the scenario's world. It shows what fixing it costs
+  and what it buys, on data where the true rate is knowable because it was generated.
 - **Modelling the label process**, not just the outcome — estimating the probability a true
   case *would have been confirmed* and reweighting. Standard, and it depends on assumptions
   nobody can check with the data they have.

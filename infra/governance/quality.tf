@@ -98,7 +98,8 @@ resource "aws_glue_data_quality_ruleset" "meter_interval" {
 
 # **Lake Formation for the erasure role, and it is the half IAM does not cover.**
 #
-# The first live erasure returned, from two of its five legs:
+# The first live erasure returned, from two of the five legs the machine had then — the
+# sixth, `offline_store`, did not yet exist as a branch:
 #
 #     Access Denied when accessing database watermark_silver, table meter_interval
 #     Access Denied when accessing database watermark_gold, table training_snapshot

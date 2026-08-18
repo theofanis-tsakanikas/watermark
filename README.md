@@ -12,111 +12,85 @@ Store · Lake Formation · Step Functions · Terraform*
 
 ---
 
-> **Status: all four phases complete. Every claim proved offline, and the estate has been
-> deployed to a real AWS account, driven, and destroyed.** The scoreboard below lists what is
-> provable on a laptop with no credentials; a row appears only when the command that produces
-> it exists.
->
-> **What the live run proved.** The whole chain, asserted by the capture workflow rather than
-> read off a dashboard: the stream closes windows, a Glue `MERGE` lands them in Iceberg, and
-> Athena is then asked six questions whose answers are the claims.
->
-> | asserted live, on every capture | result |
-> |---|---|
-> | rows published with a watermark earlier than their own interval end | **0** — claim 1, checkable after the fact |
-> | distinct lineage ids | **one per row** — claim 2's identity |
-> | restatements that name what they replaced | **all of them** — doctrine 4, no silent overwrite |
-> | watermark condition transitions reported | **63**, four of them `held_back` naming `SUB-01`, and `advancing_with_idle` naming three more |
-> | train/serve parity, two mechanisms, no tolerance | **20 agreed, 0 diverged, 0 missing** |
-> | decisions taken by the engine in the cloud | **21, with 21 distinct identifiers** |
-> | consequential decisions awaiting a human | **20 pending, 0 actuated** — actuation raises before any review exists |
-> | an erasure certificate, with the boundary on its face | **written**, and the customer who held the same meter earlier kept every row |
-> | a second erasure request from an already-erased subject | **certified again** — Art. 17 asked twice is answered twice, not with an error |
->
-> Claim 5 and claim 6 were exercised too: the model registers `PendingManualApproval` and
-> nothing can approve itself, and **an erasure now certifies** — all five legs confirmed, with a
-> certificate in S3 that states on its face what deletion cannot reach.
->
-> **Getting there took five refusals, and they are the more interesting result.** The first
-> erasure ever run against a live estate refused, correctly, and so did the next four — for five
-> different correct reasons. Underneath them were nine defects, and every one was in a component
-> that *only the erasure path calls*: no per-subject key had ever been created; `gold` held five
-> catalogue entries and not one was a table, so a subject id could not be resolved to the meters
-> it owns; the `DELETE` was unbounded by the assignment interval and would have erased a second
-> customer's readings; the role could not reach the warehouse prefix an Iceberg rewrite needs;
-> Lake Formation wanted `ALTER`, because an Iceberg `DELETE` is a new metadata pointer rather
-> than a change to rows; three maintenance jobs had no Iceberg Spark extensions and had
-> **therefore never run at all**; Glue reports `SystemExit(0)` as a failure; Iceberg's `CALL`
-> grammar takes literals and not function calls; and `ruff` asked for `datetime.UTC` on a
-> repository targeting 3.12 while Glue 4.0 runs 3.10.
->
-> None was carelessness — these are among the most carefully commented files here. Every one
-> survived because nothing had ever *executed* it. `make preflight` now carries
-> `check_glue_runtime.py`, and the rest are covered by the capture asserting the certificate.
->
-> **`held_back` has now been induced in the cloud**, with `holding_back: SUB-01` and
-> `may_close_windows: false` on the record. It is *reported* rather than *required* by the
-> capture, and the reason is in `capture.yml`: the silent substation's gap is forty minutes of
-> event time compressed into about eight seconds of wall clock, so whether a batch boundary
-> falls inside it is alignment rather than behaviour. The guarantee is asserted where it is
-> deterministic — the zero above, and `evals/watermark/` offline.
->
-> **The decision layer now runs in the cloud.** `src/watermark/decisions/` — the engine, the
-> fallback rules, the oversight queue — was reached by `gate_proof.py` and by nothing in AWS, so
-> claims 1, 4 and 7 were claims about a laptop. `scripts/decide_live.py` decides against a
-> watermark reconstructed from the stream's own condition lines and features read back with
-> `GetRecord`, and asserts what comes out: no model decision under a watermark that permits no
-> close, none on a feature past its budget, every fallback carrying its reason into the record,
-> and every consequential decision refusing to actuate without a named human review.
->
-> **The three decisions all take a decision now, and two of them could not before.**
-> Curtailment ran against `telemetry=None` and withheld every time, because substation load is a
-> second stream nothing produced — the one decision here with a *physical* consequence, never
-> taken. `data/telemetry.py` produces it, an IoT rule lands it in S3, and the fallback throttles
-> a substation driven past its limit on purpose, marked as a fallback into the record. Settlement
-> had never computed a number at all: the dbt gold layer has existed since phase 2 and no capture
-> ever built it, so `settlement_hour` did not exist and the ruleset naming it had to be removed.
->
-> **And the tariff change had no consumer anywhere.** `docs/SCENARIO.md` declares it, `data/cast.py`
-> builds the SCD-2 history, and the word `tariff` appeared in this repository only in the
-> docstrings of `pit.py`. A declared case with no consumer cannot fail, which is worse than one
-> that fails: it looks handled, in a document, indefinitely. `gold.settlement_priced` reads it,
-> point-in-time, priced at the interval rather than the hour.
->
-> **Still gaps rather than results:** Model Monitor and Clarify, which AWS has closed to new
-> accounts (`docs/AWS-CONSTRAINTS.md`); the savepoint-restore drill, which needs a way to hold a
-> MiniCluster job open, cancel it with a savepoint and resume — a harness rather than an
-> assertion, and skipped with that reason rather than half-written.
->
-> The runs are also where the design errors live. Beyond the four in `docs/DECISIONS.md` 17 —
-> PyFlink cannot emit a custom watermark; a green CI run had moved zero records — a second pass
-> found that **no Iceberg table had ever existed** (ADR-0008), that the watermark was being
-> computed over meters rather than substations so every total carried a hole that was not there,
-> that the adapter dropped five of the core's fourteen fields including `closed_at`, and that a
-> third of the fleet published its readings five months late because one firmware writes epoch
-> seconds where a regex expected ISO-8601. Each was invisible offline; each is now refused by a
-> check that fails on a laptop.
->
-> **`starved` now means both silences, and getting there corrected an argument of mine.** The
-> adapter could not report an empty batch at all — `if not batch: return` sat above the line that
-> reports a watermark condition, and starvation *is* the empty batch — so the state was
-> unreachable in the cloud. Fixing that revealed the larger half: `idle` means "further behind
-> the leader than `idle_after`", measured in event time, so **the core detects relative silence
-> and not absolute silence.** One substation going quiet is caught, which is the scenario's case
-> and claim 1's sharpest one. A stream that stops entirely is not: the leader freezes too,
-> nothing becomes idle, and the view goes on saying `advancing`. What protects the system there
-> is claim 4 — a frozen watermark leaves every feature ageing past its budget and every decision
-> falls back. I then wrote that making absolute silence visible would need the core to read a
-> clock, and that this would cost claim 2 its identical replay. **That was wrong, and it was the
-> reason the gap stayed open.** `observe` is *given* the instant it reasons at — the adapter
-> passes Flink's processing time, the offline runner passes ingestion time — so the comparison is
-> arithmetic on two values it already holds. `silent_after` is five minutes, the clock stays
-> outside the module, and the test that asserted an hour of empty batches was `advancing` was
-> asserting the bug.
->
-> **Cost.** The tagged spend for the whole exercise was **USD 12.35**, against a design target
-> of under €100. It undercounts: a cost allocation tag takes up to 24 hours to activate, so the
-> estate's first hours are untagged. Both halves of that belong to the number.
+> **Status: complete. Every claim is proved twice — offline on a laptop with no credentials, and
+> against a real AWS estate that was deployed, driven, promoted from, served from, and
+> destroyed.** The scoreboard below is what a laptop proves; this block is what the account did.
+
+**The five-step sequence, in order.** A fresh account cannot serve a model nobody has approved,
+so the endpoint cannot exist on the first deploy. That is claim 5 as a property of the *order of
+operations*, and it is why the sequence has five steps rather than three:
+
+```
+deploy (no endpoint) → capture → promote → deploy (endpoint) → capture
+```
+
+Both captures were green in all six jobs. From the second, with the endpoint serving and a named
+human on the record:
+
+| asserted live, by the capture rather than read off a dashboard | result |
+|---|---|
+| rows published with a watermark earlier than their own interval end | **0** — claim 1, checkable after the fact, on every run |
+| the same day delivered twice | **3,779 values identical** — claim 2, at the offset the harness measures rather than assumes |
+| the Glue Data Quality ruleset against the deployed table | **6 of 6 rules, score 1.00** |
+| train/serve parity, three features, two mechanisms, no tolerance | **agreed, 0 diverged** |
+| curtailment on a substation driven past its limit | **485,442 W of 450,000 W → 8 throttled**, marked as a fallback into the record |
+| the live case matrix | **7 of 7** — every defect the cast declares, observed in the estate |
+| the erasure | **all 6 legs confirmed against the estate**, independently of the certificate that claims them |
+| the promotion gate | **approved**, and the registry records the human who took responsibility |
+| consequential decisions | **20 pending, 0 actuated** — and one actuated *on a named review* |
+
+**Claim 7 has both halves now.** Every run proves the refusal: the queue holds twenty and
+actuating raises before any review exists. What needed a live endpoint and a name is the other
+half — that a **named human** is the only thing that *can* actuate. Without a name the queue shows
+only that nothing gets through; with one it shows what it takes for something to.
+
+**Claim 6 is verified against the estate, not against its own certificate.** The state machine
+erases and writes a certificate saying it did; `scripts/erasure_legs_live.py` asks the estate the
+same questions through different services — the shred through KMS, the online store through
+`GetRecord`, the lakehouse and the training sets through Athena. It found that `offline_store` was
+declared in the scope, had **no branch in the state machine at all**, was absent from the
+certificate, and was absent from the condition deciding whether to write one — which was a
+five-way `AND` over array positions, and a hand-counted condition cannot notice a missing leg,
+because the missing leg is what changes the count. Four of a subject's feature rows had survived
+an erasure that certified. The branch exists now, the refusal counts against the declared set, and
+`check_erasure_legs.py` holds the scope, the machine's branches and that count equal on every push.
+
+---
+
+**What a live estate teaches that a laptop cannot.** Roughly thirty defects were found this way,
+and the pattern is one sentence: *a component nothing had ever executed*. Three maintenance jobs
+had no Iceberg Spark extensions and had therefore never run. No Iceberg table had ever existed.
+The reaper classified every expired resource, logged `would delete`, and returned a list — hourly,
+convincingly, deleting nothing. A Glue Data Quality ruleset sat applied and attached for the life
+of the lakehouse without one row ever being compared to one rule; when it finally ran, the rule
+for doctrine 4 turned out to be wrong three ways, because it had never been wrong out loud. Two
+feature contracts read from a table that was a catalogue entry with no writer, and an empty
+Iceberg table answers every query with zero rows and no error.
+
+Each is now refused by a check that fails on a laptop, which is the only durable form of the
+lesson. And each live failure that produced a check is a failure that cannot recur.
+
+**The instructive ones are the checks that were themselves wrong.** A `held_back` assertion passed
+for weeks by reading evidence from *earlier captures* — the landing prefix accumulates. An
+alignment claimed in its own docstring to choose the offset that agrees while the code counted
+shared keys, which on a contiguous day is nearly flat across neighbouring offsets. A parity harness
+reported an erasure that had worked as a claim-3 divergence, because SageMaker's soft delete keeps
+a tombstone no re-materialisation can overtake. A green check is not evidence; a green check
+somebody has watched refuse a real violation is.
+
+**Still open, and all of it deliberate.** Two items in [contracts/waivers.yaml](contracts/waivers.yaml),
+each with a name, a date and what would close it: the savepoint-restore drill, and Model Monitor
+and Clarify (closed by AWS to accounts of this class). A third — the required reviewers on the
+deploy environments — was open for five days and closed on 2026-08-17, found by reading
+`docs/DAY-ONE.md` against the API it described and discovering the document had gone on
+describing the intended state. `scripts/check_waivers.py` turns CI red on expiry
+with no commit behind it, which is doctrine 6 enforced by a clock rather than by a habit.
+
+**Cost.** A full five-step sequence — two thirty-minute captures, an endpoint served, and a
+teardown — cost **USD 15.83 in a day**, against a design target of under €100. The whole nine-day
+exercise, roughly fifteen captures and twenty applies while all of the above was being found, cost
+**USD 115.60** tagged. Both figures are measured, not estimated, and both undercount: a cost
+allocation tag takes up to 24 hours to activate, so an estate's first hours carry no tag.
 
 ---
 
@@ -173,9 +147,9 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 | **claim 2** · replay is identical | **5/5** — the same day shuffled under five seeds and delivered twice over produces the same 3,584 published values, the same 283 restatements and the same lineage ids |
 | **claim 3** · train/serve parity | **5/5** — two independent mechanisms over one contract, compared bitemporally with no tolerance, including the planted future-leakage case |
 | **claim 4** · no decision on a stale feature | **7/7** — the gate is in front of the input, and the fallback marker survives into the record |
-| **claim 5** · no model reaches an endpoint ungated | **12/12** — and **the shipped model is refused**, for the finding in [docs/BIAS-FINDING.md](docs/BIAS-FINDING.md) |
-| **core ≡ Flink** · tier two of ADR-0003 | **green** — the deployed operator chain on a MiniCluster produces the same value for every window it and the pure core both closed. Scoped to the live stream: a bounded list cannot reproduce a three-day-late batch, and the harness says so rather than absorbing it in a tolerance |
-| **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach. Proved live in both directions: five refusals for five real defects, then all five legs confirmed and a certificate written |
+| **claim 5** · no model reaches an endpoint ungated | **12/12** — and the gate **refuses the model fitted on the dispatch log**, for the finding in [docs/BIAS-FINDING.md](docs/BIAS-FINDING.md). Live, it approved the one fitted on randomised inspections and the registry names the human who took responsibility. Same population, same model class, same thresholds — the difference is the labels |
+| **core ≡ Flink** · tier two of ADR-0003 | **green in CI**, on Linux where the wheels exist — the deployed operator chain on a MiniCluster produces the same value for every window it and the pure core both closed. Scoped to the live stream: a bounded list cannot reproduce a three-day-late batch, and the harness says so rather than absorbing it in a tolerance |
+| **claim 6** · erasure to a declared boundary | **9/9** — no certificate unless every leg confirms, and the certificate names the leg deletion cannot reach. Live, **all six legs are confirmed against the estate rather than against the certificate**: one of them had no branch in the state machine at all until the independent check found rows that had survived |
 | **claim 7** · no automatic decision about a person | **8/8** — the contract does not load and the actuation type cannot be constructed |
 | `make gate-proof` | **40 refused, 0 accepted, 0 stale** |
 | `make policy` | **24 principal-resource pairs** — every reachable set exact and every closed path closed |
@@ -187,8 +161,10 @@ arrive as the phases land; a row that is not here yet is work that has not happe
 | **the declared cases** · offline | **11/11** — every defect the cast declares is observed in the generated day, and a cohort that is declared and unchecked fails the run |
 | **the declared cases** · against the estate | **7/7** — the same questions asked of the deployed system rather than of the core |
 | **the settlement path** · doctrine 4 and its contract | **8/8** — the third decision contract, whose safe state is the inverse of curtailment's |
-| `check_waivers` | **4 live, none expired** — doctrine 6, enforced by a clock rather than by a habit |
+| `check_waivers` | **2 live, none expired** — doctrine 6, enforced by a clock rather than by a habit; a third was closed by being read against the API it described |
 | `check_feature_sources` | **3 features**, every column present in a table something writes |
+| `check_erasure_legs` | **6 legs**, named identically by the scope, the state machine's branches and the count the refusal compares against |
+| the five-step sequence, live | **both captures green in all six jobs** — deploy, capture, promote, deploy with the endpoint, capture |
 
 Two rows are worth reading twice.
 
@@ -301,18 +277,27 @@ Their shape is fixed in [CLAUDE.md](CLAUDE.md) and the order they arrive in is
 ## Deploying it, and how it has been
 
 Everything needed is here: six Terraform layers, a dbt project, an application package, and
-three gated workflows. `deploy.yml` re-runs the whole of CI against the exact ref being
+four gated workflows. `deploy.yml` re-runs the whole of CI against the exact ref being
 deployed — not "CI passed on main last night" — assumes a role through OIDC with no secret
 anywhere, applies the layers in dependency order, and prints each plan before applying it.
 `destroy.yml` takes it down in reverse order and deliberately does *not* require CI to pass,
 because the moment somebody most needs to tear an estate down is the moment something is
 broken. `capture.yml` is the only thing that starts the three expensive resources, and its stop
-step runs `if: always()`.
+step runs `if: always()`. `promote.yml` is the one that puts a model in front of traffic, and it
+refuses to without a named human and without train/serve parity holding.
 
-**All three have been dispatched.** `infra/bootstrap/` was applied from a laptop on 2026-08-10
+`capture.yml` also takes `-f from_stage`, the way `deploy.yml` takes `-f layer=`: a capture that
+failed at the fifth job continues rather than starting again. Because the danger there is not the
+resuming but the *quoting*, every run's summary opens by saying which it was — a whole capture, or
+a resumed one that **may not be cited as evidence**. Same discipline as the fallback marker that
+has to reach the record.
+
+**All four have been dispatched.** `infra/bootstrap/` was applied from a laptop on 2026-08-10
 — the one layer whose own design always said so — and every other layer went up through
-`deploy.yml`, was driven by `capture.yml`, and came down through `destroy.yml`. Nothing in this
-repository has ever been applied from a console or from a laptop shell.
+`deploy.yml`, was driven by `capture.yml`, promoted from by `promote.yml`, and came down through
+`destroy.yml`. Nothing in this repository has ever been applied from a console or from a laptop
+shell, and the estate has been stood up and torn down enough times that the teardown is verified
+from the CLI afterwards as a matter of routine.
 
 `docs/DECISIONS.md` 15 argued that it never would be, because every claim is provable offline
 by construction and a live run would produce a screenshot rather than a proof. **Decision 17
@@ -346,21 +331,33 @@ read.
 
 ## Cost posture
 
-**The design target for one full capture with teardown is under €100. The measured tagged spend
-was USD 12.35** — and that number undercounts, because a cost allocation tag takes up to 24
-hours to activate and the estate's first hours therefore carry no tag. The two halves belong
-together: a measurement quoted without the reason it is low is not more honest than the design
-constraint it replaced.
+**The design target for one full capture with teardown is under €100.** A complete five-step
+sequence — two thirty-minute captures, a promotion, an endpoint served, and a teardown — measured
+**USD 15.83 in a day**. The whole nine-day exercise, roughly fifteen captures and twenty applies
+while most of the defects in this repository were being found, measured **USD 115.60** tagged.
 
-Nothing can be applied outside a gated workflow. Every resource carries a
-`watermark:expires-at` tag that a scheduled reaper enforces, and an AWS Budget action disables
-the deploy role at its threshold. **Neither has ever fired** — the workflow destroyed everything
-well inside its expiry, and the spend never approached the ceiling — so both remain designed
-controls rather than demonstrated ones, and this section says so rather than implying otherwise.
+Both are measurements rather than estimates, and both undercount: a cost allocation tag takes up
+to 24 hours to activate, so an estate's first hours carry no tag. The two halves belong together —
+a measurement quoted without the reason it is low is not more honest than the design constraint it
+replaced.
 
-The three expensive things — Managed Flink KPUs, the SageMaker Feature Store online store and
-any real-time endpoint — are confined to deliberate bounded blocks rather than left standing.
-That discipline is why the figure above is USD 12.35 and not a story about a forgotten cluster.
+Nothing can be applied outside a gated workflow. Every resource carries a `watermark:expires-at`
+tag, and `infra/bootstrap/cost.tf` holds a budget whose action detaches the deploy role at its
+threshold.
+
+**The budget action has never fired** — the spend never approached the ceiling — so it remains a
+designed control rather than a demonstrated one, and this section says so rather than implying
+otherwise. **The reaper is a different case, and worth reading.** It was a designed control that
+was not even that: it classified every expired resource, logged `would delete`, and returned a
+list, hourly, having deleted nothing, because the mapping from resource type to deletion API was
+never called. It deletes now, behind an explicit mode, with a test over every branch that deletes
+and every branch that must not — including that a resource with no expiry is reported rather than
+removed, and that `never` means never.
+
+The three expensive things — Managed Flink KPUs, the SageMaker Feature Store online store and any
+real-time endpoint — are confined to deliberate bounded blocks rather than left standing. A
+`scripts/check_cost_envelope.py` refuses a *design* that could not come in under the target, which
+is the half a rate card can answer; the figures above are the half only a bill can.
 
 ---
 

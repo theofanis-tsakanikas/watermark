@@ -128,11 +128,12 @@ erasure state machine **refused to certify**, which was the correct answer. Clai
 `land_to_silver` was blocked on a missing IAM read, so settlement had nothing to total. The
 endpoint and Model Monitor were not exercised either, because both need a model a human has
 approved and no human had. **Those are gaps, not results, and they are listed as gaps in
-`README.md`.**
+`README.md`.** *(All but one closed on 2026-08-17 — see decision 18.)*
 
 **What this permits, and its limits.** Euro figures and wall-clock times may now be stated —
 *when they are measured, labelled as measured, and given their error bars.* The tagged spend for
-the whole exercise was **USD 12.35**; the true figure is higher, because the cost allocation tag
+the exercise *as it stood on 2026-08-11* was **USD 12.35** — decision 18 has the current
+figures, and this one should not be quoted for them; the true figure is higher, because the cost allocation tag
 takes up to 24 hours to activate and the early hours of the estate are therefore untagged. Both
 halves of that sentence must travel together. A measurement quoted without the reason it
 undercounts is worse than the design constraint it replaced.
@@ -142,6 +143,41 @@ evidence, and it was met.
 
 `docs/DAY-ONE.md` no longer says the list is undone. It says which items were done, when, and
 what each one taught.
+
+---
+
+**18 · The sequence ran in order, and the gaps decision 17 listed are closed.**
+*Decided 2026-08-17, after doing it.*
+
+```
+deploy (no endpoint) -> capture -> promote -> deploy (endpoint) -> capture
+```
+
+Both captures green in all six jobs. Decision 17 named four things it could not claim; three are
+now claimed and the fourth is recorded as an external limit.
+
+- **Claim 2 is exercised live.** The same day, delivered twice, publishing 3,779 identical values.
+- **The endpoint is exercised**, because a human approved a model. The registry names them.
+- **Claim 7 has both halves.** Every run proves the refusal; this one has a consequential decision
+  actuated *on a named review*, which is the half a queue of pending items cannot show.
+- **Model Monitor and Clarify stay closed**, by AWS, to accounts of this class. That is WV-002 in
+  `contracts/waivers.yaml` with a date on it, not a gap somebody forgot.
+
+**Claim 6 changed shape, and that is the finding worth recording.** 17 said the erasure "refused
+to certify, which was the correct answer". It later certified — and an *independent* check against
+the estate found that one of the six legs the scope declares had no branch in the state machine at
+all. Rows had survived an erasure that certified. The refusal itself was a five-way `AND` over
+array positions, and a hand-counted condition cannot notice a missing leg, because the missing leg
+is what changes the count.
+
+The lesson generalises past claim 6: **a certificate that verifies its own legs is a signature on
+a blank page.** What made it visible was asking the estate the same questions through different
+services than the ones that performed the work.
+
+**What this permits about figures.** Decision 17's rule stands — measured, labelled as measured,
+with what it excludes. The figures are now: a full five-step sequence, **USD 15.83 in a day**; the
+whole nine-day exercise in which most of this was found, **USD 115.60** tagged. Both undercount
+for the reason 17 gives, and the under-EUR-100 design constraint was met with room.
 
 ## Deliberately deferred
 

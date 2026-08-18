@@ -73,9 +73,20 @@ the human gate is gone while every page still looks configured. It was found by 
 as long as it lasted, this file said plainly that doctrine 5 did not hold for a deploy.
 
 Publishing the repository fixed it, because environment protection rules are free on public
-repositories. **Doctrine 5 — nothing approves itself — now holds in the estate as well as in
-`promotion.py`.** A dispatch of `deploy` or `destroy` waits for a named human before the job
-that assumes the role will start.
+repositories, and for a time **doctrine 5 — nothing approves itself — held in the estate as well
+as in `promotion.py`**: a dispatch of `deploy` or `destroy` waited for a named human before the
+job that assumes the role would start.
+
+> **They were off for five days, and that is worth keeping.** They were removed so a working
+> session could iterate on a broken capture without an approval prompt on each of six runs in a
+> day — a real reason, and one that expired with the iteration. It did not expire on its own: the
+> gap was recorded as **WV-003** in [`contracts/waivers.yaml`](../contracts/waivers.yaml) with a
+> date, and it was found again by reading this file against `gh api`, which said *no protection
+> rules* while the paragraph above described the intended state.
+>
+> Restored 2026-08-17, on both environments, verified through the API rather than through a
+> settings page. A control that is described and switched off is worse than one nobody claimed,
+> because the description is what people read.
 
 What still stands in the path besides the reviewer: the confirmation word, the seven-day bound
 on `expires_at`, a full CI run against that exact ref, and the printed plan.

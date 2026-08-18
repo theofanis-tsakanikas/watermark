@@ -486,7 +486,12 @@ def _read_an_unaskable_question_as_an_empty_answer(root: Path) -> bool:
 
 def _let_an_exception_outlive_its_grant(root: Path) -> bool:
     return _replace(
-        root / "contracts/waivers.yaml", "    expires_on: 2026-09-13", "    expires_on: 2026-06-30"
+        # WV-001's date — the first live entry. It moved here when WV-003 was closed and its
+        # date became a comment, which the harness reported STALE rather than passing, which is
+        # the whole reason a moved target is a red line and not a skip.
+        root / "contracts/waivers.yaml",
+        "    expires_on: 2026-11-12",
+        "    expires_on: 2026-06-30",
     )
 
 

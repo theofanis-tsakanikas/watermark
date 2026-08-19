@@ -81,18 +81,31 @@ variable "monthly_budget_usd" {
     unit set: [USD]` — which is the class of error `terraform validate` cannot see and only a
     plan or an apply against the real account will surface.
 
-    `CLAUDE.md` states the design target as **under €100**, and that stays the design target: it
-    decides what may be built. This is the enforcement, and it is denominated in the currency
-    the account is billed in.
+    `CLAUDE.md` states the design target as **under €100 for one full capture with teardown**,
+    and that stays the design target: it decides what may be built, and
+    `scripts/check_cost_envelope.py` enforces it against the design. This variable is a
+    different quantity and confusing the two is what made it wrong. It is a **monthly ceiling
+    over every capture, apply and idle hour the account runs in a calendar month**, and one
+    month of this project has held roughly fifteen captures and twenty applies.
 
-    110 rather than a converted figure. A ceiling is only wrong in one direction — too tight and
-    it detaches the deploy role over a bill that was within budget, in the middle of a capture,
-    which is the expensive kind of false positive. 110 USD is above €100 at any rate this
-    decade, and no exchange rate is recorded here because a rate written down is a rate that
-    goes stale silently.
+    **Raised from 110 to 250 on 2026-08-20, after the action fired.** It fired correctly: the
+    tagged August spend reached USD 115.64 against a 110 ceiling, the deploy role was detached,
+    and the next deploy died on `ecr:GetAuthorizationToken ... explicit deny`. Nothing had run
+    away — that figure is the whole nine-day exercise, accumulating against a limit set as
+    though it bounded a single capture. A ceiling that a normal month of work crosses is a
+    ceiling that will be reversed by hand every time, and a control routinely waved through is
+    not a control.
+
+    250 is chosen for headroom rather than derived: a month of this project's heaviest work has
+    measured USD 115.64, so the ceiling now sits at roughly twice a known-bad month. A ceiling
+    is only wrong in one direction — too tight and it detaches the deploy role in the middle of
+    a capture, which also blocks the `stop` job that shuts down the three things that bill.
+
+    No exchange rate is recorded here, because a rate written down is a rate that goes stale
+    silently.
   EOT
   type        = number
-  default     = 110
+  default     = 250
 }
 
 # `deploy_environments` used to be a variable here, defaulting to ["deploy", "destroy"].

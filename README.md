@@ -345,9 +345,21 @@ Nothing can be applied outside a gated workflow. Every resource carries a `water
 tag, and `infra/bootstrap/cost.tf` holds a budget whose action detaches the deploy role at its
 threshold.
 
-**The budget action has never fired** — the spend never approached the ceiling — so it remains a
-designed control rather than a demonstrated one, and this section says so rather than implying
-otherwise. **The reaper is a different case, and worth reading.** It was a designed control that
+**The budget action has fired, and it fired correctly.** On 2026-08-20 the tagged August spend
+reached USD 115.64 against a USD 110 monthly ceiling; the action detached the deploy role's
+permissions, and the next deploy died on
+`ecr:GetAuthorizationToken ... explicit deny in an identity-based policy`. Nothing had run away —
+that figure is the whole nine-day exercise. **The ceiling was the thing that was wrong**: it had
+been set as though it bounded one capture, while the budget it enforces is *monthly*, across
+every capture, apply and idle hour in a calendar month. It is now USD 250, roughly twice a
+known-bad month, and `infra/bootstrap/variables.tf` records the reasoning where the old figure's
+reasoning used to be. A ceiling that ordinary work crosses gets reversed by hand every time, and
+a control routinely waved through is not a control.
+
+What the failure demonstrated is worth more than the ceiling being right first time: the deny is
+an explicit `Deny` on `*`, so it cannot be out-voted by adding permissions, and the run that hit
+it named the action it wanted rather than failing vaguely. That is the legible failure
+`infra/bootstrap/cost.tf` says it is designing for, observed. **The reaper is a different case, and worth reading.** It was a designed control that
 was not even that: it classified every expired resource, logged `would delete`, and returned a
 list, hourly, having deleted nothing, because the mapping from resource type to deletion API was
 never called. It deletes now, behind an explicit mode, with a test over every branch that deletes

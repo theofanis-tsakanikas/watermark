@@ -552,7 +552,7 @@ last night".
 | [`data/`](data/) | The synthetic operator: a fixed cast and a seeded day carrying every pathology in the scenario, on purpose and labelled |
 | [`evals/`](evals/) | The claim harnesses — labelled situations, scored, credential-free |
 | [`recordings/`](recordings/) | The golden day. `make seed-check` proves the generator still reproduces it exactly |
-| [`queries/`](queries/) · [`pipelines/dbt/`](pipelines/dbt/) | Settlement SQL with bound parameters, and the gold models with the two tests that matter more than the models |
+| [`queries/`](queries/) · [`pipelines/dbt/`](pipelines/dbt/) | Settlement SQL with bound parameters, and the gold models with the three tests that matter more than the models — including `no_decision_from_an_unclosed_window.sql`, which is claim 1 asserted again over the settled layer |
 | [`infra/`](infra/) | Six Terraform layers, state isolated per layer. `bootstrap/` applies from a laptop; every other layer only from a gated workflow |
 | [`scripts/`](scripts/) | `gate_proof.py`, `preflight.py`, and the checks that read the repository about itself |
 | [`docs/`](docs/) | Scenario, regulatory posture, AWS constraints, decisions, ADRs |

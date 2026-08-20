@@ -27,7 +27,17 @@ enforces is monthly, across every capture, apply and idle hour. Raised to USD 25
 ~~"The budget action has never fired, so it remains a designed control rather than a demonstrated
 one."~~
 
-**README rewritten to the portfolio standard**, with 23 images, each next to the claim it proves.
+**The README is now checked by something.** It was the one artefact here that quoted every other
+check and was guarded by none of them, and it drifted three times in this day's work — nine eval
+harnesses reported as eight, six CI jobs as seven, three dbt tests as two — each found by a person
+re-reading rather than by a control. `scripts/check_the_readme.py` re-reads 22 figures against the
+repository and reports a figure it can no longer locate as **STALE** rather than passing over it.
+It is attacked by a new gate-proof mutation that adds a harness and leaves the sentence counting
+them alone, taking the harness to **41**. The repository refused the check twice while it was
+being added — once for having no mutation, once for naming a control nothing had declared — which
+is the coverage rule working on the person who wrote it.
+
+**README rewritten to the portfolio standard**, with 25 images, each next to the claim it proves.
 `SECURITY.md`, `CHANGELOG.md` and `.github/dependabot.yml` added.
 
 ## 2026-08-17

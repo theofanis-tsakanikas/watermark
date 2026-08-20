@@ -60,7 +60,13 @@ WIRING = {
     "cases-live",
     "decide-live",
     "seed-reference",
+    "readme-figures",
 }
+#: `readme-figures` is the rule that every number the README states still matches what the
+#: repository says. Wiring rather than a gate for the same reason as the rest: it reads prose and
+#: directory listings and refuses a disagreement, and nothing imports it. It is here because the
+#: README is the one artefact that quotes every other check and was, for the whole of this
+#: project's life, checked by none of them.
 #: `partition-vocabulary` is the rule that the field the IoT topic rule calls `partition`
 #: carries what `WATERMARK_PARTITIONS` declares. Wiring rather than a gate for the same
 #: reason: the two sides are HCL and a Python constant, they meet only in a running

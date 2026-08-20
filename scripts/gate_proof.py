@@ -537,6 +537,21 @@ def _leave_the_expensive_things_standing_overnight(root: Path) -> bool:
     )
 
 
+def _quietly_add_a_harness_and_leave_the_readme_alone(root: Path) -> bool:
+    """Add a claim harness, and do not update the sentence that counts them.
+
+    This is the drift as it actually happens. Nobody edits the README to make it wrong; somebody
+    adds a directory under `evals/` on a good day, the prose that says how many there are stays
+    where it was, and the scoreboard reads one better than the repository is. It happened three
+    times here in a single day — nine harnesses reported as eight, six CI jobs as seven, three dbt
+    tests as two — and each was found by a person re-reading, which is not a control.
+    """
+    added = root / "evals" / "an_eighth_thing"
+    added.mkdir(parents=True, exist_ok=True)
+    (added / "__init__.py").write_text("", encoding="utf-8")
+    return True
+
+
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "declare a leg the erasure never reaches",
@@ -982,6 +997,18 @@ MUTATIONS: tuple[Mutation, ...] = (
         "A value copied by hand looks like an independent setting. It is green the day it is "
         "pasted and every day after, and the failure arrives when the layer that owns the name "
         "changes it — in a settings page nothing in this repository can see.",
+    ),
+    Mutation(
+        "add a harness and leave the sentence that counts them alone",
+        "the readme",
+        "readme-figures",
+        ["scripts/check_the_readme.py"],
+        "drifted",
+        _quietly_add_a_harness_and_leave_the_readme_alone,
+        "The README is the one artefact here that quotes every other check and is checked by "
+        "none of them. Its figures drift in one direction — towards looking more finished than "
+        "the repository is — and they drift with no commit that touches the prose, which is what "
+        "makes a person re-reading it the wrong control.",
     ),
 )
 

@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/AWS-Step%20Functions-FF4F8B?logo=amazonaws&logoColor=white" alt="Step Functions">
   <br>
   <img src="https://img.shields.io/badge/tests-341%20passing-2ea44f" alt="341 tests passing">
-  <img src="https://img.shields.io/badge/gate--proof-40%20refused%20%C2%B7%200%20accepted%20%C2%B7%200%20stale-2ea44f" alt="gate-proof 40 refused">
+  <img src="https://img.shields.io/badge/gate--proof-41%20refused%20%C2%B7%200%20accepted%20%C2%B7%200%20stale-2ea44f" alt="gate-proof 41 refused">
   <img src="https://img.shields.io/badge/live%20capture-6%2F6%20jobs%20green-2ea44f" alt="live capture 6 of 6 jobs green">
   <img src="https://img.shields.io/badge/published%20early-0%20of%203%2C779%20rows-2ea44f" alt="0 rows published early">
   <img src="https://img.shields.io/badge/erasure-6%2F6%20legs%20confirmed-2ea44f" alt="erasure 6 of 6 legs confirmed">
@@ -108,7 +108,7 @@ reading the workflow's exit code: 0 VPCs, 0 Kinesis streams, 0 Flink application
 endpoints and feature groups, 0 state machines, 0 `watermark_*` databases, 0 IoT rules. The resting
 state of this repository is the state bucket and its access-log bucket, the state KMS key, three
 SSM parameters and a deploy role no human can assume. Everything below also runs with **no
-AWS account at all**: 341 tests, nine claim harnesses and 40 planted gate violations, on a laptop,
+AWS account at all**: 341 tests, nine claim harnesses and 41 planted gate violations, on a laptop,
 in about four minutes.
 
 ---
@@ -132,7 +132,8 @@ And the checks that make those claims mean something rather than merely pass:
 
 | | result |
 |---|---|
-| `make gate-proof` | **40 refused, 0 accepted, 0 stale** |
+| `make gate-proof` | **41 refused, 0 accepted, 0 stale** |
+| `make readme` | **22 figures** re-read against the repository — a figure that cannot be found is **STALE**, never passed |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined |
 | `make cases` | **11/11** offline · **7/7** against the deployed estate |
 | `make policy` | **4 principals, 24 principal-resource pairs** — every reachable set exact and every closed path closed |
@@ -155,7 +156,7 @@ And the checks that make those claims mean something rather than merely pass:
 | [A model reaches traffic only through a person](#a-model-reaches-traffic-only-through-a-person) | claims 5 and 7, and the bias finding that refuses this repository's own model |
 | [Erasure, and the leg it cannot reach](#erasure-and-the-leg-it-cannot-reach) | claim 6, six legs checked against the estate |
 | [Nobody can read the lakehouse](#nobody-can-read-the-lakehouse) | Lake Formation and OIDC, demonstrated by being refused |
-| [The gates are attacked](#the-gates-are-attacked) | 40 planted violations, each refused by name |
+| [The gates are attacked](#the-gates-are-attacked) | 41 planted violations, each refused by name |
 | [Quickstart](#quickstart) · [Testing](#testing) · [Repository layout](#repository-layout) | |
 | [What this does not do](#what-this-does-not-do) · [Cost](#cost) · [Decisions](#decisions) | |
 | [Docs](#docs) · [Security](#security) · [License](#license) | |
@@ -437,8 +438,11 @@ non-zero exit is not evidence. A mutation whose target has moved is reported `ST
 `passed`.
 
 <p align="center">
-  <img src="images/gate_proof.png" width="900" alt="make gate-proof: 40 refused, 0 accepted, 0 stale"><br>
-  <sub><b>40 refused, 0 accepted, 0 stale</b> — read the mutation names rather than the total.
+  <img src="images/gate_proof.png" width="900" alt="make gate-proof: 40 refused, 0 accepted, 0 stale — the run before the README check was added"><br>
+  <sub><b>40 refused, 0 accepted, 0 stale</b>, in the run pictured — the harness carries
+  <b>41</b> now, the newest being the one that plants a claim harness and leaves the sentence
+  counting them alone, which is how this README drifted three times in a day before anything
+  checked it. Read the mutation names rather than the total.
   <i>automate a decision about a person</i> is claim 7 planted as a contract change.
   <i>let a redelivery change a lineage id</i> is claim 2. <i>round the replay's measured offset onto
   the interval grid</i>, <i>bound the telemetry read over the whole prefix instead of per
@@ -449,7 +453,24 @@ non-zero exit is not evidence. A mutation whose target has moved is reported `ST
 Writing the mutations is also how the gaps in the harness were found: six checks had no mutation
 against them at all, and eleven more under `scripts/` were never run by one. Coverage is now
 mechanical — `test_every_check_script_is_run_by_a_mutation` means a new check ships red until
-something attacks it.
+something attacks it, and it refused this README's own check twice while it was being added:
+once for having no mutation, then again for naming a control nothing had declared.
+
+**The newest mutation attacks this file.** For the whole of this project's life the README was the
+one artefact that quoted every other check and was checked by none of them — and it drifted three
+times in a single day, always towards looking more finished: nine eval harnesses reported as
+eight, six CI jobs as seven, three dbt tests as two. None of them was written wrong; each stopped
+being right when a directory gained a member, with no commit touching the prose.
+[`scripts/check_the_readme.py`](scripts/check_the_readme.py) re-reads **22 figures** and compares
+each against the repository — the test count from `pytest`, the mutation count from the `Mutation(`
+entries themselves rather than from an eight-minute run, the harness count from the directory
+listing, each claim's score from its own harness.
+
+A figure it can no longer find is reported **STALE**, not passed. That distinction is the whole
+design: a reader that silently matches nothing looks exactly like a reader that matched and
+agreed. Writing it produced the defect immediately — a loosened pattern jumped to a second
+sentence further down the file and reported a drift in a number nobody had touched — so the
+patterns anchor on the phrase beside a figure and never on its value.
 
 The same thirty-second demonstration runs on a laptop with no cloud at all. Change one line in
 [`contracts/decisions/meter_anomaly.yaml`](contracts/decisions/meter_anomaly.yaml) —
@@ -520,7 +541,7 @@ suite that quietly skips reports green for one thing less than it says.
 
 `make preflight` runs **37 checks** — correctness, consistency and deployability — and is what has
 to pass before the estate is stood up. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
-runs six jobs on every push: a secret scan; lint and tests; the claim gates; the 40 gate
+runs six jobs on every push: a secret scan; lint and tests; the claim gates; the 41 gate
 mutations; core↔Flink equivalence; and `terraform validate` against real provider schemas with
 checkov beside it.
 `deploy.yml` re-runs that entire file against the exact ref being deployed — not "CI passed on main

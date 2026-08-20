@@ -216,6 +216,16 @@ CHECKS: list[Check] = [
     ),
     Check(
         "consistency",
+        "the readme",
+        [PYTHON, "scripts/check_the_readme.py"],
+        "Every figure the README states, re-read against what the repository says. It is the "
+        "one artefact here that quotes every other check and was checked by none of them, and "
+        "it drifted three times in a single day before this existed — always in the direction "
+        "of looking more finished. A figure this check can no longer find is reported STALE "
+        "rather than passed.",
+    ),
+    Check(
+        "consistency",
         "waivers",
         [PYTHON, "scripts/check_waivers.py"],
         "Doctrine 6 — every exception carries a name and an end date, and an expired one "

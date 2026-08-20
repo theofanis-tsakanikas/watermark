@@ -102,6 +102,10 @@ partition-vocabulary: ## The IoT rule labels records with the partitions the cor
 glue-runtime: ## The Glue jobs use no Python newer than the runtime Glue gives them
 	$(PY) scripts/check_glue_runtime.py
 
+.PHONY: readme
+readme: ## Every figure the README states still matches what the repository says
+	$(PY) scripts/check_the_readme.py
+
 .PHONY: contracts-validate
 contracts-validate: ## Every entity contract loads and cross-checks
 	$(PY) scripts/check_contracts.py

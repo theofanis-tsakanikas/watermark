@@ -80,11 +80,12 @@ deploy (no endpoint) → capture → promote → deploy (endpoint) → capture
 
 <p align="center">
   <img src="images/capture_ci.png" width="900" alt="capture run: six jobs, all green, one hour forty-eight minutes"><br>
-  <sub><b>Six jobs, all green, 1h 48m</b> — <code>drive</code> and <code>train</code> start
-  together; <code>aggregate</code> and <code>decide</code> fan out; <code>erase</code> waits for
-  both, because it deletes rows the other two are reading; and <code>stop</code> runs
-  <code>if: always()</code>, so a capture that fails halfway still switches off the three things
-  that bill by the minute.</sub>
+  <sub><b>Six jobs, all green, 1h 48m 32s</b> — <i>stand up and drive the day</i> 1h 15m runs
+  beside <i>train a candidate</i> 8m 57s; <i>build the gold layer</i> and <i>serve, compare and
+  decide</i> fan out; <i>an erasure certifies</i> 17m waits for both, because it deletes rows the
+  other two are reading; and <i>stop everything that bills</i> runs <code>if: always()</code>, so a
+  capture that fails halfway still switches the three expensive things off. The commit is
+  <code>89fd48f</code> — the same one the deploy applied.</sub>
 </p>
 
 What the estate asserted about itself on that run, each figure produced by a step that fails when
@@ -102,9 +103,12 @@ it is not true:
 | the erasure | **all 6 legs confirmed against the estate**, independently of the certificate |
 | consequential decisions about a person | **20 pending, 0 actuated** — then exactly one, on a named human review |
 
-**Nothing is standing now.** The resting state of this repository is a state bucket, its KMS key,
-three SSM parameters and a deploy role no human can assume. Everything below also runs with **no
-AWS account at all**: 341 tests, eight claim harnesses and 40 planted gate violations, on a laptop,
+**Nothing is standing now** — verified after the teardown, by asking the account rather than by
+reading the workflow's exit code: 0 VPCs, 0 Kinesis streams, 0 Flink applications, 0 SageMaker
+endpoints and feature groups, 0 state machines, 0 `watermark_*` databases, 0 IoT rules. The resting
+state of this repository is the state bucket and its access-log bucket, the state KMS key, three
+SSM parameters and a deploy role no human can assume. Everything below also runs with **no
+AWS account at all**: 341 tests, nine claim harnesses and 40 planted gate violations, on a laptop,
 in about four minutes.
 
 ---
@@ -516,8 +520,9 @@ suite that quietly skips reports green for one thing less than it says.
 
 `make preflight` runs **37 checks** — correctness, consistency and deployability — and is what has
 to pass before the estate is stood up. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
-runs seven jobs on every push: a secret scan, lint and tests, the claim gates, the 40 gate
-mutations, core↔Flink equivalence, `terraform validate` against real provider schemas, and checkov.
+runs six jobs on every push: a secret scan; lint and tests; the claim gates; the 40 gate
+mutations; core↔Flink equivalence; and `terraform validate` against real provider schemas with
+checkov beside it.
 `deploy.yml` re-runs that entire file against the exact ref being deployed — not "CI passed on main
 last night".
 

@@ -243,13 +243,12 @@ and delivered late — publish byte-identical values with identical lineage ids.
 it the expensive way: it drives the whole generated day, then **drives the whole thing again**,
 and compares. That is why a thirty-minute capture costs an hour and three-quarters.
 
-<p align="center">
-  <img src="images/incoming_records.png" width="900" alt="Kinesis IncomingRecords showing two waves of almost identical shape"><br>
-  <sub><b>Two waves, peaks 1,387 and 1,386</b> — the first is the day; the second is the same day
-  again, re-shuffled, with duplicates and late arrivals. The gap between them is the lakehouse
-  merge. The graph shows the <i>shape</i> is the same; the equality is asserted in the run log at
-  <b>3,779 values identical</b>, because a chart is not a proof.</sub>
-</p>
+<table>
+<tr>
+<td width="50%"><img src="images/incoming_records.png" alt="Kinesis IncomingRecords showing two waves of almost identical shape"><br><sub><b>Two waves, peaks 1,387 and 1,386</b> — the first is the day; the second is the same day again, re-shuffled, with duplicates and late arrivals. The gap between them is the lakehouse merge. The graph shows the <i>shape</i> is the same; the equality is asserted in the run log at <b>3,779 values identical</b>, because a chart is not a proof.</sub></td>
+<td width="50%"><img src="images/flink.png" alt="Managed Flink metrics: uptime rising, zero failed checkpoints, backpressure near zero"><br><sub><b>And the job never restarted</b> — <code>numberOfFailedCheckpoints</code> flat at <b>0</b> and <code>backPressuredTimeMsPerSecond</code> at zero for the whole run. That is load-bearing rather than decorative: a restart replays from the last checkpoint, which would produce duplicates from a different cause and read as a replay defect. <code>uptime</code> climbs in one unbroken line and drops when <code>stop</code> switches the job off.</sub></td>
+</tr>
+</table>
 
 Underneath, the transport is doing the thing that makes replay hard.
 
@@ -521,6 +520,16 @@ runs seven jobs on every push: a secret scan, lint and tests, the claim gates, t
 mutations, core↔Flink equivalence, `terraform validate` against real provider schemas, and checkov.
 `deploy.yml` re-runs that entire file against the exact ref being deployed — not "CI passed on main
 last night".
+
+<p align="center">
+  <img src="images/deploy_ci1.png" width="900" alt="deploy #125: the whole suite as six parallel jobs, then terraform apply, 12m 22s total"><br>
+  <sub><b>The gate is upstream of the apply, not beside it</b> — <code>secret scan</code> 8s,
+  <code>lint and tests</code> 31s, <code>the claim gates</code> 36s,
+  <code>attack our own gates</code> 47s, <code>core equals Flink</code> 1m 05s and
+  <code>terraform and checkov</code> 2m 21s all complete before <code>terraform apply</code>
+  starts. The commit is named at the top — <code>89fd48f</code> — so what was tested and what was
+  applied are the same ref, and nothing reaches AWS until every one of them is green.</sub>
+</p>
 
 ---
 

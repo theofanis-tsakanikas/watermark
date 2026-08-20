@@ -659,7 +659,7 @@ merely different ·
 [DAY-ONE](docs/DAY-ONE.md) — the manual work that has no API, written down before it is done ·
 [DPIA](docs/DPIA.md) · [ANNEX-IV](docs/ANNEX-IV.md) — generated from the contracts, and checked for
 drift against them ·
-[HANDOVER](docs/HANDOVER.md) · [PORTFOLIO-CONTEXT](docs/PORTFOLIO-CONTEXT.md) ·
+[HANDOVER](docs/HANDOVER.md) ·
 [PLAN](PLAN.md) — the four phases and what closed each · [CHANGELOG](CHANGELOG.md)
 
 Engineering rules are in [`CLAUDE.md`](CLAUDE.md).

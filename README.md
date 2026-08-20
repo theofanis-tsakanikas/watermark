@@ -1,6 +1,6 @@
 <p align="center">
   <img src="images/banner.png" width="100%"
-       alt="Watermark — eight event-time windows on a timeline. Five are closed and published in teal; one is open and withheld; one is stalled and served by a deterministic fallback in amber; one is still downstream. Below, a substation and a row of EV chargers. Caption: 0 published early · 40 gates refused, 0 accepted.">
+       alt="Watermark — eight event-time windows on a timeline. Five are closed and published in teal; one is open and withheld; one is stalled and served by a deterministic fallback in amber; one is still downstream. Below, a substation and a row of EV chargers. Caption: 0 published early · 41 gates refused, 0 accepted.">
 </p>
 
 # Watermark

@@ -438,11 +438,11 @@ non-zero exit is not evidence. A mutation whose target has moved is reported `ST
 `passed`.
 
 <p align="center">
-  <img src="images/gate_proof.png" width="900" alt="make gate-proof: 40 refused, 0 accepted, 0 stale — the run before the README check was added"><br>
-  <sub><b>40 refused, 0 accepted, 0 stale</b>, in the run pictured — the harness carries
-  <b>41</b> now, the newest being the one that plants a claim harness and leaves the sentence
-  counting them alone, which is how this README drifted three times in a day before anything
-  checked it. Read the mutation names rather than the total.
+  <img src="images/gate_proof.png" width="900" alt="make gate-proof: 41 refused, 0 accepted, 0 stale, ending with the mutation that adds a harness and leaves the sentence counting them alone"><br>
+  <sub><b>41 refused, 0 accepted, 0 stale</b> — read the mutation names rather than the total.
+  The last line is the newest: <i>add a harness and leave the sentence that counts them
+  alone</i>, refused by <code>the readme</code>, which exists because this README drifted three
+  times in a day before anything checked it.
   <i>automate a decision about a person</i> is claim 7 planted as a contract change.
   <i>let a redelivery change a lineage id</i> is claim 2. <i>round the replay's measured offset onto
   the interval grid</i>, <i>bound the telemetry read over the whole prefix instead of per

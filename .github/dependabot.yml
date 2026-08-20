@@ -1,0 +1,79 @@
+# Version updates are OFF. Security updates are ON, in repository settings.
+#
+# This repository is a pinned reference implementation, not a library under maintenance. Its
+# dependency set is the combination the suite was validated against, and several pins have to
+# move together or not at all: `apache-flink` and the Kinesis connector are built per Flink
+# minor and `check_flink_versions_agree.py` holds them equal to `infra/streaming/variables.tf`;
+# the SageMaker XGBoost image is pinned by digest because a different XGBoost is a different
+# model; the Glue jobs may not use Python newer than the runtime Glue gives them, which
+# `check_glue_runtime.py` enforces.
+#
+# Routine version-update pull requests therefore do more harm than good — they pile up
+# unreviewed, and they drift the stack away from the versions the tests actually cover.
+#
+# Every ecosystem the repository has is declared, because declaring it documents the posture
+# and omitting one reads as an oversight. All of them sit at `open-pull-requests-limit: 0`,
+# which switches off *version-update* PRs only. Dependabot **security** updates and alerts are
+# a separate feature, are left on, and are the part worth having: a real advisory still opens a
+# pull request.
+#
+# To turn version updates back on, CI must first genuinely exercise what a bump changes — build
+# the processing image, install from the same definition it ships, and pin the cross-file
+# invariants in a test. Until then, a green tick on an untested upgrade is worse than no tick.
+
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: docker
+    directory: "/containers/processing"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: terraform
+    directory: "/infra/bootstrap"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: terraform
+    directory: "/infra/foundation"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: terraform
+    directory: "/infra/streaming"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: terraform
+    directory: "/infra/lakehouse"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: terraform
+    directory: "/infra/ml"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: terraform
+    directory: "/infra/governance"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0

@@ -9,8 +9,9 @@ before it.
 **Items 1–4 have been done.** The account exists, `infra/bootstrap/` was applied from a laptop
 on 2026-08-10, both GitHub environments carry a required reviewer, and the two repository
 variables are set. Item 4b — activating the cost allocation tag — behaved exactly as written
-below: the first apply failed on it, and the second, a day later, succeeded. Items 6 and 8 have
-not been needed.
+below: the first apply failed on it, and the second, a day later, succeeded. Item 9 — branch
+protection on `main` — was done on 2026-08-22, after the API was asked and answered *"Branch not
+protected"*. Items 6 and 8 have not been needed.
 
 The estate itself is **not** standing. It was deployed through the gated workflow, driven, and
 destroyed again; see `docs/DECISIONS.md` 17. What survives a teardown is what this file's
@@ -192,6 +193,45 @@ somebody who may drive a scenario but not create infrastructure — that is a th
 and a third OIDC subject in `infra/bootstrap/oidc.tf`, not a widened trust on the existing one.
 
 *Recorded now because the temptation at that moment is to add a wildcard.*
+
+## 9 · Branch protection on `main`
+
+*Done 2026-08-22.*
+
+**Why it is here rather than in Terraform.** It has an API — `PUT
+/repos/{owner}/{repo}/branches/main/protection` — and no Terraform layer in this repository
+manages GitHub. Putting it in one would mean a provider with a personal access token, which is
+the long-lived credential `CLAUDE.md` refuses; the OIDC role this project uses reaches AWS and
+nothing else. So it is a repository setting, applied once, recorded here.
+
+**What is set.** The six `ci.yml` jobs as required status checks — `secret scan`, `lint and
+tests`, `the claim gates`, `attack our own gates`, `core equals Flink`, `terraform and
+checkov` — with `enforce_admins`, no force pushes, no deletion, and linear history required.
+
+**`enforce_admins` is the whole of it.** Without it the sole author bypasses the rule without
+touching a setting, and the protection is a reminder rather than a control — the shape this
+repository refuses everywhere else. It costs what it should: a red suite blocks the author too,
+including at an inconvenient moment.
+
+**No required reviewer.** One author. `contracts/waivers.yaml` already states what a
+single-author repository can and cannot satisfy of doctrine 5, and manufacturing a second person
+is not among them. Required *status checks* need no second person, which is why they are the
+half that can be enforced.
+
+**Why it was not there for the first 265 commits.** Nothing claimed it was — no document
+asserted branch protection, so this is an absent control rather than a false statement. It was
+found by asking the API rather than by reading a settings page, which is the same method that
+found WV-003.
+
+**How a reader detects it has not been done:**
+
+```bash
+gh api repos/<owner>/watermark/branches/main/protection \
+  --jq '{checks: .required_status_checks.contexts, admins: .enforce_admins.enabled}'
+```
+
+`Branch not protected` is the failure. A response listing fewer than six contexts, or
+`admins: false`, is the same failure wearing a green tick.
 
 ---
 

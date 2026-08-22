@@ -133,7 +133,7 @@ And the checks that make those claims mean something rather than merely pass:
 | | result |
 |---|---|
 | `make gate-proof` | **42 refused, 0 accepted, 0 stale** |
-| `make readme` | **22 figures** re-read against the repository — a figure that cannot be found is **STALE**, never passed |
+| `make readme` | **23 figures** re-read against the repository — a figure that cannot be found is **STALE**, never passed |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined |
 | `make cases` | **11/11** offline · **7/7** against the deployed estate |
 | `make policy` | **4 principals, 24 principal-resource pairs** — every reachable set exact and every closed path closed |
@@ -464,7 +464,7 @@ one artefact that quoted every other check and was checked by none of them — a
 times in a single day, always towards looking more finished: nine eval harnesses reported as
 eight, six CI jobs as seven, three dbt tests as two. None of them was written wrong; each stopped
 being right when a directory gained a member, with no commit touching the prose.
-[`scripts/check_the_readme.py`](scripts/check_the_readme.py) re-reads **22 figures** and compares
+[`scripts/check_the_readme.py`](scripts/check_the_readme.py) re-reads **23 figures** and compares
 each against the repository — the test count from `pytest`, the mutation count from the `Mutation(`
 entries themselves rather than from an eight-minute run, the harness count from the directory
 listing, each claim's score from its own harness.
@@ -542,7 +542,7 @@ because `apache-flink` requires `apache-beam`, which has no wheel there
 `WATERMARK_REQUIRE_FLINK=1`, which turns a missing runtime into a failure rather than a skip. A
 suite that quietly skips reports green for one thing less than it says.
 
-`make preflight` runs **37 checks** — correctness, consistency and deployability — and is what has
+`make preflight` runs **39 checks** — correctness, consistency and deployability — and is what has
 to pass before the estate is stood up. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
 runs six jobs on every push: a secret scan; lint and tests; the claim gates; the 41 gate
 mutations; core↔Flink equivalence; and `terraform validate` against real provider schemas with

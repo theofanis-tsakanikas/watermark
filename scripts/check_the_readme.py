@@ -92,6 +92,18 @@ def _ci_jobs() -> str:
     return str(len(re.findall(r"^  [a-z0-9][a-z0-9-]*:$", jobs, re.M)))
 
 
+def _preflight_checks() -> str:
+    """Counted from the source, for the same reason as the mutations: `preflight` runs
+    `gate-proof` and terraform and checkov, and the figure the README states is *how many
+    checks there are* rather than what a run of them costs.
+
+    It was added because the README said thirty-seven while the file declared thirty-eight, and
+    the drift had happened with no commit touching the prose — which is the whole reason this
+    reader exists and was, until now, one of the numbers it could not see."""
+    source = (REPOSITORY / "scripts" / "preflight.py").read_text(encoding="utf-8")
+    return str(len(re.findall(r"^    Check\($", source, re.M)))
+
+
 def _figures() -> list[Figure]:
     evals = REPOSITORY / "evals"
     harnesses = sorted(d.name for d in evals.iterdir() if d.is_dir() and not d.name.startswith("_"))
@@ -174,6 +186,12 @@ def _figures() -> list[Figure]:
             r"runs (\w+) jobs on every push",
             word(int(_ci_jobs())),
             "job keys in .github/workflows/ci.yml",
+        ),
+        Figure(
+            "preflight checks",
+            r"`make preflight` runs \*\*(\d+) checks\*\*",
+            _preflight_checks(),
+            "`Check(` entries in scripts/preflight.py",
         ),
         Figure(
             "decision records",

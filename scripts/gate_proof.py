@@ -26,6 +26,7 @@ handles absurdity, which nobody was worried about.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -552,7 +553,54 @@ def _quietly_add_a_harness_and_leave_the_readme_alone(root: Path) -> bool:
     return True
 
 
+def _register_a_firmware_generation_the_core_cannot_read(root: Path) -> bool:
+    """Add `fw4` to the registered union, and leave the normaliser where it was.
+
+    The plausible version is not carelessness — it is following the process. The Schema Registry
+    is where a new payload shape is *supposed* to be declared, and declaring it there is a real
+    step that produces a real answer: BACKWARD compatibility, approved, go ahead and flash. The
+    answer is about a consumer that does not exist, and nothing says so. The cohort ships, every
+    reading from it is quarantined as an unknown shape, and it surfaces three weeks later as a
+    spike in a table nobody was watching — which is precisely the failure the registry was
+    bought to prevent.
+    """
+    path = root / "infra" / "streaming" / "schemas" / "meter_reading.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    branches = document.get("oneOf")
+    if not isinstance(branches, list):
+        return False
+    branches.append(
+        {
+            "title": "fw4",
+            "type": "object",
+            "required": ["schemaVersion", "meter", "reading"],
+            "properties": {
+                "schemaVersion": {"const": "4.0"},
+                "meter": {"type": "object"},
+                "reading": {"type": "object"},
+            },
+            "additionalProperties": False,
+        }
+    )
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
 MUTATIONS: tuple[Mutation, ...] = (
+    Mutation(
+        "register a firmware generation the core cannot read",
+        "schemas agree",
+        "schemas-agree",
+        ["scripts/check_schemas_agree.py"],
+        "has no extractor for it",
+        _register_a_firmware_generation_the_core_cannot_read,
+        "Declaring a new payload shape in the Schema Registry is the documented step, and it "
+        "returns a real verdict: backward-compatible, approved. Nothing in that verdict depends "
+        "on the consumer having been taught the shape, because the registry is a "
+        "registration-time gate and not a validator in the data path. So the rollout proceeds on "
+        "an answer about a job that cannot read a word of it, and the finding arrives as a "
+        "quarantine spike weeks after the firmware shipped.",
+    ),
     Mutation(
         "declare a leg the erasure never reaches",
         "erasure legs",

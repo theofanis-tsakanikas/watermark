@@ -1,6 +1,6 @@
 <p align="center">
   <img src="images/banner.png" width="100%"
-       alt="Watermark — eight event-time windows on a timeline. Five are closed and published in teal; one is open and withheld; one is stalled and served by a deterministic fallback in amber; one is still downstream. Below, a substation and a row of EV chargers. Caption: 0 published early · 41 gates refused, 0 accepted.">
+       alt="Watermark — eight event-time windows on a timeline. Five are closed and published in teal; one is open and withheld; one is stalled and served by a deterministic fallback in amber; one is still downstream. Below, a substation and a row of EV chargers. Caption: 0 published early · 42 gates refused, 0 accepted.">
 </p>
 
 # Watermark
@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/AWS-Step%20Functions-FF4F8B?logo=amazonaws&logoColor=white" alt="Step Functions">
   <br>
   <img src="https://img.shields.io/badge/tests-341%20passing-2ea44f" alt="341 tests passing">
-  <img src="https://img.shields.io/badge/gate--proof-41%20refused%20%C2%B7%200%20accepted%20%C2%B7%200%20stale-2ea44f" alt="gate-proof 41 refused">
+  <img src="https://img.shields.io/badge/gate--proof-42%20refused%20%C2%B7%200%20accepted%20%C2%B7%200%20stale-2ea44f" alt="gate-proof 42 refused">
   <img src="https://img.shields.io/badge/live%20capture-6%2F6%20jobs%20green-2ea44f" alt="live capture 6 of 6 jobs green">
   <img src="https://img.shields.io/badge/published%20early-0%20of%203%2C779%20rows-2ea44f" alt="0 rows published early">
   <img src="https://img.shields.io/badge/erasure-6%2F6%20legs%20confirmed-2ea44f" alt="erasure 6 of 6 legs confirmed">
@@ -108,7 +108,7 @@ reading the workflow's exit code: 0 VPCs, 0 Kinesis streams, 0 Flink application
 endpoints and feature groups, 0 state machines, 0 `watermark_*` databases, 0 IoT rules. The resting
 state of this repository is the state bucket and its access-log bucket, the state KMS key, three
 SSM parameters and a deploy role no human can assume. Everything below also runs with **no
-AWS account at all**: 341 tests, nine claim harnesses and 41 planted gate violations, on a laptop,
+AWS account at all**: 341 tests, nine claim harnesses and 42 planted gate violations, on a laptop,
 in about four minutes.
 
 ---
@@ -132,7 +132,7 @@ And the checks that make those claims mean something rather than merely pass:
 
 | | result |
 |---|---|
-| `make gate-proof` | **41 refused, 0 accepted, 0 stale** |
+| `make gate-proof` | **42 refused, 0 accepted, 0 stale** |
 | `make readme` | **22 figures** re-read against the repository — a figure that cannot be found is **STALE**, never passed |
 | `make seed-check` | **4,312 deliveries** reproduce `recordings/day.json` exactly — 3,584 published, 283 restated, 284 quarantined |
 | `make cases` | **11/11** offline · **7/7** against the deployed estate |
@@ -156,7 +156,7 @@ And the checks that make those claims mean something rather than merely pass:
 | [A model reaches traffic only through a person](#a-model-reaches-traffic-only-through-a-person) | claims 5 and 7, and the bias finding that refuses this repository's own model |
 | [Erasure, and the leg it cannot reach](#erasure-and-the-leg-it-cannot-reach) | claim 6, six legs checked against the estate |
 | [Nobody can read the lakehouse](#nobody-can-read-the-lakehouse) | Lake Formation and OIDC, demonstrated by being refused |
-| [The gates are attacked](#the-gates-are-attacked) | 41 planted violations, each refused by name |
+| [The gates are attacked](#the-gates-are-attacked) | 42 planted violations, each refused by name |
 | [Quickstart](#quickstart) · [Testing](#testing) · [Repository layout](#repository-layout) | |
 | [What this does not do](#what-this-does-not-do) · [Cost](#cost) · [Decisions](#decisions) | |
 | [Docs](#docs) · [Security](#security) · [License](#license) | |
@@ -440,7 +440,10 @@ non-zero exit is not evidence. A mutation whose target has moved is reported `ST
 <p align="center">
   <img src="images/gate_proof.png" width="900" alt="make gate-proof: 41 refused, 0 accepted, 0 stale, ending with the mutation that adds a harness and leaves the sentence counting them alone"><br>
   <sub><b>41 refused, 0 accepted, 0 stale</b> — read the mutation names rather than the total.
-  The last line is the newest: <i>add a harness and leave the sentence that counts them
+  <b>The run shown is the forty-first.</b> The forty-second — <i>register a firmware generation
+  the core cannot read</i> — was written after this capture, so the image is one behind the badge
+  and says so rather than being quietly relabelled.
+  The last line here is <i>add a harness and leave the sentence that counts them
   alone</i>, refused by <code>the readme</code>, which exists because this README drifted three
   times in a day before anything checked it.
   <i>automate a decision about a person</i> is claim 7 planted as a contract change.

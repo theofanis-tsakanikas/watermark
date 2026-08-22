@@ -4,6 +4,30 @@ Dated entries, newest first. Superseded statements are struck through rather tha
 how a thing was wrong is the useful part. Architectural decisions live in
 [`docs/adr/`](docs/adr/) and the running ledger in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+## 2026-08-22
+
+**The registered payload schema and the normaliser were two descriptions of one fleet, and
+nothing held them equal.** `infra/streaming/schemas/meter_reading.json` declares the union of
+shapes a meter may publish and is what the Glue Schema Registry evaluates a new firmware
+generation against; `src/watermark/core/normalise.py` is what actually reads a payload. The
+registry is a *registration-time* gate rather than a validator in the data path — the IoT rule
+base64-encodes and forwards, and validates nothing — so the two could drift in either direction
+with no symptom.
+
+Registered and not implemented is the expensive one: adding `fw4` to the schema is the documented
+step and returns a real verdict, *backward-compatible, approved*, on behalf of a consumer that
+cannot read a word of it. The rollout proceeds, every reading from the cohort is quarantined as an
+unknown shape, and it surfaces weeks later as a spike in a table nobody was watching — which is
+the failure the registry exists to prevent. The other direction leaves the registry describing a
+fleet that stopped being real, so the next compatibility check is evaluated against the wrong
+union.
+
+[`scripts/check_schemas_agree.py`](scripts/check_schemas_agree.py) now holds the set of
+generations, the discriminator each is recognised by, and that the discriminator is `required`
+rather than merely permitted, equal across both files. Mutation **42**, *register a firmware
+generation the core cannot read*, is what proves it bites. `images/gate_proof.png` shows the
+forty-first run and the caption says so rather than being relabelled.
+
 ## 2026-08-20
 
 **The five-step sequence ran again, end to end, and every job of both captures was green.**

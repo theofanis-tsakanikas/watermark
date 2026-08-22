@@ -162,6 +162,19 @@ jobs:
         # topic is where they are compared.
         run: python scripts/check_partition_vocabulary.py
 
+      - name: the registered schema and the normaliser describe the same fleet
+        # The registry is a *registration-time* gate: it refuses a fourth firmware generation
+        # whose shape the running job could not read, before a device is flashed. It is not in
+        # the data path — the IoT rule forwards the payload base64-encoded and validates
+        # nothing.
+        #
+        # So the answer it gives is only worth what its union is worth. Add `fw4` to the schema
+        # and not to `normalise.py` and the registry approves a rollout on behalf of a consumer
+        # that does not exist; add it to `normalise.py` and not to the schema and the next
+        # compatibility check is evaluated against a fleet that stopped being real. Both are
+        # silent, and neither `terraform validate` nor any harness looks at both files.
+        run: python scripts/check_schemas_agree.py
+
       - name: the Glue jobs run on the Python Glue actually gives them
         # `ruff`'s UP017 asked for `datetime.UTC` on a repository that targets 3.12; Glue 4.0
         # runs 3.10, where the name does not exist. The job died on import thirty-three seconds

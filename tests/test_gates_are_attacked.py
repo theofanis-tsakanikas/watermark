@@ -61,7 +61,14 @@ WIRING = {
     "decide-live",
     "seed-reference",
     "readme-figures",
+    "schemas-agree",
 }
+#: `schemas-agree` is the rule that the union registered with the Glue Schema Registry and the
+#: shapes `normalise.py` can read are the same set, recognised by the same required
+#: discriminator. Wiring rather than a gate for the familiar reason: one side is JSON Schema
+#: applied by Terraform and the other is a dict in the core, nothing imports either from the
+#: other, and the registry is a registration-time gate rather than a validator in the data path
+#: — so a drift is answered by an approval about a consumer that does not exist.
 #: `readme-figures` is the rule that every number the README states still matches what the
 #: repository says. Wiring rather than a gate for the same reason as the rest: it reads prose and
 #: directory listings and refuses a disagreement, and nothing imports it. It is here because the

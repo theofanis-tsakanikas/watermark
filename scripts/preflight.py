@@ -190,6 +190,15 @@ CHECKS: list[Check] = [
         "is not there.",
     ),
     Check(
+        "deployability",
+        "schemas agree",
+        [PYTHON, "scripts/check_schemas_agree.py"],
+        "The Glue Schema Registry gates a firmware rollout before a device is flashed, and it "
+        "gates it against the union it holds. If that union and the normaliser have drifted, "
+        "the answer is about a consumer that does not exist — and the cohort is discovered "
+        "three weeks later as a quarantine spike.",
+    ),
+    Check(
         "correctness",
         "gate-proof",
         [PYTHON, "scripts/gate_proof.py"],

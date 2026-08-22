@@ -21,8 +21,32 @@ def _digest(kind: str, parts: Iterable[str]) -> LineageId:
     """Hash a kind and its parts into an id.
 
     The kind is in the material so that a reading and a result derived from exactly one reading
-    cannot collide. Parts are joined with a separator that cannot appear in an id or an ISO
-    instant, so `("ab", "cd")` and `("abc", "d")` do not hash alike.
+    cannot collide.
+
+    **The parts are concatenated with no separator, and this docstring used to claim otherwise.**
+    It said they were "joined with a separator that cannot appear in an id or an ISO instant, so
+    `("ab", "cd")` and `("abc", "d")` do not hash alike" — a defence the line below has never
+    implemented. Both of those pairs produce `abcd`. The sentence is recorded rather than
+    quietly deleted: a docstring describing a control that is not there is the same defect this
+    repository keeps finding in its gates, and finding it in the file that mints identities is
+    worth stating plainly.
+
+    **Why the ids are distinct anyway, and why that is weaker than it sounds.** No caller can
+    produce two different part lists whose concatenations agree, because every part with a
+    neighbour after it is fixed-width or carries its own delimiters:
+
+      * `Instant.to_iso()` is always 24 characters — `2026-03-14T00:00:00.000Z`;
+      * a `payload_hash` and a `LineageId` are always 32 hex characters;
+      * `derive`'s key carries `|` internally and is followed only by 32-character parents;
+      * `Source.value` is variable — `stream` against `batch` — and is last, so nothing follows
+        it to absorb the difference.
+
+    That is a property of **the callers**, not of this function. A part added tomorrow between
+    two variable-width neighbours would collide silently and nothing here would refuse it.
+
+    The honest fix is a separator. It is not applied because every existing id would change —
+    `recordings/day.json`, every figure asserted about lineage, and the two-run comparison claim
+    2 makes live. That is a restatement, and it is not being smuggled in under a docstring edit.
     """
     material = "".join([kind, *parts])
     return LineageId(hashlib.sha256(material.encode("utf-8")).hexdigest()[:_LENGTH])

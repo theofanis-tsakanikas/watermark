@@ -6,6 +6,22 @@ how a thing was wrong is the useful part. Architectural decisions live in
 
 ## 2026-08-22
 
+**`main` had no branch protection, and nothing had ever asked.** The gate before an `apply` was
+real — `deploy.yml` re-runs the whole of `ci.yml` against the exact ref and `apply` has
+`needs: verify`, so nothing reaches AWS while anything is red. The gate before a *merge* was
+not: a red suite showed a red tick and stopped nothing. Whether broken code entered `main`
+depended on somebody noticing, which is the mechanism this repository refuses everywhere else.
+
+No document claimed otherwise, so it was an absent control rather than a false statement — and
+it was found the way WV-003 was found, by asking the API instead of reading a settings page.
+`Branch not protected`, on the default branch, after 265 commits.
+
+The six `ci.yml` jobs are now required status checks, with `enforce_admins` on, no force pushes,
+no deletion and linear history required. `enforce_admins` is the half that matters: without it
+the sole author bypasses the rule without touching a setting. No required reviewer — one author,
+and `contracts/waivers.yaml` already states what that cannot satisfy. Recorded as item 9 in
+`docs/DAY-ONE.md`, with the `gh api` call a reader runs to detect that it has been undone.
+
 **The registered payload schema and the normaliser were two descriptions of one fleet, and
 nothing held them equal.** `infra/streaming/schemas/meter_reading.json` declares the union of
 shapes a meter may publish and is what the Glue Schema Registry evaluates a new firmware

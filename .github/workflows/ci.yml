@@ -264,7 +264,12 @@ jobs:
         # It pins boto3 exactly. A scanner is a tool; boto3 is the application. Keeping them in
         # separate environments is what stops the scanner deciding the application's dependency
         # floor.
-        run: pipx install checkov
+        #
+        # Pinned to 3.3.13, the version of the last green run on main. Unpinned, the gate moved
+        # while the code did not: 3.3.19 shipped CKV_AWS_394 and every run went red on Terraform
+        # untouched since August. A new rule is adopted by bumping this line in a pull request,
+        # where it is read, not by the calendar — the same rule Attestor's CI states.
+        run: pipx install checkov==3.3.13
       - run: terraform fmt -check -recursive infra
       - name: validate every layer against real provider schemas
         # `-backend=false`: no state, no credentials, nothing reached but the provider registry.

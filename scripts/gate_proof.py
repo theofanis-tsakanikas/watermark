@@ -491,7 +491,7 @@ def _let_an_exception_outlive_its_grant(root: Path) -> bool:
         # date became a comment, which the harness reported STALE rather than passing, which is
         # the whole reason a moved target is a red line and not a skip.
         root / "contracts/waivers.yaml",
-        "    expires_on: 2026-11-12",
+        "    expires_on: 2027-01-20",
         "    expires_on: 2026-06-30",
     )
 

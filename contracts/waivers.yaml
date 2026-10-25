@@ -39,8 +39,10 @@ waivers:
       asserts the published bytes match a cold run over the same events.
     requested_by: theofanis-tsakanikas
     granted_by: theofanis-tsakanikas
-    granted_on: 2026-08-14
-    expires_on: 2026-11-12
+    # Renewed 2026-10-25, first granted 2026-08-14. `closes_when` is not met, so this is a
+    # second decision rather than a closure, and the horizon counts from it.
+    granted_on: 2026-10-25
+    expires_on: 2027-01-20
     self_approval_acknowledged: >-
       One author, so the grant and the request are the same signature. What that costs here is
       real but bounded: the thing being waived is a harness nobody is relying on, and the tier's
@@ -63,8 +65,10 @@ waivers:
       is open and the ADR is restated to name it.
     requested_by: theofanis-tsakanikas
     granted_by: theofanis-tsakanikas
-    granted_on: 2026-08-14
-    expires_on: 2026-11-12
+    # Renewed 2026-10-25, first granted 2026-08-14. `closes_when` is not met, so this is a
+    # second decision rather than a closure, and the horizon counts from it.
+    granted_on: 2026-10-25
+    expires_on: 2027-01-20
     self_approval_acknowledged: >-
       One author again, and here the self-approval is close to immaterial: nobody is choosing
       anything. AWS closed the service. The date on this entry is not a grant of permission, it
